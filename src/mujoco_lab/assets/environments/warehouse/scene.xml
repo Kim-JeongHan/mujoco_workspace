@@ -1,0 +1,21 @@
+<mujoco model="warehouse">
+  <include file="../common.xml"/>
+  <statistic center="0.4 0 1" extent="2.5"/>
+  <asset>
+    <model name="table" file="../../objects/table/model.xml"/>
+    <model name="large_shelf" file="../../objects/large_shelf/model.xml"/>
+    <model name="small_shelf" file="../../objects/small_shelf/model.xml"/>
+  </asset>
+  <worldbody>
+    <site name="robot_mount" pos="0 0 0.8" size="0.01" group="5"/>
+    <frame name="table_placement" pos="0.45 0 0" quat="0.7071067811865476 0 0 0.7071067811865476">
+      <attach model="table" body="base" prefix="table/"/>
+    </frame>
+    <frame name="large_shelf_placement" pos="0.4 0.58 0">
+      <attach model="large_shelf" body="base" prefix="large_shelf/"/>
+    </frame>
+    <frame name="small_shelf_placement" pos="0.4 -0.6 0">
+      <attach model="small_shelf" body="base" prefix="small_shelf/"/>
+    </frame>
+  </worldbody>
+</mujoco>

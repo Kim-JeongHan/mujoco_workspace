@@ -1,0 +1,13 @@
+<mujoco>
+  <compiler angle="radian"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+  <visual>
+    <global offwidth="640" offheight="480" azimuth="135" elevation="-25"/>
+    <headlight ambient="0.3 0.3 0.3"/>
+  </visual>
+  <worldbody>
+    <light name="key_light" pos="1 -2 4" dir="-0.2 0.5 -1" diffuse="0.8 0.8 0.8"/>
+    <geom name="floor" type="plane" pos="0 0 -0.005" size="3 3 0.1"
+          rgba="0.2 0.23 0.27 1"/>
+  </worldbody>
+</mujoco>

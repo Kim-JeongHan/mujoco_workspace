@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/jahirsadik/forte-arm-isaac-mujoco-demos",
+  "commit": "d0846d26a940f630fbb6bd54aaa2de821aee8f14",
+  "source_model": "Forte_mujoco/model/forte.xml",
+  "source_files": {
+    "Forte_mujoco/model/forte.xml": "ee9cfe9b2139c86b4408d1de42ae1b5f4b3e7c5f0fec543d7120825627c4f282",
+    "Forte_mujoco/assets/meshes/base_link.obj": "a8773bc4b3facb6dc9a58c6b7649e3dfda924ce9085a078471b1ecb68c42fd46",
+    "Forte_mujoco/assets/meshes/elbow_link.obj": "13ac1b59bca8a5e2b7c4fa2d3d65548b5b8c2328f46734af526fb399884479a9",
+    "Forte_mujoco/assets/meshes/end_effector_link.obj": "d1e470ad84f4a529f93e0efcdb3ce2a0f26dd5852878a92aa22f38ac662ac718",
+    "Forte_mujoco/assets/meshes/lower_arm_link.obj": "db72442f05e4100d8060fa106c0c82b10adaee9b435854c7bee935aa392aad37",
+    "Forte_mujoco/assets/meshes/shoulder_pitch_link.obj": "5ebe7e52bc6b467c214952a025fd6d83b553da44cedca0d512a6d11a0711375c",
+    "Forte_mujoco/assets/meshes/shoulder_yaw_link.obj": "509d5e4473834d3191db88f29887a9622402e25a2226b0e9d084b65e1727877f",
+    "Forte_mujoco/assets/meshes/shoulder_yaw_link_collision_0.obj": "291ea306fde522e388f01290896eaaba7caf8338ecb779d1a7068bb9676711d0",
+    "Forte_mujoco/assets/meshes/upper_arm_link.obj": "ac87f89b39110a4494556108a374be78de8fb2191ed70b003620d2c26fb78323",
+    "Forte_mujoco/assets/meshes/wrist_link.obj": "9e2ee81c4f3364302ccc0b6cbe797de23a612071003c51e2d16cb2342218c1e5"
+  },
+  "control_mode": "Seven direct torque motors; home controls are zero.",
+  "collision_geometry": "Upstream shoulder-yaw convex mesh and upper-arm, lower-arm, and wrist capsules. Other links have visual geometry only.",
+  "license": "No explicit license file or license declaration was found for the MuJoCo model and meshes at this commit. No license is assigned locally.",
+  "adaptations": [
+    "Copied the upstream OBJ meshes without geometry changes.",
+    "Rewrote mesh paths to be relative to this asset directory.",
+    "Removed the upstream floor, lights, ground materials, and offscreen dimensions from robot.xml so environments can supply them.",
+    "Preserved link transforms, inertias, joint limits, damping, armature, torque limits, collision exclusions, ee_site, and the home keyframe.",
+    "Added a standalone scene.xml preview with a local floor and light."
+  ]
+}

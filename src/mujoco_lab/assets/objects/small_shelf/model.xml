@@ -1,0 +1,9 @@
+<mujoco model="small_shelf">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="base">
+      <geom name="box" type="box" pos="0 0 0.53" size="0.4 0.14 0.53"
+            rgba="0.56 0.41 0.28 1"/>
+    </body>
+  </worldbody>
+</mujoco>

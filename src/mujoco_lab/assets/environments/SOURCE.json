@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/joaoamcarvalho/mpd-splines-public",
+  "commit": "3676cbf371b0e2a98663d8cef666f671e004e3da",
+  "source_files": {
+    "mpd/torch_robotics/torch_robotics/environments/env_table_shelf.py": "deb9f24bba6d2b58e796b9139f62584f1c9a18337871e2731c695bb2b4af783e",
+    "mpd/torch_robotics/torch_robotics/environments/env_warehouse.py": "39ae4f155fb305483bcf169b2c5aeb97fe66b88df731d6cb88662bbd9d69c65a"
+  },
+  "licenses": [
+    "LICENSE.mpd.txt",
+    "LICENSE.torch_robotics.txt"
+  ],
+  "units": "meters",
+  "conversion": "Ported EnvTableShelf and EnvWarehouse at zero environment rotation, without extra obstacles. Applied a global +0.8 m vertical shift: nominal ground is z=0 and robot_mount is at z=0.8. The floor is placed 0.005 m below nominal ground. Empty is a local floor-only environment with robot_mount at z=0."
+}

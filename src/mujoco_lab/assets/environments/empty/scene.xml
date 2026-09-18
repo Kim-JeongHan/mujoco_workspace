@@ -1,0 +1,7 @@
+<mujoco model="empty">
+  <include file="../common.xml"/>
+  <statistic center="0.3 0 0.7" extent="1.8"/>
+  <worldbody>
+    <site name="robot_mount" pos="0 0 0" size="0.01" group="5"/>
+  </worldbody>
+</mujoco>

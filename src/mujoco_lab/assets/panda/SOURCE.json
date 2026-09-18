@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/justagist/franka_panda_description",
+  "commit": "62335618e7f141755524836c738efe9c01396440",
+  "robot": "panda",
+  "source_meshes": [
+    "meshes/collision/finger.stl",
+    "meshes/collision/hand.stl",
+    "meshes/collision/link0.stl",
+    "meshes/collision/link1.stl",
+    "meshes/collision/link2.stl",
+    "meshes/collision/link3.stl",
+    "meshes/collision/link4.stl",
+    "meshes/collision/link5.stl",
+    "meshes/collision/link6.stl",
+    "meshes/collision/link7.stl",
+    "meshes/visual/finger.dae",
+    "meshes/visual/hand.dae",
+    "meshes/visual/link0.dae",
+    "meshes/visual/link1.dae",
+    "meshes/visual/link2.dae",
+    "meshes/visual/link3.dae",
+    "meshes/visual/link4.dae",
+    "meshes/visual/link5.dae",
+    "meshes/visual/link6.dae",
+    "meshes/visual/link7.dae"
+  ],
+  "mesh_license": "Not specified upstream; package.xml contains <license>TODO</license>",
+  "conversion": "Expanded upstream Xacro; preserved origins, limits and supplied inertias; baked DAE node transforms into per-material OBJ meshes; retained colors and textures. Added position servos, a home keyframe and a floor. Collision STL shapes use MuJoCo's convex mesh collision representation; collisions between directly connected links are excluded. Panda finger mimic is a joint equality."
+}
