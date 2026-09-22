@@ -1,0 +1,310 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="panda">
+  <compiler angle="radian" />
+  <asset>
+    <mesh name="collision_hand" file="meshes/collision/collision_hand.stl" />
+    <mesh name="visual_visual_hand_0" file="meshes/visual/visual_visual_hand_0.obj" inertia="shell" />
+    <mesh name="visual_visual_hand_1" file="meshes/visual/visual_visual_hand_1.obj" inertia="shell" />
+    <mesh name="visual_visual_hand_2" file="meshes/visual/visual_visual_hand_2.obj" inertia="shell" />
+    <mesh name="visual_visual_hand_3" file="meshes/visual/visual_visual_hand_3.obj" inertia="shell" />
+    <mesh name="visual_visual_hand_4" file="meshes/visual/visual_visual_hand_4.obj" inertia="shell" />
+    <mesh name="collision_finger" file="meshes/collision/collision_finger.stl" />
+    <mesh name="visual_visual_finger_0" file="meshes/visual/visual_visual_finger_0.obj" inertia="shell" />
+    <mesh name="visual_visual_finger_1" file="meshes/visual/visual_visual_finger_1.obj" inertia="shell" />
+    <mesh name="collision_link0" file="meshes/collision/collision_link0.stl" />
+    <mesh name="visual_visual_link0_0" file="meshes/visual/visual_visual_link0_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_1" file="meshes/visual/visual_visual_link0_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_2" file="meshes/visual/visual_visual_link0_2.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_3" file="meshes/visual/visual_visual_link0_3.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_4" file="meshes/visual/visual_visual_link0_4.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_5" file="meshes/visual/visual_visual_link0_5.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_6" file="meshes/visual/visual_visual_link0_6.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_7" file="meshes/visual/visual_visual_link0_7.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_8" file="meshes/visual/visual_visual_link0_8.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_9" file="meshes/visual/visual_visual_link0_9.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_10" file="meshes/visual/visual_visual_link0_10.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_11" file="meshes/visual/visual_visual_link0_11.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_12" file="meshes/visual/visual_visual_link0_12.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_13" file="meshes/visual/visual_visual_link0_13.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_14" file="meshes/visual/visual_visual_link0_14.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_15" file="meshes/visual/visual_visual_link0_15.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_16" file="meshes/visual/visual_visual_link0_16.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_17" file="meshes/visual/visual_visual_link0_17.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_18" file="meshes/visual/visual_visual_link0_18.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_19" file="meshes/visual/visual_visual_link0_19.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_20" file="meshes/visual/visual_visual_link0_20.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_21" file="meshes/visual/visual_visual_link0_21.obj" inertia="shell" />
+    <mesh name="visual_visual_link0_22" file="meshes/visual/visual_visual_link0_22.obj" inertia="shell" />
+    <mesh name="collision_link1" file="meshes/collision/collision_link1.stl" />
+    <mesh name="visual_visual_link1_0" file="meshes/visual/visual_visual_link1_0.obj" inertia="shell" />
+    <mesh name="collision_link2" file="meshes/collision/collision_link2.stl" />
+    <mesh name="visual_visual_link2_0" file="meshes/visual/visual_visual_link2_0.obj" inertia="shell" />
+    <mesh name="collision_link3" file="meshes/collision/collision_link3.stl" />
+    <mesh name="visual_visual_link3_0" file="meshes/visual/visual_visual_link3_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link3_1" file="meshes/visual/visual_visual_link3_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link3_2" file="meshes/visual/visual_visual_link3_2.obj" inertia="shell" />
+    <mesh name="visual_visual_link3_3" file="meshes/visual/visual_visual_link3_3.obj" inertia="shell" />
+    <mesh name="collision_link4" file="meshes/collision/collision_link4.stl" />
+    <mesh name="visual_visual_link4_0" file="meshes/visual/visual_visual_link4_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link4_1" file="meshes/visual/visual_visual_link4_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link4_2" file="meshes/visual/visual_visual_link4_2.obj" inertia="shell" />
+    <mesh name="visual_visual_link4_3" file="meshes/visual/visual_visual_link4_3.obj" inertia="shell" />
+    <mesh name="collision_link5" file="meshes/collision/collision_link5.stl" />
+    <mesh name="visual_visual_link5_0" file="meshes/visual/visual_visual_link5_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link5_1" file="meshes/visual/visual_visual_link5_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link5_2" file="meshes/visual/visual_visual_link5_2.obj" inertia="shell" />
+    <mesh name="collision_link6" file="meshes/collision/collision_link6.stl" />
+    <mesh name="visual_visual_link6_0" file="meshes/visual/visual_visual_link6_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_1" file="meshes/visual/visual_visual_link6_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_2" file="meshes/visual/visual_visual_link6_2.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_3" file="meshes/visual/visual_visual_link6_3.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_4" file="meshes/visual/visual_visual_link6_4.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_5" file="meshes/visual/visual_visual_link6_5.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_6" file="meshes/visual/visual_visual_link6_6.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_7" file="meshes/visual/visual_visual_link6_7.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_8" file="meshes/visual/visual_visual_link6_8.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_9" file="meshes/visual/visual_visual_link6_9.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_10" file="meshes/visual/visual_visual_link6_10.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_11" file="meshes/visual/visual_visual_link6_11.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_12" file="meshes/visual/visual_visual_link6_12.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_13" file="meshes/visual/visual_visual_link6_13.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_14" file="meshes/visual/visual_visual_link6_14.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_15" file="meshes/visual/visual_visual_link6_15.obj" inertia="shell" />
+    <mesh name="visual_visual_link6_16" file="meshes/visual/visual_visual_link6_16.obj" inertia="shell" />
+    <mesh name="collision_link7" file="meshes/collision/collision_link7.stl" />
+    <mesh name="visual_visual_link7_0" file="meshes/visual/visual_visual_link7_0.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_1" file="meshes/visual/visual_visual_link7_1.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_2" file="meshes/visual/visual_visual_link7_2.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_3" file="meshes/visual/visual_visual_link7_3.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_4" file="meshes/visual/visual_visual_link7_4.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_5" file="meshes/visual/visual_visual_link7_5.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_6" file="meshes/visual/visual_visual_link7_6.obj" inertia="shell" />
+    <mesh name="visual_visual_link7_7" file="meshes/visual/visual_visual_link7_7.obj" inertia="shell" />
+    <material name="visual_visual_hand_0_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_hand_1_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_hand_2_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_hand_3_material" rgba="1 1 1 1" />
+    <material name="visual_visual_hand_4_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_finger_0_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_finger_1_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_0_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_1_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_2_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link0_3_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link0_4_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link0_5_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link0_6_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link0_7_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_8_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_9_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_10_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_11_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_12_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_13_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_14_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_15_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_16_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_17_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_18_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_19_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_20_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link0_21_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link0_22_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link1_0_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link2_0_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link3_0_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link3_1_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link3_2_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link3_3_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link4_0_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link4_1_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link4_2_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link4_3_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link5_0_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link5_1_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link5_2_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_0_material" rgba="1 0 0 1" />
+    <material name="visual_visual_link6_1_material" rgba="0 1 0 1" />
+    <material name="visual_visual_link6_2_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_3_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link6_4_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link6_5_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link6_6_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_7_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_8_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_9_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_10_material" rgba="0.9019607843 0.9215686275 0.9294117647 1" />
+    <material name="visual_visual_link6_11_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link6_12_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_13_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link6_14_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link6_15_material" rgba="0.03921568627 0.5411764706 0.7803921569 1" />
+    <material name="visual_visual_link6_16_material" rgba="0.03921568627 0.5411764706 0.7803921569 1" />
+    <material name="visual_visual_link7_0_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_1_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_2_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_3_material" rgba="1 1 1 1" />
+    <material name="visual_visual_link7_4_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_5_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_6_material" rgba="0.2509803922 0.2509803922 0.2509803922 1" />
+    <material name="visual_visual_link7_7_material" rgba="0.8980392157 0.9176470588 0.9294117647 1" />
+  </asset>
+  <worldbody>
+    <body name="panda_link0">
+      <geom type="mesh" mesh="collision_link0" group="3" />
+      <geom name="panda_link0_visual_visual_link0_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_0" material="visual_visual_link0_0_material" />
+      <geom name="panda_link0_visual_visual_link0_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_1" material="visual_visual_link0_1_material" />
+      <geom name="panda_link0_visual_visual_link0_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_2" material="visual_visual_link0_2_material" />
+      <geom name="panda_link0_visual_visual_link0_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_3" material="visual_visual_link0_3_material" />
+      <geom name="panda_link0_visual_visual_link0_4" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_4" material="visual_visual_link0_4_material" />
+      <geom name="panda_link0_visual_visual_link0_5" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_5" material="visual_visual_link0_5_material" />
+      <geom name="panda_link0_visual_visual_link0_6" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_6" material="visual_visual_link0_6_material" />
+      <geom name="panda_link0_visual_visual_link0_7" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_7" material="visual_visual_link0_7_material" />
+      <geom name="panda_link0_visual_visual_link0_8" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_8" material="visual_visual_link0_8_material" />
+      <geom name="panda_link0_visual_visual_link0_9" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_9" material="visual_visual_link0_9_material" />
+      <geom name="panda_link0_visual_visual_link0_10" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_10" material="visual_visual_link0_10_material" />
+      <geom name="panda_link0_visual_visual_link0_11" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_11" material="visual_visual_link0_11_material" />
+      <geom name="panda_link0_visual_visual_link0_12" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_12" material="visual_visual_link0_12_material" />
+      <geom name="panda_link0_visual_visual_link0_13" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_13" material="visual_visual_link0_13_material" />
+      <geom name="panda_link0_visual_visual_link0_14" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_14" material="visual_visual_link0_14_material" />
+      <geom name="panda_link0_visual_visual_link0_15" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_15" material="visual_visual_link0_15_material" />
+      <geom name="panda_link0_visual_visual_link0_16" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_16" material="visual_visual_link0_16_material" />
+      <geom name="panda_link0_visual_visual_link0_17" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_17" material="visual_visual_link0_17_material" />
+      <geom name="panda_link0_visual_visual_link0_18" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_18" material="visual_visual_link0_18_material" />
+      <geom name="panda_link0_visual_visual_link0_19" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_19" material="visual_visual_link0_19_material" />
+      <geom name="panda_link0_visual_visual_link0_20" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_20" material="visual_visual_link0_20_material" />
+      <geom name="panda_link0_visual_visual_link0_21" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_21" material="visual_visual_link0_21_material" />
+      <geom name="panda_link0_visual_visual_link0_22" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link0_22" material="visual_visual_link0_22_material" />
+      <body name="panda_link1" pos="0 0 0.333">
+        <inertial pos="0.003875 0.002081 -0.175" quat="0.711549 0.00634377 -0.0131124 0.702485" mass="4.97068" diaginertia="0.707137 0.703435 0.00852456" />
+        <joint name="panda_joint1" range="-2.8973 2.8973" actuatorfrcrange="-87 87" damping="10" frictionloss="5" />
+        <geom type="mesh" mesh="collision_link1" group="3" />
+        <geom name="panda_link1_visual_visual_link1_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link1_0" material="visual_visual_link1_0_material" />
+        <body name="panda_link2" quat="0.707107 -0.707107 0 0">
+          <inertial pos="-0.003141 -0.02872 0.003495" quat="-0.168175 0.828366 -0.122878 0.520027" mass="0.646926" diaginertia="0.0310326 0.0283001 0.00273425" />
+          <joint name="panda_joint2" range="-1.7628 1.7628" actuatorfrcrange="-87 87" damping="5" frictionloss="2" />
+          <geom type="mesh" mesh="collision_link2" group="3" />
+          <geom name="panda_link2_visual_visual_link2_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link2_0" material="visual_visual_link2_0_material" />
+          <body name="panda_link3" pos="0 -0.316 0" quat="0.707107 0.707107 0 0">
+            <inertial pos="0.027518 0.039252 -0.066502" quat="0.662769 -0.00678331 0.252053 0.705096" mass="3.2286" diaginertia="0.0415014 0.0414793 0.00124635" />
+            <joint name="panda_joint3" range="-2.8973 2.8973" actuatorfrcrange="-87 87" damping="5" frictionloss="2" />
+            <geom type="mesh" mesh="collision_link3" group="3" />
+            <geom name="panda_link3_visual_visual_link3_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link3_0" material="visual_visual_link3_0_material" />
+            <geom name="panda_link3_visual_visual_link3_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link3_1" material="visual_visual_link3_1_material" />
+            <geom name="panda_link3_visual_visual_link3_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link3_2" material="visual_visual_link3_2_material" />
+            <geom name="panda_link3_visual_visual_link3_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link3_3" material="visual_visual_link3_3_material" />
+            <body name="panda_link4" pos="0.0825 0 0" quat="0.707107 0.707107 0 0">
+              <inertial pos="-0.05317 0.104419 0.027454" quat="0.65058 0.529822 -0.0962034 0.535518" mass="3.5879" diaginertia="0.0349596 0.0281483 0.0106201" />
+              <joint name="panda_joint4" range="-3.0718 -0.0698" actuatorfrcrange="-87 87" damping="1" frictionloss="0.5" />
+              <geom type="mesh" mesh="collision_link4" group="3" />
+              <geom name="panda_link4_visual_visual_link4_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link4_0" material="visual_visual_link4_0_material" />
+              <geom name="panda_link4_visual_visual_link4_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link4_1" material="visual_visual_link4_1_material" />
+              <geom name="panda_link4_visual_visual_link4_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link4_2" material="visual_visual_link4_2_material" />
+              <geom name="panda_link4_visual_visual_link4_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link4_3" material="visual_visual_link4_3_material" />
+              <body name="panda_link5" pos="-0.0825 0.384 0" quat="0.707107 -0.707107 0 0">
+                <inertial pos="-0.011953 0.041065 -0.038437" quat="0.987313 -0.0121954 0.0719187 -0.141037" mass="1.22595" diaginertia="0.0367625 0.0288531 0.00803437" />
+                <joint name="panda_joint5" range="-2.8973 2.8973" actuatorfrcrange="-12 12" damping="2" frictionloss="1" />
+                <geom type="mesh" mesh="collision_link5" group="3" />
+                <geom name="panda_link5_visual_visual_link5_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link5_0" material="visual_visual_link5_0_material" />
+                <geom name="panda_link5_visual_visual_link5_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link5_1" material="visual_visual_link5_1_material" />
+                <geom name="panda_link5_visual_visual_link5_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link5_2" material="visual_visual_link5_2_material" />
+                <body name="panda_link6" quat="0.707107 0.707107 0 0">
+                  <inertial pos="0.060149 -0.014117 -0.010517" quat="0.101075 0.59332 0.0287227 0.798079" mass="1.66656" diaginertia="0.00584276 0.00431037 0.00159787" />
+                  <joint name="panda_joint6" range="-0.0175 3.7525" actuatorfrcrange="-12 12" damping="1" frictionloss="0.5" />
+                  <geom type="mesh" mesh="collision_link6" group="3" />
+                  <geom name="panda_link6_visual_visual_link6_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_0" material="visual_visual_link6_0_material" />
+                  <geom name="panda_link6_visual_visual_link6_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_1" material="visual_visual_link6_1_material" />
+                  <geom name="panda_link6_visual_visual_link6_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_2" material="visual_visual_link6_2_material" />
+                  <geom name="panda_link6_visual_visual_link6_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_3" material="visual_visual_link6_3_material" />
+                  <geom name="panda_link6_visual_visual_link6_4" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_4" material="visual_visual_link6_4_material" />
+                  <geom name="panda_link6_visual_visual_link6_5" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_5" material="visual_visual_link6_5_material" />
+                  <geom name="panda_link6_visual_visual_link6_6" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_6" material="visual_visual_link6_6_material" />
+                  <geom name="panda_link6_visual_visual_link6_7" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_7" material="visual_visual_link6_7_material" />
+                  <geom name="panda_link6_visual_visual_link6_8" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_8" material="visual_visual_link6_8_material" />
+                  <geom name="panda_link6_visual_visual_link6_9" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_9" material="visual_visual_link6_9_material" />
+                  <geom name="panda_link6_visual_visual_link6_10" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_10" material="visual_visual_link6_10_material" />
+                  <geom name="panda_link6_visual_visual_link6_11" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_11" material="visual_visual_link6_11_material" />
+                  <geom name="panda_link6_visual_visual_link6_12" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_12" material="visual_visual_link6_12_material" />
+                  <geom name="panda_link6_visual_visual_link6_13" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_13" material="visual_visual_link6_13_material" />
+                  <geom name="panda_link6_visual_visual_link6_14" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_14" material="visual_visual_link6_14_material" />
+                  <geom name="panda_link6_visual_visual_link6_15" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_15" material="visual_visual_link6_15_material" />
+                  <geom name="panda_link6_visual_visual_link6_16" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link6_16" material="visual_visual_link6_16_material" />
+                  <body name="panda_link7" pos="0.088 0 0" quat="0.707107 0.707107 0 0">
+                    <inertial pos="0.010517 -0.004252 0.061597" quat="0.992939 -0.0762041 0.0733595 -0.0537067" mass="0.735522" diaginertia="0.0127345 0.0101055 0.00451803" />
+                    <joint name="panda_joint7" range="-2.8973 2.8973" actuatorfrcrange="-12 12" damping="1" frictionloss="0.5" />
+                    <geom type="mesh" mesh="collision_link7" group="3" />
+                    <geom name="panda_link7_visual_visual_link7_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_0" material="visual_visual_link7_0_material" />
+                    <geom name="panda_link7_visual_visual_link7_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_1" material="visual_visual_link7_1_material" />
+                    <geom name="panda_link7_visual_visual_link7_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_2" material="visual_visual_link7_2_material" />
+                    <geom name="panda_link7_visual_visual_link7_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_3" material="visual_visual_link7_3_material" />
+                    <geom name="panda_link7_visual_visual_link7_4" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_4" material="visual_visual_link7_4_material" />
+                    <geom name="panda_link7_visual_visual_link7_5" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_5" material="visual_visual_link7_5_material" />
+                    <geom name="panda_link7_visual_visual_link7_6" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_6" material="visual_visual_link7_6_material" />
+                    <geom name="panda_link7_visual_visual_link7_7" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_link7_7" material="visual_visual_link7_7_material" />
+                    <body name="panda_link8" pos="0 0 0.107">
+                      <inertial pos="0 0 0" mass="0" diaginertia="0.001 0.001 0.001" />
+                      <body name="panda_hand" quat="0.92388 0 0 -0.382683">
+                        <inertial pos="0 0.0015244 0.0275912" quat="0.707107 0.707107 0 0" mass="0.73" diaginertia="0.0027856 0.00256378 0.000400033" />
+                        <site name="grasp" pos="0 0 0.085" size="0.004"/>
+                        <geom type="mesh" mesh="collision_hand" group="3" />
+                        <geom name="panda_hand_visual_visual_hand_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_hand_0" material="visual_visual_hand_0_material" />
+                        <geom name="panda_hand_visual_visual_hand_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_hand_1" material="visual_visual_hand_1_material" />
+                        <geom name="panda_hand_visual_visual_hand_2" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_hand_2" material="visual_visual_hand_2_material" />
+                        <geom name="panda_hand_visual_visual_hand_3" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_hand_3" material="visual_visual_hand_3_material" />
+                        <geom name="panda_hand_visual_visual_hand_4" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_hand_4" material="visual_visual_hand_4_material" />
+                        <body name="panda_leftfinger" pos="0 0 0.0584">
+                          <inertial pos="0 0.0145644 0.0227941" mass="0.1" diaginertia="3.01221e-05 2.95874e-05 6.95125e-06" />
+                          <joint name="panda_finger_joint1" type="slide" range="0 0.04" actuatorfrcrange="-20 20" damping="500" axis="0 1 0" />
+                          <geom type="mesh" mesh="collision_finger" group="3" />
+                          <geom name="panda_leftfinger_visual_visual_finger_0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_finger_0" material="visual_visual_finger_0_material" />
+                          <geom name="panda_leftfinger_visual_visual_finger_1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_finger_1" material="visual_visual_finger_1_material" />
+                        </body>
+                        <body name="panda_rightfinger" pos="0 0 0.0584">
+                          <inertial pos="0 -0.0145644 0.0227941" mass="0.1" diaginertia="3.01221e-05 2.95874e-05 6.95125e-06" />
+                          <joint name="panda_finger_joint2" type="slide" range="0 0.04" actuatorfrcrange="-20 20" damping="500" axis="0 -1 0" />
+                          <geom quat="0 0 0 1" type="mesh" mesh="collision_finger" group="3" />
+                          <geom name="panda_rightfinger_visual_visual_finger_0" quat="0 0 0 1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_finger_0" material="visual_visual_finger_0_material" />
+                          <geom name="panda_rightfinger_visual_visual_finger_1" pos="0 0 0" quat="0 0 0 1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="visual_visual_finger_1" material="visual_visual_finger_1_material" />
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="panda_finger_joint2" joint2="panda_finger_joint1" />
+  </equality>
+  <option integrator="implicitfast" timestep="0.002" />
+  <contact>
+    <exclude body1="panda_link8" body2="panda_hand" />
+    <exclude body1="panda_hand" body2="panda_leftfinger" />
+    <exclude body1="panda_hand" body2="panda_rightfinger" />
+    <exclude body1="panda_link0" body2="panda_link1" />
+    <exclude body1="panda_link1" body2="panda_link2" />
+    <exclude body1="panda_link2" body2="panda_link3" />
+    <exclude body1="panda_link3" body2="panda_link4" />
+    <exclude body1="panda_link4" body2="panda_link5" />
+    <exclude body1="panda_link5" body2="panda_link6" />
+    <exclude body1="panda_link6" body2="panda_link7" />
+    <exclude body1="panda_link7" body2="panda_link8" />
+  </contact>
+  <actuator>
+    <position name="panda_joint1" joint="panda_joint1" kp="300" kv="30" ctrlrange="-2.8973 2.8973" forcerange="-87 87" />
+    <position name="panda_joint2" joint="panda_joint2" kp="300" kv="30" ctrlrange="-1.7628 1.7628" forcerange="-87 87" />
+    <position name="panda_joint3" joint="panda_joint3" kp="300" kv="30" ctrlrange="-2.8973 2.8973" forcerange="-87 87" />
+    <position name="panda_joint4" joint="panda_joint4" kp="300" kv="30" ctrlrange="-3.0718 -0.0698" forcerange="-87 87" />
+    <position name="panda_joint5" joint="panda_joint5" kp="300" kv="30" ctrlrange="-2.8973 2.8973" forcerange="-12 12" />
+    <position name="panda_joint6" joint="panda_joint6" kp="300" kv="30" ctrlrange="-0.0175 3.7525" forcerange="-12 12" />
+    <position name="panda_joint7" joint="panda_joint7" kp="300" kv="30" ctrlrange="-2.8973 2.8973" forcerange="-12 12" />
+    <position name="panda_finger_joint1" joint="panda_finger_joint1" kp="400" kv="20" ctrlrange="0.0 0.04" forcerange="-20 20" />
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="0 -0.7853981634 0 -2.35619449 0 1.570796327 0.7853981634 0.04 0.04" ctrl="0 -0.7853981634 0 -2.35619449 0 1.570796327 0.7853981634 0.04" />
+  </keyframe>
+</mujoco>

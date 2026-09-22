@@ -1,0 +1,15 @@
+<mujoco model="cube_stack_3_warehouse">
+  <include file="../cube_furniture.xml"/>
+  <include file="../cube_defaults.xml"/>
+  <include file="layout.xml"/>
+  <asset>
+    <model name="table" file="../objects/table/model.xml"/>
+    <model name="large_shelf" file="../objects/large_shelf/model.xml"/>
+    <model name="small_shelf" file="../objects/small_shelf/model.xml"/>
+  </asset>
+  <worldbody>
+    <frame name="small_shelf_placement" pos="0.4 -0.6 0">
+      <attach model="small_shelf" body="base" prefix="small_shelf/"/>
+    </frame>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,9 @@
+<mujoco>
+  <!-- OGBench cube geometry and contact settings; see objects/ogbench_cube/model.xml. -->
+  <default>
+    <default class="ogbench_cube">
+      <geom type="box" size="0.02 0.02 0.02" density="1240"
+            solref="0.004 1" contype="3" group="1"/>
+    </default>
+  </default>
+</mujoco>

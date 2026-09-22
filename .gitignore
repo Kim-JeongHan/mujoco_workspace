@@ -6,3 +6,7 @@ __pycache__/
 dist/
 outputs/
 MUJOCO_LOG.TXT
+
+ur20
+ur30
+third_party

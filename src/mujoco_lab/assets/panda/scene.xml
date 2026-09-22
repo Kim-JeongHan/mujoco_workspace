@@ -1,9 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<mujoco model="panda scene">
-  <include file="robot.xml" />
-  <statistic center="0.3 0 0.4" extent="1.0" />
-  <worldbody>
-    <light pos="1 -2 3" dir="-0.2 0.5 -1" diffuse="0.8 0.8 0.8" />
-    <geom name="floor" type="plane" pos="0 0 -0.005" size="3 3 0.1" rgba="0.2 0.23 0.27 1" />
-  </worldbody>
-</mujoco>

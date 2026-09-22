@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import mujoco
 
-from mujoco_lab.assets import ASSET_ROOT
-
-if TYPE_CHECKING:
-    import mujoco
-
-_ENVIRONMENTS = ASSET_ROOT / "environments"
-ENVIRONMENT_SCENES = {
-    "empty": _ENVIRONMENTS / "empty" / "scene.xml",
-    "table_shelf": _ENVIRONMENTS / "table_shelf" / "scene.xml",
-    "warehouse": _ENVIRONMENTS / "warehouse" / "scene.xml",
-}
-ENVIRONMENT_NAMES = tuple(ENVIRONMENT_SCENES)
+from mujoco_lab.assets import ENVIRONMENT_SCENES
+from mujoco_lab.robot import RobotSpec
+from mujoco_lab.simulation import Simulator
 
 
 def create_environment(name: str) -> mujoco.MjSpec:
@@ -24,16 +15,29 @@ def create_environment(name: str) -> mujoco.MjSpec:
     Objects, placements, lights, and the floor belong to the environment. Returning
     an editable MjSpec allows a robot to be attached before the scene is compiled.
     """
-    try:
-        path = ENVIRONMENT_SCENES[name]
-    except KeyError:
-        available = ", ".join(ENVIRONMENT_NAMES)
-        raise ValueError(
-            f"Unknown environment {name!r}. Available environments: {available}"
-        ) from None
-    import mujoco
+    path = ENVIRONMENT_SCENES[name]
 
     spec = mujoco.MjSpec.from_file(str(path))
     if spec.site("robot_mount") is None:
         raise ValueError(f"Environment {name!r} must define a 'robot_mount' site")
     return spec
+
+
+def create_cube_stack(
+    cubes: int = 2,
+    *,
+    environment: str = "table_shelf",
+    robot: str = "panda",
+) -> Simulator:
+    """Compose Panda or Forte with the requested XML cube environment."""
+    if cubes not in (2, 3, 4):
+        raise ValueError("cubes must be 2, 3, or 4")
+    if environment not in ("table_shelf", "warehouse"):
+        raise ValueError("Cube stacking requires table_shelf or warehouse")
+    if robot not in ("panda", "forte"):
+        raise ValueError("Cube stacking requires panda or forte")
+    scene_name = f"cube_stack_{cubes}"
+    if environment == "warehouse":
+        scene_name += "_warehouse"
+    scene = create_environment(scene_name)
+    return Simulator(scene, robots=[RobotSpec(robot, robot)])

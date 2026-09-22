@@ -10,36 +10,91 @@ dependencies = [
     "mujoco-warp==3.13.0",
     "numpy>=1.26",
     "pillow>=10",
+    "pydantic>=2",
     "pyqt6>=6.11.0",
     "scipy>=1.18.1",
+    "tqdm>=4.67",
+    "tyro>=1.0.16",
 ]
 
 [project.scripts]
 mujoco-lab = "mujoco_lab.cli:main"
 
-[dependency-groups]
-asset-import = [
-    "pycollada>=0.9.3",
-    "pyyaml>=6.0.3",
-    "trimesh>=5.1.0",
-    "xacro>=2.1.1",
-]
-dev = ["pytest>=8", "ruff>=0.9"]
 
+# ============================================================
+# Development dependencies
+# ============================================================
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16.8",
+    "ty>=0.0.83",
+]
+
+
+# ============================================================
+# Build
+# ============================================================
 [build-system]
 requires = ["uv_build>=0.10.2,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-source-include = ["examples/**", "scripts/**", "tests/**", "third_party/**", "uv.lock", ".python-version"]
+source-include = [
+    "examples/**",
+    "tests/**",
+    "third_party/**",
+    "uv.lock",
+    ".python-version",
+]
 
+
+# ============================================================
+# Pytest
+# ============================================================
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+
+# ============================================================
+# Ruff
+# ============================================================
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 extend-exclude = ["third_party"]
 
+
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # Pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Retain upstream planner source formatting in copied modules.
+"src/mujoco_lab/planning/map/map.py" = ["E501"]
+"src/mujoco_lab/planning/sampling/rrt.py" = ["E501"]
+"src/mujoco_lab/planning/sampling/sampler.py" = ["E501"]
+
+
+# ============================================================
+# Ruff formatter
+# ============================================================
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+
+# ============================================================
+# ty
+# ============================================================
+[tool.ty]
+
+[tool.ty.src]
+exclude = ["third_party"]

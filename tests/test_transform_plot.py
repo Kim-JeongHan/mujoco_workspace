@@ -27,7 +27,7 @@ def test_frame_plot_and_quaternion_export_match_mujoco_body(pyplot, monkeypatch,
     body = data.body("frame")
     rotation = body.xmat.reshape(3, 3)
     transform = Transform(rotation=rotation, translation=body.xpos)
-    pose = transform.as_xyqquat()
+    pose = transform.as_xyzquat()
     np.testing.assert_allclose(pose[:3], body.xpos, atol=1e-14)
     np.testing.assert_allclose(pose[3:], body.xquat, atol=1e-14)
     np.testing.assert_allclose(

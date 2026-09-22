@@ -1,0 +1,30 @@
+<mujoco>
+  <worldbody>
+    <frame name="cube_layout" pos="0 0 0.8">
+      <body name="cube0/object_0" pos="0.35 -0.1 0.02">
+        <freejoint name="cube0/object_joint_0"/>
+        <geom name="cube0/object_0" class="ogbench_cube" rgba="0.96 0.26 0.33 1"/>
+        <site name="cube0/com_0" type="sphere" size="0.005" rgba="0 1 0 1" group="5"/>
+      </body>
+      <body name="cube0/object_target_0" pos="0.425 0.2 0.02" mocap="true">
+        <geom name="cube0/target_object_0" class="ogbench_cube" rgba="0.96 0.26 0.33 0.2" contype="0" conaffinity="0"/>
+      </body>
+      <body name="cube1/object_0" pos="0.5 -0.2 0.02">
+        <freejoint name="cube1/object_joint_0"/>
+        <geom name="cube1/object_0" class="ogbench_cube" rgba="0.35 0.55 0.91 1"/>
+        <site name="cube1/com_0" type="sphere" size="0.005" rgba="0 1 0 1" group="5"/>
+      </body>
+      <body name="cube1/object_target_0" pos="0.425 0.2 0.06" mocap="true">
+        <geom name="cube1/target_object_0" class="ogbench_cube" rgba="0.35 0.55 0.91 0.2" contype="0" conaffinity="0"/>
+      </body>
+      <body name="cube2/object_0" pos="0.5 0 0.02">
+        <freejoint name="cube2/object_joint_0"/>
+        <geom name="cube2/object_0" class="ogbench_cube" rgba="1 0.69 0.21 1"/>
+        <site name="cube2/com_0" type="sphere" size="0.005" rgba="0 1 0 1" group="5"/>
+      </body>
+      <body name="cube2/object_target_0" pos="0.425 0.2 0.1" mocap="true">
+        <geom name="cube2/target_object_0" class="ogbench_cube" rgba="1 0.69 0.21 0.2" contype="0" conaffinity="0"/>
+      </body>
+    </frame>
+  </worldbody>
+</mujoco>

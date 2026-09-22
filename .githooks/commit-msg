@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+commit_msg_file="$1"
+
+if ! grep -Eq '^(feat|fix|refactor|test|docs|chore|perf|build|ci)(\(.+\))?: .+' "$commit_msg_file"; then
+    echo "Invalid commit message."
+    echo ""
+    echo "Expected format:"
+    echo "  feat: add RRT planner"
+    echo "  fix: correct collision checking"
+    echo "  refactor(planning): simplify sampler"
+    echo "  test: add planner tests"
+    exit 1
+fi

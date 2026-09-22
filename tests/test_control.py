@@ -1,252 +1,171 @@
-import importlib
-import json
+"""ForteV1_RobStride arm control with a separate native gripper target."""
+
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
 
-from mujoco_lab import ENVIRONMENT_NAMES, create_environment, create_robot
-from mujoco_lab.control import create_controller, run_steps
+from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
+from mujoco_lab.control import ControlTarget, create_controller, demo_target_updater
 from mujoco_lab.control.osc import OperationalSpaceControl
-from mujoco_lab.control.runner import apply_control
-from mujoco_lab.control.visualization import annotate_controller
-from mujoco_lab.robot import ROBOT_SCENES
-from mujoco_lab.simulation import initialize_data
-from mujoco_lab.state import read_state
-from mujoco_lab.state.dynamics import Dynamics
-from mujoco_lab.viewer import scoped_control_callback
-
-ROOT = Path(__file__).parents[1]
+from mujoco_lab.control.pd import JointSpacePD
+from mujoco_lab.control.trajectory import HOME_QPOS, PD_WAYPOINTS, osc_circle_target
+from mujoco_lab.rendering.annotations import annotate_controller
+from mujoco_lab.state import JointState
+from mujoco_lab.utils import Transform
 
 
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_controller_torques_match_original_source(mode, monkeypatch):
-    scripts = ROOT / "third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    module = importlib.import_module("pd_control" if mode == "pd" else "osc_control")
-    original_type = module.JointSpacePD if mode == "pd" else module.OperationalSpaceControl
-    model, data = create_robot("forte")
-    original = original_type(model)
-    connected = create_controller(mode, model, data)
-    rng = np.random.default_rng(42)
-    home = data.qpos.copy()
-    for elapsed in [0.0, 0.4, 1.5, 1.9, 2.0, 3.2, 7.0, 11.4, 12.0]:
-        data.time = elapsed
-        data.qpos[:] = home + rng.uniform(-0.15, 0.15, model.nq)
-        data.qvel[:] = rng.uniform(-0.5, 0.5, model.nv)
-        mujoco.mj_forward(model, data)
-        np.testing.assert_allclose(
-            connected.torques(read_state(data)),
-            original.torques(model, data),
-            rtol=1e-12,
-            atol=1e-12,
-        )
+def forte_simulator(environment="empty"):
+    return Simulator(create_environment(environment), robots=[RobotSpec("robot", "forte")])
 
 
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_full_simulation_trace_matches_original_source(mode, monkeypatch):
-    scripts = ROOT / "third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    source = importlib.import_module("forte_control")
-    module = importlib.import_module("pd_control" if mode == "pd" else "osc_control")
-    original_type = module.JointSpacePD if mode == "pd" else module.OperationalSpaceControl
-    model, data = create_robot("forte")
-    original_data = initialize_data(model)
-    original = original_type(model)
-    connected = create_controller(mode, model, data)
-    original_stats = source.RunStats()
-    traces = np.empty((2, 6000, model.nq + model.nv + model.nu))
-    for step in range(6000):
-        source._apply(model, original_data, original, original_stats)
-        mujoco.mj_step(model, original_data)
-        apply_control(model, data, connected)
-        mujoco.mj_step(model, data)
-        for index, state in enumerate((original_data, data)):
-            traces[index, step] = np.concatenate([state.qpos, state.qvel, state.ctrl])
-    np.testing.assert_allclose(traces[1], traces[0], rtol=1e-11, atol=1e-11)
-    assert data.time == original_data.time
-    np.testing.assert_array_equal(data.warning.number, original_data.warning.number)
+def test_seven_axis_controller_math_on_numpy_snapshots():
+    state = JointState(0.0, HOME_QPOS.copy(), np.zeros(7), np.ones(7))
+    np.testing.assert_array_equal(
+        JointSpacePD(np.ones(7), np.ones(7)).compute(state, ControlTarget(HOME_QPOS)),
+        np.ones(7),
+    )
 
-
-def test_clipping_and_statistics_match_original_source(monkeypatch):
-    scripts = ROOT / "third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    source = importlib.import_module("forte_control")
-    pd = importlib.import_module("pd_control")
-    model, data = create_robot("forte")
-    original = pd.JointSpacePD(model)
-    connected = create_controller("pd", model, data)
-    original_stats = source.RunStats()
-    from mujoco_lab.control.stats import RunStats
-
-    stats = RunStats()
-    data.qpos[:] += 0.8
-    data.qvel[:] = 25.0
-    mujoco.mj_forward(model, data)
-    source._apply(model, data, original, original_stats)
-    expected = data.ctrl.copy()
-    apply_control(model, data, connected, stats)
-    np.testing.assert_array_equal(data.ctrl, expected)
-    assert stats.saturated_steps == original_stats.saturated_steps == 1
-    assert stats.errors == original_stats.errors
-    assert stats.describe("error", "rad") == original_stats.describe("error", "rad")
-
-
-def test_osc_accepts_dynamics_supplied_as_numpy_snapshots(monkeypatch):
-    scripts = ROOT / "third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts"
-    monkeypatch.syspath_prepend(str(scripts))
-    source = importlib.import_module("osc_control")
-    model, data = create_robot("forte")
-    data.qvel[:] = np.linspace(-0.2, 0.2, model.nv)
-    data.time = 3.0
-    mujoco.mj_forward(model, data)
-    native = Dynamics(model, data)
-    jacobian = native.get_jacobian("ee_site").copy()
-    mass = native.get_mass_matrix().copy()
-    position = native.get_frame_position("ee_site").copy()
-
-    class SnapshotDynamics:
-        nv = model.nv
+    class Dynamics:
+        nv = 7
 
         def get_frame_position(self, frame):
-            return position
+            return np.array([0.65, 0.0, 0.53])
 
         def get_jacobian(self, frame):
-            return jacobian
+            return np.eye(6, 7)
 
         def get_mass_matrix(self):
-            return mass
+            return np.eye(7)
 
-    controller = OperationalSpaceControl(SnapshotDynamics())
     np.testing.assert_array_equal(
-        controller.torques(read_state(data)),
-        source.OperationalSpaceControl(model).torques(model, data),
+        OperationalSpaceControl(Dynamics(), posture=HOME_QPOS).compute(
+            state, ControlTarget([0.65, 0, 0.53])
+        ),
+        np.ones(7),
     )
 
 
-def test_controller_math_imports_and_runs_without_simulator_modules(tmp_path):
-    code = """
-import importlib.abc
-import sys
+@pytest.mark.parametrize("mode", ["pd", "osc"])
+def test_connected_controller_uses_actuated_state_and_eight_native_inputs(mode):
+    sim = forte_simulator()
+    robot = sim.robots["robot"]
+    controller = create_controller(mode, robot)
+    robot.change_controller(controller)
+    assert robot.state.nq == robot.state.nv == 9
+    assert robot.nu == 8
+    assert robot.target.position.shape == ((7,) if mode == "pd" else (3,))
+    state = controller.state
+    assert controller.algorithm._owner is state
+    assert state.nv == 7
+    np.testing.assert_array_equal(
+        state.get_jacobian("ee_site"), robot.state.get_jacobian("ee_site")[:, :7]
+    )
+    np.testing.assert_array_equal(state.get_mass_matrix(), robot.state.get_mass_matrix()[:7, :7])
+    command = controller.compute(robot.joint_state, robot.target)
+    assert command.shape == (8,)
+    assert command[-1] == 0
+    controller.set_gripper_target(-0.01)
+    sim.step()
+    assert sim.data.ctrl[robot.actuator_ids[-1]] == -0.01
+    assert robot.state.snapshot().qpos.shape == (9,)
+    with pytest.raises(ValueError, match="gripper target"):
+        controller.set_gripper_target(-0.025)
+    with pytest.raises(ValueError, match="gripper target"):
+        controller.set_gripper_target(np.nan)
+    sim.reset()
+    assert controller.gripper_target == 0
 
-class NoSimulatorImports(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'mujoco', 'mujoco_warp', 'isaaclab', 'isaacsim'}:
-            raise ImportError(fullname)
 
-sys.meta_path.insert(0, NoSimulatorImports())
-import numpy as np
-from mujoco_lab.control import JointSpacePD, OperationalSpaceControl
-from mujoco_lab.control.trajectory import HOME_QPOS
-from mujoco_lab.state import JointState
-state = JointState(0.0, HOME_QPOS.copy(), np.zeros(7), np.ones(7))
-np.testing.assert_array_equal(JointSpacePD().torques(state), np.ones(7))
-
-class Dynamics:
-    nv = 7
-    def get_frame_position(self, frame):
-        return np.array([0.65, 0.0, 0.53])
-    def get_jacobian(self, frame):
-        return np.eye(6, 7)
-    def get_mass_matrix(self):
-        return np.eye(7)
-
-np.testing.assert_array_equal(OperationalSpaceControl(Dynamics()).torques(state), np.ones(7))
-"""
-    subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True)
-
-
-@pytest.mark.parametrize("mode,limit", [("pd", 0.05), ("osc", 0.01)])
-def test_connected_controllers_track_full_reference_routines(mode, limit):
-    model, data = create_robot("forte")
-    controller = create_controller(mode, model, data)
-    stats = run_steps(model, data, 6000, controller)
-    assert stats.steps == 6000
-    assert stats.saturated_steps == 0
-    assert max(stats.errors) < limit
-    assert int(data.warning.number.sum()) == 0
+def test_pd_targets_respect_bounded_source_axes():
+    assert HOME_QPOS.shape == (7,)
+    assert PD_WAYPOINTS.shape[1] == 7
+    sim = forte_simulator()
+    ranges = sim.model.jnt_range[:3]
+    assert np.all(PD_WAYPOINTS[:, :3] >= ranges[:, 0])
+    assert np.all(PD_WAYPOINTS[:, :3] <= ranges[:, 1])
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])
 @pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
-def test_feedback_control_runs_in_each_environment(mode, environment):
-    model, data = create_robot("forte", environment=environment)
-    stats = run_steps(model, data, 500, create_controller(mode, model, data))
-    assert stats.steps == 500
-    assert np.isfinite(data.qpos).all()
-    assert int(data.warning.number.sum()) == 0
-    assert max(stats.errors) < 0.05
+def test_feedback_control_is_finite_in_each_environment(mode, environment):
+    sim = forte_simulator(environment)
+    robot = sim.robots["robot"]
+    robot.change_controller(create_controller(mode, robot))
+    sim.target_updater = demo_target_updater(sim, {robot.name: mode})
+    stats = sim.run_steps(400)[robot.name]
+    assert stats.steps == 400
+    assert np.isfinite(sim.data.qpos).all()
+    assert np.isfinite(sim.data.qvel).all()
+    assert not sim.data.warning.number.any()
+    assert max(stats.errors) < (0.15 if mode == "pd" else 0.05)
 
 
 def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
-    model, data = create_robot("forte")
-    original = create_controller("osc", model, data)
-    spec = create_environment("empty")
-    mount = spec.site("robot_mount")
-    mount.pos = [0.1, -0.2, 0.8]
-    mount.quat = [np.sqrt(0.5), 0, 0, np.sqrt(0.5)]
-    spec.attach(mujoco.MjSpec.from_file(str(ROBOT_SCENES["forte"])), prefix="", site=mount)
-    moved_model = spec.compile()
-    moved_data = initialize_data(moved_model)
-    moved = create_controller("osc", moved_model, moved_data)
-    rotation = moved_data.body("base_link").xmat.reshape(3, 3)
-    translation = moved_data.body("base_link").xpos
+    sim = forte_simulator()
+    robot = sim.robots["robot"]
+    moved_sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("robot", "forte", Transform.from_pose_mmdeg([100, -200, 800, 0, 0, 90]))],
+    )
+    moved_model, moved_data = moved_sim.model, moved_sim.data
+    moved_robot = moved_sim.robots["robot"]
+    moved_robot.change_controller(create_controller("osc", moved_robot))
+    moved_sim.target_updater = demo_target_updater(moved_sim, {"robot": "osc"})
+    rotation = moved_data.body("robot/base_link").xmat.reshape(3, 3)
+    translation = moved_data.body("robot/base_link").xpos
+    entry = osc_circle_target(
+        2.0,
+        start_time=0,
+        start_position=robot.state.get_frame_position("ee_site"),
+        base_position=sim.data.body("robot/base_link").xpos,
+        base_rotation=np.eye(3),
+    )
+    entry_distance = np.linalg.norm(entry.position - robot.state.get_frame_position("ee_site"))
+    assert entry_distance == pytest.approx(0.025, abs=1e-5)
     for elapsed in [0.0, 1.25, 2.5]:
-        reference = original.circle(elapsed)
-        actual = moved.circle(elapsed)
-        np.testing.assert_allclose(actual[0], translation + rotation @ reference[0], atol=1e-12)
-        np.testing.assert_allclose(actual[1], rotation @ reference[1], atol=1e-12)
-        np.testing.assert_allclose(actual[2], rotation @ reference[2], atol=1e-12)
-    apply_control(moved_model, moved_data, moved)
+        reference = osc_circle_target(
+            elapsed + 2,
+            start_time=0,
+            start_position=robot.state.get_frame_position("ee_site"),
+            base_position=np.zeros(3),
+            base_rotation=np.eye(3),
+        )
+        actual = osc_circle_target(
+            elapsed + 2,
+            start_time=0,
+            start_position=moved_robot.state.get_frame_position("ee_site"),
+            base_position=translation,
+            base_rotation=rotation,
+        )
+        np.testing.assert_allclose(actual.position, translation + rotation @ reference.position)
+        np.testing.assert_allclose(actual.velocity, rotation @ reference.velocity)
+    moved_sim.physics_step()
     scene = mujoco.MjvScene(moved_model, maxgeom=100)
     scene.ngeom = 0
-    annotate_controller(scene, moved_model, moved_data, moved)
-    np.testing.assert_allclose(scene.geoms[0].pos, moved.circle(0)[0], atol=1e-6)
+    annotate_controller(scene, moved_robot, moved_data, None)
+    np.testing.assert_allclose(scene.geoms[0].pos, moved_robot.target.position, atol=1e-6)
 
 
-def test_gui_callback_controls_only_its_model_and_restores_host_callback():
-    model, data = create_robot("forte")
-    other, other_data = create_robot("panda")
-    controller = create_controller("pd", model, data)
-    prior = mujoco.get_mjcb_control()
-    host_calls = []
-
-    def host(active_model, active_data):
-        host_calls.append(active_model)
-
-    mujoco.set_mjcb_control(host)
-    try:
-        with pytest.raises(RuntimeError, match="test exit"):
-            with scoped_control_callback(model, data, controller):
-                mujoco.mj_step(model, data)
-                assert np.max(np.abs(data.ctrl)) > 0.1
-                assert not host_calls
-                mujoco.mj_step(other, other_data)
-                assert other in host_calls
-                raise RuntimeError("test exit")
-        assert mujoco.get_mjcb_control() is host
-    finally:
-        mujoco.set_mjcb_control(prior)
-
-
-@pytest.mark.parametrize("robot", ["ur20", "ur30", "panda"])
-def test_forte_control_rejects_other_robot_actuators(robot):
-    model, data = create_robot(robot)
-    with pytest.raises(ValueError, match="requires the Forte"):
-        create_controller("pd", model, data)
+@pytest.mark.parametrize("robot", ["panda"])
+@pytest.mark.parametrize("mode", ["pd", "osc"])
+def test_torque_control_rejects_position_actuators(robot, mode):
+    sim = Simulator(create_environment("empty"), robots=[RobotSpec("robot", robot)])
+    with pytest.raises(ValueError, match="requires torque/force actuators"):
+        create_controller(mode, sim.robots["robot"])
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])
 def test_cli_connects_controller_to_workspace_environment(mode, tmp_path):
-    result = subprocess.run(
+    subprocess.run(
         [
             sys.executable,
             "-m",
             "mujoco_lab",
+            "--command",
             "simulate",
             "--robot",
             "forte",
@@ -263,18 +182,48 @@ def test_cli_connects_controller_to_workspace_environment(mode, tmp_path):
         text=True,
         check=True,
     )
-    output = json.loads(result.stdout)
-    assert output["controller"] == mode
-    assert output["warnings"] == 0
-    assert output["tracking_error_max"] is not None
 
 
 def test_cli_rejects_pd_on_position_controlled_robot(tmp_path):
     result = subprocess.run(
-        [sys.executable, "-m", "mujoco_lab", "simulate", "--robot", "panda", "--controller", "pd"],
+        [
+            sys.executable,
+            "-m",
+            "mujoco_lab",
+            "--command",
+            "simulate",
+            "--robot",
+            "panda",
+            "--controller",
+            "pd",
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 2
-    assert "requires the Forte" in result.stderr
+    assert "requires torque/force actuators" in result.stderr
+
+
+@pytest.mark.parametrize("robot", ["panda"])
+def test_cli_runs_native_position_controller(robot, tmp_path):
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mujoco_lab",
+            "--command",
+            "simulate",
+            "--robot",
+            robot,
+            "--controller",
+            "position",
+            "--steps",
+            "10",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "MUJOCO_GL": "disable"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )

@@ -1,0 +1,9 @@
+<mujoco model="table">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="base">
+      <geom name="box" type="box" pos="0 0 0.4" size="0.4 0.6 0.4"
+            rgba="0.45 0.48 0.52 1"/>
+    </body>
+  </worldbody>
+</mujoco>
