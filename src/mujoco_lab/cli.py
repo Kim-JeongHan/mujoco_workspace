@@ -1,99 +1,94 @@
 """Command-line entry points for simulation, viewing, and rendering."""
 
-import argparse
-import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-import mujoco
+import tyro
 
-from mujoco_lab.control import CONTROLLER_NAMES, create_controller, run_steps
-from mujoco_lab.environment import ENVIRONMENT_NAMES, create_environment
-from mujoco_lab.robot import ROBOT_NAMES, create_robot
-from mujoco_lab.simulation import initialize_data, load_simulation
+from mujoco_lab.assets import ENVIRONMENT_NAMES, ROBOT_NAMES
+from mujoco_lab.control import CONTROLLER_NAMES, create_controller, demo_target_updater
+from mujoco_lab.environment import create_environment
+from mujoco_lab.robot import RobotSpec
+from mujoco_lab.simulation import Simulator
+from mujoco_lab.simulator_manager import SimulatorManager
+
+Command = Literal["simulate", "view", "render"]
+RobotName = Literal[ROBOT_NAMES]
+EnvironmentName = Literal[ENVIRONMENT_NAMES]
+ControllerName = Literal[CONTROLLER_NAMES]
 
 
-def nonnegative_int(value: str) -> int:
-    number = int(value)
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be zero or greater")
-    return number
+@dataclass
+class Config:
+    """Options shared by the simulation, viewer, and renderer commands."""
+
+    command: Command  # simulate, view, or render
+    steps: int = 100  # physics steps
+    output: Path = Path("outputs/scene.png")  # rendered PNG path
+    dt: float = 0.002  # physics and control period in seconds
+    controller: ControllerName = "none"  # none, position, pd, or osc
+    environment: EnvironmentName | None = None  # optional scene
+    robot: RobotName = "forte"  # robot asset
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MuJoCo workspace")
-    commands = parser.add_subparsers(dest="command", required=True)
-    simulate = commands.add_parser("simulate", help="Run physics without rendering")
-    simulate.add_argument("--steps", type=nonnegative_int, default=1000)
-    view = commands.add_parser("view", help="Open an interactive simulation window")
-    render = commands.add_parser("render", help="Save an offscreen 640 x 480 PNG")
-    render.add_argument("--steps", type=nonnegative_int, default=0)
-    render.add_argument("--output", type=Path, default=Path("outputs/scene.png"))
-    for command in (simulate, view, render):
-        command.add_argument(
-            "--controller",
-            choices=CONTROLLER_NAMES,
-            default="none",
-            help="Optional Forte torque controller",
+    manager = SimulatorManager.get_instance()
+    logger = manager.logger
+    config = tyro.cli(Config, description="MuJoCo workspace")
+    steps = config.steps
+    if steps is None:
+        steps = 0 if config.command == "render" else 1000
+    if steps < 0:
+        logger.error("--steps must be zero or greater", exit_code=2)
+    if not (config.robot or config.environment):
+        logger.error("select --robot or --environment", exit_code=2)
+    if config.controller != "none" and not config.robot:
+        logger.error(
+            "--controller requires --robot",
+            exit_code=2,
         )
-        command.add_argument(
-            "--environment",
-            choices=ENVIRONMENT_NAMES,
-            help="Select an environment, optionally combined with --robot",
-        )
-        selection = command.add_mutually_exclusive_group()
-        selection.add_argument("--robot", choices=ROBOT_NAMES, help="Select a bundled manipulator")
-        selection.add_argument("--model", type=Path, help="Load an explicit MJCF/URDF file")
-    args = parser.parse_args()
-    if not (args.robot or args.model or args.environment):
-        parser.error("select --robot, --model, or --environment")
-    if args.environment and args.model:
-        parser.error("--environment cannot be combined with --model; use --robot for composition")
-    if args.robot:
-        model, data = create_robot(args.robot, environment=args.environment or "empty")
-    elif args.environment:
-        model = create_environment(args.environment).compile()
-        data = initialize_data(model)
-    else:
-        model, data = load_simulation(args.model)
     try:
-        controller = create_controller(args.controller, model, data)
+        if config.robot:
+            simulator = Simulator(
+                create_environment(config.environment or "empty"),
+                robots=[RobotSpec(config.robot, config.robot)],
+                dt=config.dt,
+            )
+        else:
+            simulator = Simulator(
+                create_environment(config.environment),
+                dt=config.dt,
+            )
+        robot = next(iter(simulator.robots.values()), None)
+        if robot is not None:
+            robot.change_controller(create_controller(config.controller, robot))
+            if config.robot == "forte" and config.controller in ("pd", "osc"):
+                simulator.target_updater = demo_target_updater(
+                    simulator, {robot.name: config.controller}
+                )
     except ValueError as error:
-        parser.error(str(error))
+        logger.error(str(error), exit_code=2)
 
-    if args.command == "view":
-        from mujoco_lab.viewer import show
-
+    if config.command == "view":
+        name = "cli"
+        manager.add_simulator(name, simulator)
         try:
-            show(model, data, controller)
+            manager.show(name)
         except KeyboardInterrupt:
             pass
+        finally:
+            if manager.simulators.get(name) is simulator:
+                manager.remove_simulator(name)
         return
 
-    stats = run_steps(model, data, args.steps, controller)
-    if args.command == "render":
-        from mujoco_lab.viewer import save_frame
-
-        print(save_frame(model, data, args.output, controller))
+    simulator.run_steps(steps)
+    if config.command == "render":
+        name = "cli"
+        manager.add_simulator(name, simulator)
+        try:
+            logger.info(str(manager.save_frame(name, config.output)))
+        finally:
+            if manager.simulators.get(name) is simulator:
+                manager.remove_simulator(name)
         return
-
-    print(
-        json.dumps(
-            {
-                "mujoco_version": mujoco.__version__,
-                "steps": args.steps,
-                "simulated_seconds": data.time,
-                "qpos": data.qpos.tolist(),
-                "warnings": int(data.warning.number.sum()),
-                "controller": args.controller,
-                "saturated_steps": stats.saturated_steps,
-                "tracking_error_mean": sum(stats.errors) / len(stats.errors)
-                if stats.errors
-                else None,
-                "tracking_error_max": max(stats.errors, default=None),
-                "tracking_error_unit": "rad"
-                if args.controller == "pd"
-                else ("m" if args.controller == "osc" else None),
-            },
-            indent=2,
-        )
-    )

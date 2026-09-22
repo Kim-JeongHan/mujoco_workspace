@@ -1,18 +1,20 @@
-"""Controller algorithms, creation, and stepping for MuJoCo simulations."""
+"""Controller algorithms and creation for MuJoCo Robots."""
 
 from mujoco_lab.control.base import Controller
 from mujoco_lab.control.factory import CONTROLLER_NAMES, create_controller
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
-from mujoco_lab.control.runner import run_steps
-from mujoco_lab.control.stats import RunStats
+from mujoco_lab.control.position import PositionController
+from mujoco_lab.control.target import ControlTarget
+from mujoco_lab.control.trajectory import demo_target_updater
 
 __all__ = [
     "CONTROLLER_NAMES",
     "Controller",
+    "ControlTarget",
     "JointSpacePD",
     "OperationalSpaceControl",
-    "RunStats",
+    "PositionController",
     "create_controller",
-    "run_steps",
+    "demo_target_updater",
 ]

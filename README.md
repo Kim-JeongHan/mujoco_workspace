@@ -1,369 +1,158 @@
 # MuJoCo workspace
 
-A standalone workspace for robot simulation, feedback control, reusable furniture,
-and composable environments. It includes **MuJoCo 3.13.0** and **MuJoCo Warp 3.13.0**,
-with UR20, UR30, Panda, and Forte assets. Development uses Python 3.12 on Ubuntu.
+A Python workspace for MuJoCo robot simulation with Panda and Forte assets.
 
-## Installation
+## Install
 
-```bash
-cd ~/workspace/mujoco-lab
-uv sync
-```
-
-The project uses its own `.venv`. MuJoCo and MuJoCo Warp are pinned in
-`pyproject.toml`; `uv.lock` records the complete dependency resolution. The existing
-`~/workspace/.venv-d4rl` is a separate environment.
-
-## Select a robot, model, or environment
-
-Every CLI command requires an explicit `--robot`, `--model`, or `--environment`.
-A robot without an environment uses `empty`. `--model` loads a standalone MJCF or
-URDF file and cannot be combined with `--robot` or `--environment`.
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv run mujoco-lab view --robot panda
-uv run mujoco-lab simulate --robot ur20 --steps 1000
-uv run mujoco-lab render --robot ur30 --output outputs/ur30.png
-uv run mujoco-lab view --environment warehouse
-uv run mujoco-lab view --model /path/to/scene.xml
+uv sync --locked
 ```
 
-`--steps` counts physics steps. Rendering defaults to zero steps and saves the
-current scene as a 640 x 480 PNG; the default output path is `outputs/scene.png`.
-The GUI requires a desktop display. Close its window to exit.
-On Linux without a display, set `MUJOCO_GL=egl` when rendering.
+## Run
 
-## Forte control integration
-
-The `control/` package contains the integrated Forte PD and OSC algorithms,
-controller creation, and controlled stepping. The `state/` package provides joint
-state and MuJoCo dynamics access. Model loading and viewing live in `simulation.py`
-and `viewer.py`. Select a controller through the CLI or manipulator example:
+Choose a robot with `--robot` or a scene with `--environment`:
 
 ```bash
-# Original joint-space PD routine in the workspace environment
-uv run python examples/manipulator.py --robot forte --environment empty --controller pd
-
-# OSC follows a circle expressed in the robot base frame
-uv run python examples/manipulator.py --robot forte --environment warehouse --controller osc
-
-# Twelve simulated seconds, with tracking statistics
-uv run mujoco-lab simulate --robot forte --environment warehouse --controller osc --steps 6000
-
-# PNG with original torque arrows and controller target annotations
-MUJOCO_GL=egl uv run mujoco-lab render --robot forte --controller pd --steps 1000 --output outputs/forte_pd.png
+uv run mujoco-lab --command view --robot panda
+uv run mujoco-lab --command view --environment warehouse
+uv run mujoco-lab --command simulate --robot panda --controller position --steps 1000
+uv run mujoco-lab --command simulate --robot forte --controller pd --steps 6000
+uv run mujoco-lab --command render --robot panda --output outputs/panda.png
 ```
 
-Controller choices are `none` (default), `pd`, and `osc`. UR20, UR30, and Panda use
-their asset-defined position servos with `none`. Forte uses torque motors, so
-`none` leaves zero torque and allows the arm to fall under gravity. `pd` and `osc`
-require the Forte torque-motor layout and are rejected for the other robots.
+Robots are `panda` and `forte`. Environments are `empty`
+(the default for a robot), `table_shelf`, `warehouse`, and `cube_stack_2`,
+`cube_stack_3`, or `cube_stack_4` (each also has a `_warehouse` variant). `forte` is the
+ForteV1_RobStride CAD arm with seven controlled arm axes and a parallel gripper.
+It also supports `--controller osc`; its arm motors have zero torque without a
+controller.
+The `position` controller uses each robot's existing position servos, including
+the Panda's coupled finger actuator.
+`pd` and `osc` require torque or force actuators; they do not change an asset's
+actuator type. A custom torque-controlled robot can use `pd` by supplying
+per-joint `kp` and `kd` to `create_controller`, in actuator order.
+`--steps` counts physics steps. Control runs once per step. The default step
+period is 0.002 seconds; use `--dt` to change it. The viewer needs a desktop display;
+for headless PNG rendering on Linux, set `MUJOCO_GL=egl`.
 
-The source equations, gains, PD waypoints, clipping, and tracking statistics are
-reused. The OSC path is transformed to the actual robot base pose, including the
-0.8 m mount height in furnished environments. These reference trajectories do not
-perform obstacle-avoiding planning; furniture collisions remain enabled.
-
-The GUI runs feedback through a scoped MuJoCo control callback and restores any
-previous callback on exit. It uses the native blocking viewer, without the upstream
-process-exit workaround. PNG images include upstream controller annotations. See
-the [project layout](#project-layout) for module locations.
-
-## Manipulator example and robot factory
+To open an external MJCF or URDF file, or run the other examples:
 
 ```bash
-uv run python examples/manipulator.py --robot ur20
-uv run python examples/manipulator.py --robot ur30 --environment table_shelf
-uv run python examples/manipulator.py --robot panda --environment warehouse
-uv run python examples/manipulator.py --robot forte --controller pd --headless --steps 6000
+uv run python examples/model.py --model /path/to/scene.xml
+uv run python examples/multi_robot.py --layout forte_panda --headless --steps 1000
+uv run python examples/forte_gripper.py
+uv run python examples/warp_manipulator.py --robot panda --worlds 1 --steps 100
 ```
 
-`robot.py` defines `create_robot(name, environment="empty")`. Its `ROBOT_SCENES`
-registry points to robot-only MJCF files. The factory attaches the selected robot
-to the environment, then initializes native MuJoCo model/data objects from the
-`home` keyframe. Add a robot asset and one registry entry to extend the selectors.
+The Warp example requires a CUDA-capable NVIDIA GPU.
+
+## Panda and Forte cube stacking
+
+Panda and Forte can physically pick and stack two, three, or four 4 cm cubes on the
+`table_shelf` or `warehouse` tabletop. The cube model, colors, and stacking
+start/goal layouts come from OGBench task 5. This is a robot demonstration,
+not an OGBench robot or benchmark score implementation. The cubes have free
+joints and move through gripper and support contacts.
+
+```bash
+uv run python examples/cube_stack.py --cubes 2 --headless
+uv run python examples/cube_stack.py --cubes 4 --headless --output outputs/four_cubes.png
+uv run python examples/cube_stack.py --cubes 3
+uv run python examples/cube_stack.py --robot forte --cubes 4 --headless
+```
+
+The example stops after the fingers release and the aligned stack remains
+supported by table/cube contacts for 0.5 seconds. It reports both the OGBench
+goal-distance check (each center within 4 cm) and this stricter physical-stack
+check. The default limit is 22,000 physics steps for Panda and 30,000 for
+Forte, at 0.002 seconds per step. Forte uses a top-down grasp site and its
+native coupled gripper; the shipped robot mount and OGBench cube layouts are
+unchanged.
+Use `MUJOCO_GL=egl` for headless PNG rendering on Linux.
+
+For Python use, import `create_cube_stack` from `mujoco_lab`, call
+`create_cube_stack(cubes, environment="table_shelf", robot="panda")` (or
+`robot="forte"`), and attach `CubeStackTask(sim, cubes)`
+before `sim.run_steps(22000)` (30,000 for Forte). Call `task.reset()` to restore the initial cube,
+goal, robot, and task state together. The exact upstream cube XML and MIT
+license are recorded in `third_party/ogbench.SOURCE.json`.
+
+Choose `CubeStackTask(sim, cubes, method="sampling", planner="rrt_connect")`
+or `--method sampling --planner rrt_connect` in the example to search each
+pick, lift, place, and retract motion from the measured arm pose. The stage
+targets and physical grasp/release checks are the same as for the default
+`heuristic` method. `rrt` and `prm` are also available, with `seed` and
+`planning_budget` controls. Sampling checks edges at discrete points against
+a scene snapshot taken on stage entry. Each carrying stage requires observed
+contact from both fingers. A grasped cube follows its measured grasp pose
+only in the checker's private scratch state; the real cube remains
+under physics control. These checks do not guarantee continuous or dynamic
+collision avoidance. Planning and execution failures are reported without
+switching methods.
+
+## Planning
+
+`mujoco_lab.planning` provides AStar graph search, RRT and RRT* variants,
+RRG, and PRM and PRM* planners. The imported `AStar` uses edge costs only
+(uniform-cost search). Planners accept a `CollisionChecker`; the
+`MuJoCoCollisionChecker` checks robot joint states against a snapshot of the
+MuJoCo scene; call `refresh()` after scene changes. See the
+[planning guide](src/mujoco_lab/planning/README.md) for a Python
+example and the [source manifest](third_party/planning.SOURCE.json) for
+upstream provenance. To plan and drive the robot through a joint-space path in
+the viewer:
+
+```bash
+uv run python examples/planning.py --robot panda --planner rrt
+```
+
+The viewer shows the planned end-effector path and actual trail, plus labeled
+XY floor projections for paths hidden behind the arm. Add
+`--headless` for a bounded physics run, `--output path.npz` to save the planned
+joint waypoints, or `--image path.png` for a headless path image. The example
+also supports Forte and exits with an error if the measured robot does not
+reach the goal within `--steps` physics steps.
 
 ## Python API
 
 ```python
-import mujoco
-from mujoco_lab import create_robot, load_simulation
-from mujoco_lab.control import create_controller, run_steps
+from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.control import create_controller, demo_target_updater
 
-model, data = create_robot("forte", environment="warehouse")
-controller = create_controller("osc", model, data)
-stats = run_steps(model, data, 6000, controller)
-print(stats.describe("tracking error", "m"))
-
-# Explicit files remain supported
-model, data = load_simulation("src/mujoco_lab/assets/panda/scene.xml")
-mujoco.mj_step(model, data, nstep=1000)
+sim = Simulator(create_environment("empty"), robots=[RobotSpec("arm", "forte")])
+arm = sim.robots["arm"]
+arm.change_controller(create_controller("pd", arm))
+arm.controller.set_gripper_target(-0.02)  # meters per finger; 0 opens
+sim.target_updater = demo_target_updater(sim, {"arm": "pd"})
+stats = sim.run_steps(1000)
+print(stats["arm"].describe("tracking error", "rad"))
 ```
 
-`model` and `data` are native MuJoCo objects. `load_simulation()` requires a model
-path. Models with a named `home` keyframe start with that state and control input.
-Control units are asset-specific: the UR/Panda servos use position targets;
-Forte's direct motors use torques in Nm.
+For a position-controlled arm, use `create_controller("position", arm)` and
+assign `arm.target = ControlTarget(angles)` before stepping. The target follows
+actuator order and includes the Panda's driven finger joint. Import
+`ControlTarget` from `mujoco_lab.control`.
 
-## Objects and environments
+Forte `RobotState` includes both finger joints (`nq = nv = 9`). The PD target
+contains seven arm angles; the gripper uses a separate position target from
+`-0.02` m (closed) to `0` m (open). One native actuator drives the coupled
+finger pair. `sim.reset()` reopens it. The CAD archive did not include motor
+ratings or collision shapes; the bundled torque ranges and contact proxies are
+simulation choices documented with the [asset](src/mujoco_lab/assets/robot/forte/README.md).
 
-Object assets define geometry, dimensions, material, and collisions. Environments
-provide placements, a floor, lights, and a `robot_mount` site.
+For a world-space `Transform` named `target_pose`, solve arm joint positions with
+`arm.state.solve_ik(target_pose, frame="ee_site", seed=previous_q)`. Use `"grasp"`
+for Panda's grasp frame. The seed is optional and defaults to the current
+positions. Only robot-owned hinge/slide joints on the selected site's ancestor
+chain are optimized; returned positions follow their `joint_names` order.
+Descendant finger joints remain fixed, and continuous joints have no artificial
+position bounds. Each query uses a private copy of the current scene data and
+does not change live state or advance physics.
 
-- `empty`: floor only, robot mounted at z=0.
-- `table_shelf`: table and large shelf, robot mounted at z=0.8 m.
-- `warehouse`: table, large shelf, and small shelf, robot mounted at z=0.8 m.
-
-```bash
-uv run mujoco-lab view --robot ur20 --environment warehouse
-uv run mujoco-lab simulate --robot ur30 --environment warehouse --steps 1000
-uv run mujoco-lab render --robot panda --environment table_shelf --output outputs/panda_table_shelf.png
-```
-
-`create_environment(name)` returns an editable `mujoco.MjSpec`. Register new scenes
-in `ENVIRONMENT_SCENES` in `environment.py`. The furnished layouts preserve MPD's
-robot-relative geometry. The table and small shelf are solid-box approximations;
-the large shelf contains ten panels with open compartments. See the
-[environment guide](src/mujoco_lab/assets/environments/README.md) and
-[object guide](src/mujoco_lab/assets/objects/README.md).
-
-## MuJoCo Warp
-
-MuJoCo Warp is installed by `uv sync`. Import it as `mujoco_warp` and the underlying
-NVIDIA runtime as `warp`. The regular CLI and Forte feedback controllers use native
-MuJoCo physics. A separate CUDA example runs asset-defined controls in parallel:
-
-```bash
-uv run python examples/warp_manipulator.py --robot panda --worlds 1 --steps 100
-```
-
-The example also accepts `--environment`. It requires a CUDA-capable NVIDIA GPU.
-It captures a simulation step in a CUDA graph and replays it for each step.
-The first run compiles kernels and can take longer. Start with a small world count
-on this laptop's 4 GiB GPU. The Python PD/OSC controllers are not GPU kernels;
-the Warp example uses the asset's home control values.
-
-## Transform utilities
-
-`Transform` is a simulator-independent interface to SciPy's
-[`RigidTransform`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.transform.RigidTransform.html).
-`T_ab` maps points from frame b into frame a: `p_a = R_ab @ p_b + t_ab`. Compose
-transforms with `T_ab @ T_bc`; the right-hand transform is applied first.
-
-```python
-from mujoco_lab.utils import Transform
-from scipy.spatial.transform import Rotation
-
-T_world_robot = Transform(
-    rotation=Rotation.from_euler("z", 90, degrees=True),
-    translation=[0.0, 0.0, 0.8],
-)
-point_world = T_world_robot.apply([0.5, 0.0, 0.2])
-point_robot = T_world_robot.inverse().apply(point_world)
-matrix = T_world_robot.as_matrix()  # 4x4 homogeneous matrix
-restored = Transform.from_matrix(matrix)
-
-# Equivalent poses using fixed-axis RPY and different units
-from_mmdeg = Transform.from_pose_mmdeg([500, 200, 400, 20, -15, 35])
-from_mrad = Transform.from_pose_mrad(from_mmdeg.as_pose_mrad())
-```
-
-The constructor accepts a single SciPy `Rotation` or a proper 3x3 rotation matrix,
-with translation in meters. Conversion methods replace the rotation/translation
-properties:
-
-| Method | Output | Units / order |
-|---|---|---|
-| `as_rotation()` | SciPy `Rotation` | Use `.as_matrix()` or `.as_quat()` as needed |
-| `as_translation()` | `[x, y, z]` | m |
-| `as_pose_mrad()` | `[x, y, z, roll, pitch, yaw]` | m, rad |
-| `as_pose_mmrad()` | `[x, y, z, roll, pitch, yaw]` | mm, rad |
-| `as_xyqquat()` | `[x, y, z, qw, qx, qy, qz]` | m, MuJoCo scalar-first quaternion |
-| `as_mmdeg()` | `[x, y, z, roll, pitch, yaw]` | mm, deg |
-
-RPY uses fixed-axis (extrinsic) `xyz` Euler angles:
-`R = Rz(yaw) @ Ry(pitch) @ Rx(roll)`. SciPy's Euler angle ranges and gimbal-lock
-behavior apply. MuJoCo quaternion exports use `wxyz`. When calling SciPy directly,
-use `Rotation.from_quat(quat, scalar_first=True)` and
-`rotation.as_quat(scalar_first=True)` to keep that order. Quaternion signs may
-differ while representing the same rotation.
-
-Frames are right-handed. Rotation matrices map local vectors into parent
-coordinates; `data.xpos` and `data.xmat` describe body frames in world coordinates.
-The retained RPY convention corresponds to MJCF `eulerseq="XYZ"`, with
-`angle="radian"` for radian exports; it differs from the default MJCF intrinsic
-`eulerseq="xyz"`. Prefer `quat` for MuJoCo orientation interchange. See the
-[MuJoCo frame conventions](https://mujoco.readthedocs.io/en/stable/modeling.html#frame-orientations)
-and [Euler sequence reference](https://mujoco.readthedocs.io/en/stable/XMLreference.html#compiler-eulerseq).
-
-Inputs and exported values are independent copies.
-`apply()` accepts a point `(3,)` or points `(..., 3)`;
-`apply_vectors()` rotates free 3D vectors without translation. SciPy handles
-composition, inversion, application, matrix/coordinate validation, and rotation
-normalization. SciPy is installed by `uv sync`.
-
-To capture a MuJoCo body pose after forward kinematics:
-
-```python
-body = data.body("base_link")
-T_world_body = Transform(rotation=body.xmat.reshape(3, 3), translation=body.xpos)
-```
-
-The transform is a snapshot and remains unchanged when simulation data advances.
-
-### Plot coordinate frames
-
-`plot()` draws local x/y/z axes in red/green/blue, using meters and a Z-up view.
-It returns a Matplotlib 3D Axes for overlaying frames or saving an image. The view
-includes arrow endpoints and existing data with equal spatial scales. Matplotlib
-and its PyQt6 GUI backend are installed by `uv sync`; plotting imports are lazy.
-
-```python
-import matplotlib.pyplot as plt
-
-ax = Transform.identity().plot(label="world", length=0.3, show=False)
-T_world_robot.plot(ax=ax, label="robot", length=0.3)
-ax.figure.savefig("frames.png", dpi=150)
-plt.show()
-```
-
-By default, `plot()` shows a window only when it creates a new figure. Pass
-`show=False` to suppress it or `show=True` to show a supplied Axes. All overlaid
-transforms must be expressed relative to the same parent frame. For headless
-rendering, set `MPLBACKEND=Agg` and use `show=False`.
-
-The `if __name__ == "__main__":` block in `transform_utils.py` creates a world frame
-with `from_pose_mrad()` and a tool frame with `from_pose_mmdeg()`, prints their
-pose representations, and plots both in one window. Run it directly:
-
-```bash
-uv run python src/mujoco_lab/utils/transform_utils.py
-```
-
-## Project layout
-
-```text
-src/mujoco_lab/
-  robot.py                # Robot factory
-  environment.py          # Environment factory
-  simulation.py           # MuJoCo model loading and state initialization
-  viewer.py               # Native GUI, callbacks, and offscreen rendering
-  cli.py                  # Model/environment/controller selection
-  utils/
-    transform_utils.py    # Rigid transforms, composition, inverse, point mapping
-  state/
-    joint_state.py        # JointState data and read_state()
-    dynamics.py           # Frame positions, Jacobian, and mass matrix
-  control/
-    pd.py                 # Original PD algorithm and gains
-    osc.py                # Original OSC algorithm and frame adaptation
-    trajectory.py         # Minimum-jerk interpolation
-    base.py               # Controller base class
-    stats.py              # Tracking and saturation statistics
-    factory.py            # Actuator validation and controller creation
-    runner.py             # Torque application and controlled stepping
-    visualization.py      # Controller markers and torque arrows
-  assets/
-    ur20/, ur30/, panda/, forte/
-    objects/
-    environments/
-examples/
-  manipulator.py          # --robot, --environment, --controller
-  warp_manipulator.py     # CUDA example with --robot and --environment
-scripts/                  # Asset import tools
-third_party/              # Original Forte sources with recorded removals
-tests/                   # Workspace validation
-```
-
-Robot assets include converted XML and their mesh/texture files, so no ROS or
-Isaac Sim installation is required for normal workspace execution. See the
-[asset guide](src/mujoco_lab/assets/README.md) for sources and licenses.
-
-## MuJoCo state and dynamics
-
-The workspace uses MuJoCo directly. Robot and environment factories compose MJCF
-assets and return native MuJoCo objects. The concrete
-[`Dynamics` class](src/mujoco_lab/state/dynamics.py) owns its reusable NumPy
-buffers and exposes them through getters. `JointState` and `read_state()` live in
-[`state/joint_state.py`](src/mujoco_lab/state/joint_state.py):
-
-```python
-from mujoco_lab import create_robot
-from mujoco_lab.state import read_state
-from mujoco_lab.state.dynamics import Dynamics
-
-model, data = create_robot("forte")
-joint_state = read_state(data)
-dynamics = Dynamics(model, data)
-position = dynamics.get_frame_position("ee_site")  # (3,), world coordinates, m
-jacobian = dynamics.get_jacobian("ee_site")  # (6, nv), linear then angular
-mass = dynamics.get_mass_matrix()  # (nv, nv), SI units
-```
-
-Frame names resolve to MJCF sites. The geometric Jacobian
-maps generalized velocity to the frame origin's linear velocity followed by
-angular velocity, both in world coordinates. Matrix columns and mass-matrix axes
-follow the same generalized velocity order. Position-only OSC uses `jacobian[:3]`;
-its equations, gains, reference trajectories, and update order are preserved.
-Its frame selector is now `frame="ee_site"` instead of `site="ee_site"`.
-
-Treat getter results as read-only borrowed arrays. A later call of the same getter
-may overwrite its buffer, including a Jacobian query for a different frame.
-Simulation updates can also change live views. Use `.copy()` for a persistent
-snapshot. Getters neither advance physics nor implicitly call `mj_forward`.
-
-The controllers operate on one robot with NumPy arrays. `state/` owns state data
-and read access; it does not depend on `control/`. Controllers consume `JointState`
-and the dynamics getters. `control/factory.py` creates and validates controllers,
-while `control/runner.py` applies torque limits and advances physics.
-`control/base.py` holds the controller base class. Controller equations remain
-separate from rendering and file loading.
-
-## Original Forte source
-
-The upstream snapshot is retained under
-`third_party/forte-arm-isaac-mujoco-demos/` at commit
-`d0846d26a940f630fbb6bd54aaa2de821aee8f14`.
-
-```bash
-uv run python third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts/pd_control.py --headless --duration 12
-uv run python third_party/forte-arm-isaac-mujoco-demos/Forte_mujoco/scripts/osc_control.py --headless --duration 12
-```
-
-The workspace integrates its algorithms and control helpers into `control/`,
-state and dynamics access into `state/`, model loading into `simulation.py`, and
-rendering into `viewer.py`, preserving the equations and numeric settings.
-The complete `Forte_mujoco` subtree is unchanged. Sixteen unrelated Isaac template
-files were removed as requested and recorded in the source manifest. The actual
-Forte reaching task and training tools remain available. See
-[upstream source notes](third_party/README.md).
-
-## Validation and packaging
-
-```bash
-uv sync --locked
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv build
-```
-
-The wheel includes the workspace, packaged controller code, assets, and provenance.
-The source distribution additionally includes the retained third-party snapshot
-and its documented removal list.
-Use the commands above to check GUI control and rendering, and the Warp example
-for a CUDA smoke test. All workspace documentation is maintained in English.
-
-To use the package from another uv project:
-
-```bash
-uv add --editable /home/jeonghan/workspace/mujoco-lab
-```
-
-## References
-
-- [MuJoCo Python API](https://mujoco.readthedocs.io/en/stable/python.html)
-- [MuJoCo Warp](https://mujoco.readthedocs.io/en/latest/mjwarp/index.html)
-- [Original Forte repository](https://github.com/jahirsadik/forte-arm-isaac-mujoco-demos)
-- [uv project management](https://docs.astral.sh/uv/guides/projects/)
+IK keeps the existing planner's least-squares tolerances: 8 mm position error
+and 1/3 rad orientation error, with orientation residual weight 0.18. It raises
+`ValueError` for an unreachable pose and does not check collision-free motion.
+The Panda cube task now calls this shared method while retaining its existing
+downward grasp targets and motion sequence.

@@ -1,41 +1,73 @@
 """Select a manipulator: uv run python examples/manipulator.py --robot panda."""
 
-import argparse
+from dataclasses import dataclass
+from typing import Literal
 
-from mujoco_lab import ENVIRONMENT_NAMES, ROBOT_NAMES, create_robot
-from mujoco_lab.control import CONTROLLER_NAMES, create_controller, run_steps
-from mujoco_lab.viewer import show
+import tyro
+
+from mujoco_lab import (
+    ENVIRONMENT_NAMES,
+    ROBOT_NAMES,
+    RobotSpec,
+    Simulator,
+    SimulatorManager,
+    create_environment,
+)
+from mujoco_lab.control import CONTROLLER_NAMES, create_controller, demo_target_updater
+
+
+@dataclass
+class Config:
+    """Options for running one bundled manipulator."""
+
+    robot: Literal[ROBOT_NAMES]
+    environment: Literal[ENVIRONMENT_NAMES] = "empty"
+    controller: Literal[CONTROLLER_NAMES] = "none"
+    headless: bool = False
+    steps: int = 1000
+    dt: float = 0.002
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a manipulator created by the robot factory")
-    parser.add_argument("--robot", choices=ROBOT_NAMES, required=True)
-    parser.add_argument("--environment", choices=ENVIRONMENT_NAMES, default="empty")
-    parser.add_argument("--controller", choices=CONTROLLER_NAMES, default="none")
-    parser.add_argument(
-        "--headless", action="store_true", help="Run physics without opening a window"
-    )
-    parser.add_argument("--steps", type=int, default=1000, help="Physics steps in headless mode")
-    args = parser.parse_args()
-    if args.steps < 0:
-        parser.error("--steps must be zero or greater")
+    manager = SimulatorManager.get_instance()
+    logger = manager.logger
+    config = tyro.cli(Config, description="Run a manipulator in a MuJoCo scene")
+    if config.steps < 0:
+        logger.error("--steps must be zero or greater", exit_code=2)
 
-    model, data = create_robot(args.robot, environment=args.environment)
     try:
-        controller = create_controller(args.controller, model, data)
-    except ValueError as error:
-        parser.error(str(error))
-    if args.headless:
-        stats = run_steps(model, data, args.steps, controller)
-        print(
-            f"{args.robot}: simulated {data.time:.3f} seconds; "
-            f"environment = {args.environment}; qpos = {data.qpos}"
+        simulator = Simulator(
+            create_environment(config.environment),
+            robots=[RobotSpec(config.robot, config.robot)],
+            dt=config.dt,
         )
-        if controller is not None:
-            print(stats.describe("tracking error", "rad" if args.controller == "pd" else "m"))
+        robot = simulator.robots[config.robot]
+        robot.change_controller(create_controller(config.controller, robot))
+        if config.robot == "forte" and config.controller in ("pd", "osc"):
+            simulator.target_updater = demo_target_updater(
+                simulator, {robot.name: config.controller}
+            )
+    except ValueError as error:
+        logger.error(str(error), exit_code=2)
+    data = simulator.data
+    if config.headless:
+        stats = simulator.run_steps(config.steps)[robot.name]
+        print(
+            f"{config.robot}: simulated {data.time:.3f} seconds; "
+            f"environment = {config.environment}; qpos = {data.qpos}"
+        )
+        if robot.controller is not None:
+            unit = {"pd": "joint units", "position": "joint units", "osc": "m"}[config.controller]
+            print(stats.describe("tracking error", unit))
         return
 
-    show(model, data, controller)
+    name = "manipulator"
+    manager.add_simulator(name, simulator)
+    try:
+        manager.show(name)
+    finally:
+        if manager.simulators.get(name) is simulator:
+            manager.remove_simulator(name)
 
 
 if __name__ == "__main__":

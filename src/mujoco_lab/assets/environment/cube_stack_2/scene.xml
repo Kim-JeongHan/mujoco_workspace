@@ -1,0 +1,9 @@
+<mujoco model="cube_stack_2">
+  <include file="../cube_furniture.xml"/>
+  <include file="../cube_defaults.xml"/>
+  <include file="layout.xml"/>
+  <asset>
+    <model name="table" file="../objects/table/model.xml"/>
+    <model name="large_shelf" file="../objects/large_shelf/model.xml"/>
+  </asset>
+</mujoco>

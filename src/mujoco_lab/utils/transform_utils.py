@@ -67,7 +67,6 @@ class Transform:
 
         RPY uses extrinsic (fixed-axis) xyz Euler angles.
         """
-        pose = np.asarray(pose, dtype=float)
         return cls(rotation=Rotation.from_euler("xyz", pose[3:]), translation=pose[:3])
 
     @classmethod
@@ -104,7 +103,7 @@ class Transform:
         pose[..., :3] *= 1000.0
         return pose
 
-    def as_xyqquat(self) -> NDArray[np.float64]:
+    def as_xyzquat(self) -> NDArray[np.float64]:
         """Return [x, y, z, qw, qx, qy, qz] in meters and MuJoCo quaternion order."""
         return np.concatenate(
             (self.as_translation(), self.as_rotation().as_quat(scalar_first=True)), axis=-1
@@ -213,6 +212,6 @@ if __name__ == "__main__":
     H2 = Transform.from_pose_mmdeg([500, 200, 400, 20, -15, 35])
     print("Tool pose (m/rad):", H2.as_pose_mrad())
     print("Tool pose (mm/deg):", H2.as_mmdeg())
-    print("Tool pose (m, wxyz):", H2.as_xyqquat())
+    print("Tool pose (m, wxyz):", H2.as_xyzquat())
     ax = H1.plot(label="world", length=0.3, show=False)
     H2.plot(ax=ax, label="tool", length=0.3, show=True)

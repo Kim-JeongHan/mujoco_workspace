@@ -5,37 +5,94 @@ import mujoco
 import numpy as np
 import pytest
 
-from mujoco_lab import ENVIRONMENT_NAMES, create_robot, load_simulation
-from mujoco_lab.simulation import ASSET_ROOT as ASSETS
+from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
+from mujoco_lab.assets import ASSET_PATH, ROBOT_NAMES, ROBOT_SCENES
+from mujoco_lab.robot import _load_asset
+
+ASSETS = ASSET_PATH / "robot"
 
 
-@pytest.mark.parametrize("name,nv,nu", [("ur20", 6, 6), ("ur30", 6, 6), ("panda", 9, 8)])
+@pytest.mark.parametrize("name", ROBOT_NAMES)
+def test_bundled_robot_home_times_are_zero(name):
+    spec, _ = _load_asset(name)
+    assert spec.key("home").time == 0
+
+
+def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypatch):
+    path = tmp_path / "robot.xml"
+    path.write_text("""<mujoco>
+      <worldbody>
+        <site name="world_site"/>
+        <body name="root">
+          <joint name="joint"/>
+          <geom type="sphere" size="0.1"/>
+          <site name="tip"/><site/>
+        </body>
+      </worldbody>
+      <actuator><motor name="motor" joint="joint"/></actuator>
+      <keyframe><key name="home" time="2" qpos="0.4" qvel="0.2" ctrl="0.3"/></keyframe>
+    </mujoco>""")
+    monkeypatch.setitem(ROBOT_SCENES, "test", path)
+    compile_spec = mujoco.MjSpec.compile
+    compilations = []
+
+    def compile_once(spec):
+        compilations.append(spec.modelname)
+        return compile_spec(spec)
+
+    monkeypatch.setattr(mujoco.MjSpec, "compile", compile_once)
+    sim = Simulator(create_environment("empty"), robots=[RobotSpec("arm", "test")])
+    assert len(compilations) == 1
+    robot = sim.robots["arm"]
+    assert robot.state.site_id("tip") == sim.model.site("arm/tip").id
+    with pytest.raises(ValueError, match="no site"):
+        robot.state.site_id("world_site")
+    sim.run_steps(3)
+    sim.reset()
+    assert sim.data.time == 0
+    np.testing.assert_array_equal(sim.data.qpos, [0.4])
+    np.testing.assert_array_equal(sim.data.qvel, [0.2])
+    np.testing.assert_array_equal(sim.data.ctrl, [0.3])
+
+
+@pytest.mark.parametrize("name,nv,nu", [("panda", 9, 8)])
 @pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
 def test_robot_home_pose_and_position_servos(name, nv, nu, environment):
-    model, data = create_robot(name, environment=environment)
-    assert model.nv == nv
-    assert model.nu == nu
-    home = model.key("home")
-    np.testing.assert_allclose(data.qpos, home.qpos)
-    np.testing.assert_allclose(data.ctrl, home.ctrl)
-    assert data.ncon == 0
+    sim = Simulator(create_environment(environment), robots=[RobotSpec(name, name)])
+    model, data = sim.model, sim.data
+    robot = sim.robots[name]
+    assert robot.state.nv == nv
+    assert robot.nu == nu
+    home = model.key(name + "/home")
+    np.testing.assert_allclose(
+        data.qpos[robot.state.qpos_indices], home.qpos[robot.state.qpos_indices]
+    )
+    np.testing.assert_allclose(data.ctrl[robot.actuator_ids], home.ctrl[robot.actuator_ids])
+    assert all(
+        not model.geom(contact.geom1).name.startswith(name + "/")
+        and not model.geom(contact.geom2).name.startswith(name + "/")
+        for contact in data.contact
+    )
     mujoco.mj_step(model, data, nstep=1000)
     assert np.isfinite(data.qpos).all()
     assert np.isfinite(data.qvel).all()
     assert int(data.warning.number.sum()) == 0
-    assert np.max(np.abs(data.qpos - home.qpos)) < 0.15
+    assert (
+        np.max(np.abs(data.qpos[robot.state.qpos_indices] - home.qpos[robot.state.qpos_indices]))
+        < 0.15
+    )
 
 
-@pytest.mark.parametrize("name", ["ur20", "ur30", "panda"])
-def test_source_joint_limits_and_link_masses_are_preserved(name):
-    model, _ = load_simulation(ASSETS / name / "scene.xml")
-    source = ET.parse(ASSETS / name / "source/robot.urdf").getroot()
-    for link in source.findall("link"):
+@pytest.mark.parametrize("name", ["panda"])
+def test_mjcf_joint_limits_and_link_masses_match_urdf(name):
+    model = Simulator(mujoco.MjSpec.from_file(str(ASSETS / name / "scene.xml"))).model
+    urdf = ET.parse(ASSETS / name / "robot.urdf").getroot()
+    for link in urdf.findall("link"):
         mass = link.find("inertial/mass")
         if mass is not None:
             actual = float(model.body(link.attrib["name"]).mass[0])
             assert actual == pytest.approx(float(mass.attrib["value"]), rel=1e-5)
-    for joint in source.findall("joint"):
+    for joint in urdf.findall("joint"):
         if joint.attrib["type"] in {"fixed", "continuous"}:
             continue
         limit = joint.find("limit")
@@ -49,16 +106,15 @@ def rotation(axis, angle):
     return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * (cross @ cross)
 
 
-@pytest.mark.parametrize("name", ["ur20", "ur30", "panda"])
-def test_forward_kinematics_matches_original_urdf(name):
-    model, data = load_simulation(ASSETS / name / "scene.xml")
-    source = ET.parse(ASSETS / name / "source/robot.urdf").getroot()
-    joints = source.findall("joint")
+@pytest.mark.parametrize("name", ["panda"])
+def test_forward_kinematics_matches_urdf(name):
+    simulator = Simulator(mujoco.MjSpec.from_file(str(ASSETS / name / "scene.xml")))
+    data = simulator.data
+    urdf = ET.parse(ASSETS / name / "robot.urdf").getroot()
+    joints = urdf.findall("joint")
     children = {j.find("child").attrib["link"] for j in joints}
     root = next(
-        link.attrib["name"]
-        for link in source.findall("link")
-        if link.attrib["name"] not in children
+        link.attrib["name"] for link in urdf.findall("link") if link.attrib["name"] not in children
     )
     transforms = {root: np.eye(4)}
     pending = joints.copy()
@@ -96,21 +152,22 @@ def test_forward_kinematics_matches_original_urdf(name):
 
 
 def test_panda_fingers_remain_coupled_when_commanded():
-    model, data = create_robot("panda", environment="warehouse")
+    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec("panda", "panda")])
+    model, data = sim.model, sim.data
     assert [model.actuator(i).name for i in range(model.nu)] == [
-        *(f"panda_joint{i}" for i in range(1, 8)),
-        "panda_finger_joint1",
+        *(f"panda/panda_joint{i}" for i in range(1, 8)),
+        "panda/panda_finger_joint1",
     ]
-    data.actuator("panda_finger_joint1").ctrl[0] = 0.01
+    data.actuator("panda/panda_finger_joint1").ctrl[0] = 0.01
     mujoco.mj_step(model, data, nstep=1500)
-    left = float(data.joint("panda_finger_joint1").qpos[0])
-    right = float(data.joint("panda_finger_joint2").qpos[0])
+    left = float(data.joint("panda/panda_finger_joint1").qpos[0])
+    right = float(data.joint("panda/panda_finger_joint2").qpos[0])
     assert abs(left - right) < 1e-3
     assert left < 0.03
     assert int(data.warning.number.sum()) == 0
 
 
-@pytest.mark.parametrize("name", ["ur20", "ur30", "panda", "forte"])
+@pytest.mark.parametrize("name", ["panda", "forte"])
 def test_robot_files_resolve_inside_the_asset_directory(name):
     directory = ASSETS / name
     for filename in ["scene.xml", "robot.xml"]:

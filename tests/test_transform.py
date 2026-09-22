@@ -66,7 +66,7 @@ def test_transform_is_a_snapshot_of_inputs_and_conversion_results():
     transform.as_translation()[:] = 0
     transform.as_pose_mrad()[:] = 0
     transform.as_pose_mmrad()[:] = 0
-    transform.as_xyqquat()[:] = 0
+    transform.as_xyzquat()[:] = 0
     transform.as_mmdeg()[:] = 0
     transform.as_matrix()[:] = 0
     np.testing.assert_array_equal(transform.as_matrix(), expected)
@@ -124,7 +124,7 @@ def test_quaternion_pose_uses_meters_and_mujoco_scalar_first_order():
     transform = Transform(
         rotation=Rotation.from_quat(quat, scalar_first=True), translation=[0.125, -0.25, 0.8]
     )
-    result = transform.as_xyqquat()
+    result = transform.as_xyzquat()
     assert result.shape == (7,)
     np.testing.assert_allclose(result, [0.125, -0.25, 0.8, *quat], atol=1e-14)
 
@@ -144,11 +144,11 @@ def test_pose_factories_convert_units_and_round_trip_rpy():
     np.testing.assert_allclose(from_mrad.as_translation(), [0.125, -0.25, 0.8], atol=1e-14)
 
 
-def test_transform_utils_import_does_not_load_a_simulator(tmp_path):
+def test_transform_utils_import_does_not_load_optional_runtimes(tmp_path):
     code = """
 import sys
 from mujoco_lab.utils import Transform
 assert Transform().apply([1, 2, 3]).tolist() == [1, 2, 3]
-assert not {'mujoco', 'mujoco_warp', 'isaaclab', 'isaacsim', 'matplotlib'} & sys.modules.keys()
+assert not {'mujoco_warp', 'isaaclab', 'isaacsim', 'matplotlib'} & sys.modules.keys()
 """
     subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True)
