@@ -68,8 +68,7 @@ class MountainTerrain:
         self._boole_nodes = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
         self._boole_weights = np.array([7.0, 32.0, 12.0, 32.0, 7.0], dtype=float) / 90.0
 
-    @property
-    def bounds(self) -> list[tuple[float, float]]:
+    def get_bounds(self) -> list[tuple[float, float]]:
         """Return 2D planner bounds for the terrain domain."""
         half_size = self.world_size / 2.0
         return [(-half_size, half_size), (-half_size, half_size)]

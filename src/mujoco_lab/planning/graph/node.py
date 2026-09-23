@@ -151,16 +151,6 @@ class Node:
         )
         return f"Node(state=({state_str}), parent={parent_str}, cost={self.cost:.2f})"
 
-    def __eq__(self, other: object) -> bool:
-        """Check equality based on state."""
-        if not isinstance(other, Node):
-            return False
-        return np.allclose(self.state, other.state)
-
-    def __hash__(self) -> int:
-        """Hash based on state."""
-        return hash(tuple(self.state))
-
     def __lt__(self, other: "Node") -> bool:
         """Define less-than for heap operations (based on unique id)."""
         return id(self) < id(other)

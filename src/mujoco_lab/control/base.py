@@ -7,9 +7,10 @@ from mujoco_lab.state import JointState, RobotState
 
 
 class Controller:
-    """Compute control inputs before Robot applies actuator limits."""
+    """Compute selected joint torque or position commands before Robot applies limits."""
 
     name = "controller"
+    output_kind = "torque"
     tracking_error: float | None = None
     _owner = None
 
@@ -24,7 +25,7 @@ class Controller:
         return ControlTarget(state.qpos)
 
     def compute(self, state: JointState, target: ControlTarget) -> np.ndarray:
-        """Return native actuator inputs; torque controllers return values in Nm."""
+        """Return one torque or position command per selected joint."""
         raise NotImplementedError
 
     def reset(self) -> None:
@@ -33,3 +34,7 @@ class Controller:
 
     def summary(self) -> str:
         return ""
+
+    def get_tracking_error(self) -> float | None:
+        """Return the latest controller tracking error, if available."""
+        return self.tracking_error

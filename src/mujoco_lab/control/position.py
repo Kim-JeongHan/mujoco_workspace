@@ -17,6 +17,7 @@ class PositionController(Controller):
     """
 
     name = "joint position"
+    output_kind = "position"
 
     def __init__(self, kp: ArrayLike, gravity_compensation: bool | ArrayLike = True):
         self.kp = np.array(kp, dtype=float, copy=True)

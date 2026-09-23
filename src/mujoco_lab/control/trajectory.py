@@ -1,6 +1,7 @@
-"""External seven-axis references for the curated ForteV1_RobStride model."""
+"""Time-based joint trajectories and bundled robot demo references."""
 
 import numpy as np
+from scipy.interpolate import CubicHermiteSpline
 
 from mujoco_lab.control.target import ControlTarget
 
@@ -27,6 +28,128 @@ def min_jerk(fraction: float) -> tuple[float, float]:
     blend = 10 * u**3 - 15 * u**4 + 6 * u**5
     slope = 30 * u**2 - 60 * u**3 + 30 * u**4
     return blend, slope
+
+
+class JointTrajectory:
+    """Time a C1 joint curve, with an exact stop-at-waypoints polyline fallback.
+
+    Smooth segments may leave the polyline, and acceleration may jump at knots.
+    """
+
+    def __init__(
+        self,
+        path: np.ndarray,
+        max_velocity: float | np.ndarray,
+        max_acceleration: float | np.ndarray,
+        *,
+        smooth: bool = True,
+    ) -> None:
+        waypoints = np.array(path, dtype=float, copy=True)
+        if waypoints.ndim != 2 or not all(waypoints.shape) or not np.isfinite(waypoints).all():
+            raise ValueError("path must be a nonempty finite 2D array of joint positions")
+        limits = []
+        for name, value in (
+            ("max_velocity", max_velocity),
+            ("max_acceleration", max_acceleration),
+        ):
+            try:
+                limit = np.broadcast_to(np.asarray(value, dtype=float), (waypoints.shape[1],))
+            except ValueError as exc:
+                raise ValueError(f"{name} must be scalar or one value per joint") from exc
+            if not np.isfinite(limit).all() or np.any(limit <= 0):
+                raise ValueError(f"{name} must contain positive finite values")
+            limits.append(limit)
+        velocity, acceleration = limits
+        distance = np.abs(np.diff(waypoints, axis=0))
+        durations = (
+            np.maximum(
+                np.max((15 / 8) * distance / velocity, axis=1),
+                np.max(np.sqrt((10 / np.sqrt(3)) * distance / acceleration), axis=1),
+            )
+            if len(waypoints) > 1
+            else np.empty(0)
+        )
+        if not np.isfinite(durations).all():
+            raise ValueError("path and limits must yield finite segment durations")
+        self.path = waypoints
+        self.path.flags.writeable = False
+        self.waypoint_times = np.r_[0.0, np.cumsum(durations)]
+        if not np.isfinite(self.waypoint_times).all():
+            raise ValueError("path and limits must yield a finite total duration")
+        self.smooth = smooth
+        self._coefficients = None
+        if smooth and self.waypoint_times[-1] > 0:
+            active = np.r_[True, np.any(np.diff(waypoints, axis=0) != 0, axis=1)]
+            knots = waypoints[active]
+            knot_times = self.waypoint_times[active]
+            span = np.diff(knot_times)[:, None]
+            secants = np.diff(knots, axis=0) / span
+            slopes = np.zeros_like(knots)
+            if len(knots) > 2:
+                slopes[1:-1] = (secants[:-1] * span[1:] + secants[1:] * span[:-1]) / (
+                    span[:-1] + span[1:]
+                )
+            coefficients = CubicHermiteSpline(knot_times, knots, slopes, axis=0).c
+            a, b, c = coefficients[:3]
+            vertex = np.divide(-b, 3 * a, out=np.zeros_like(a), where=a != 0)
+            vertex_velocity = (3 * a * vertex + 2 * b) * vertex + c
+            peak_velocity = np.maximum.reduce(
+                (
+                    np.abs(c),
+                    np.abs((3 * a * span + 2 * b) * span + c),
+                    np.where((vertex > 0) & (vertex < span), np.abs(vertex_velocity), 0),
+                )
+            )
+            peak_acceleration = np.maximum(np.abs(2 * b), np.abs(6 * a * span + 2 * b))
+            scale = max(
+                float(np.max(peak_velocity / velocity)),
+                float(np.sqrt(np.max(peak_acceleration / acceleration))),
+            )
+            if (
+                scale <= 0
+                or not np.isfinite(scale)
+                or not np.isfinite(self.waypoint_times * scale).all()
+            ):
+                raise ValueError("path and limits must yield a finite total duration")
+            self.waypoint_times *= scale
+            self._knot_times = knot_times * scale
+            self._coefficients = coefficients.copy()
+            self._coefficients[0] /= scale**3
+            self._coefficients[1] /= scale**2
+            self._coefficients[2] /= scale
+        self.waypoint_times.flags.writeable = False
+        self.duration = float(self.waypoint_times[-1])
+
+    def sample(self, elapsed: float) -> ControlTarget:
+        """Return joint position, velocity, and acceleration at elapsed seconds."""
+        if not np.isfinite(elapsed):
+            raise ValueError("elapsed must be finite")
+        if elapsed <= 0:
+            position = self.path[0]
+            return ControlTarget(position, np.zeros_like(position), np.zeros_like(position))
+        if elapsed >= self.duration:
+            position = self.path[-1]
+            return ControlTarget(position, np.zeros_like(position), np.zeros_like(position))
+        if self._coefficients is not None:
+            index = int(np.searchsorted(self._knot_times, elapsed, side="right") - 1)
+            local = elapsed - self._knot_times[index]
+            a, b, c, d = self._coefficients[:, index]
+            return ControlTarget(
+                ((a * local + b) * local + c) * local + d,
+                (3 * a * local + 2 * b) * local + c,
+                6 * a * local + 2 * b,
+            )
+        index = int(np.searchsorted(self.waypoint_times, elapsed, side="right") - 1)
+        duration = self.waypoint_times[index + 1] - self.waypoint_times[index]
+        fraction = (elapsed - self.waypoint_times[index]) / duration
+        blend, slope = min_jerk(fraction)
+        acceleration = 60 * fraction - 180 * fraction**2 + 120 * fraction**3
+        delta = self.path[index + 1] - self.path[index]
+        return ControlTarget(
+            self.path[index] + delta * blend,
+            delta * slope / duration,
+            delta * acceleration / duration**2,
+        )
 
 
 def pd_waypoint_target(

@@ -1,4 +1,4 @@
-"""ForteV1_RobStride arm control with a separate native gripper target."""
+"""ForteV1_RobStride selected-joint control with a separate gripper target."""
 
 import os
 import subprocess
@@ -50,34 +50,40 @@ def test_seven_axis_controller_math_on_numpy_snapshots():
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_connected_controller_uses_actuated_state_and_eight_native_inputs(mode):
+def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     sim = forte_simulator()
     robot = sim.robots["robot"]
     controller = create_controller(mode, robot)
     robot.change_controller(controller)
     assert robot.state.nq == robot.state.nv == 9
-    assert robot.nu == 8
+    assert robot.num_actuators == 8
     assert robot.target.position.shape == ((7,) if mode == "pd" else (3,))
-    state = controller.state
-    assert controller.algorithm._owner is state
-    assert state.nv == 7
+    state = robot.state
+    assert controller._owner is state
+    assert robot.control_joint_names == tuple(state.joint_names[:7])
+    joint_slots = robot.control_joint_slots
     np.testing.assert_array_equal(
-        state.get_jacobian("ee_site"), robot.state.get_jacobian("ee_site")[:, :7]
+        state.get_jacobian("ee_site", joint_slots),
+        robot.state.get_jacobian("ee_site")[:, joint_slots],
     )
-    np.testing.assert_array_equal(state.get_mass_matrix(), robot.state.get_mass_matrix()[:7, :7])
-    command = controller.compute(robot.joint_state, robot.target)
-    assert command.shape == (8,)
-    assert command[-1] == 0
-    controller.set_gripper_target(-0.01)
+    np.testing.assert_array_equal(
+        state.get_mass_matrix(joint_slots),
+        robot.state.get_mass_matrix()[np.ix_(joint_slots, joint_slots)],
+    )
+    command = controller.compute(robot.get_control_state(), robot.target)
+    assert command.shape == (7,)
+    robot.control()
+    assert sim.data.ctrl[robot.actuator_ids[-1]] == 0
+    robot.gripper.set_target(-0.01)
     sim.step()
     assert sim.data.ctrl[robot.actuator_ids[-1]] == -0.01
     assert robot.state.snapshot().qpos.shape == (9,)
     with pytest.raises(ValueError, match="gripper target"):
-        controller.set_gripper_target(-0.025)
+        robot.gripper.set_target(-0.025)
     with pytest.raises(ValueError, match="gripper target"):
-        controller.set_gripper_target(np.nan)
+        robot.gripper.set_target(np.nan)
     sim.reset()
-    assert controller.gripper_target == 0
+    assert robot.gripper.get_target() == 0
 
 
 def test_pd_targets_respect_bounded_source_axes():

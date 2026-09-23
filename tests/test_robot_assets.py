@@ -6,15 +6,15 @@ import numpy as np
 import pytest
 
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
-from mujoco_lab.assets import ASSET_PATH, ROBOT_NAMES, ROBOT_SCENES
-from mujoco_lab.robot import _load_asset
+from mujoco_lab.assets import ASSET_PATH, ROBOT_ASSETS, ROBOT_NAMES, RobotAsset
+from mujoco_lab.assets.loader import load_asset
 
 ASSETS = ASSET_PATH / "robot"
 
 
 @pytest.mark.parametrize("name", ROBOT_NAMES)
 def test_bundled_robot_home_times_are_zero(name):
-    spec, _ = _load_asset(name)
+    spec, _ = load_asset(name)
     assert spec.key("home").time == 0
 
 
@@ -32,7 +32,7 @@ def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypa
       <actuator><motor name="motor" joint="joint"/></actuator>
       <keyframe><key name="home" time="2" qpos="0.4" qvel="0.2" ctrl="0.3"/></keyframe>
     </mujoco>""")
-    monkeypatch.setitem(ROBOT_SCENES, "test", path)
+    monkeypatch.setitem(ROBOT_ASSETS, "test", RobotAsset(path))
     compile_spec = mujoco.MjSpec.compile
     compilations = []
 
@@ -62,7 +62,7 @@ def test_robot_home_pose_and_position_servos(name, nv, nu, environment):
     model, data = sim.model, sim.data
     robot = sim.robots[name]
     assert robot.state.nv == nv
-    assert robot.nu == nu
+    assert robot.num_actuators == nu
     home = model.key(name + "/home")
     np.testing.assert_allclose(
         data.qpos[robot.state.qpos_indices], home.qpos[robot.state.qpos_indices]

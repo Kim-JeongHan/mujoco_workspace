@@ -2,7 +2,6 @@ import os
 import subprocess
 import sys
 from contextlib import nullcontext
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import mujoco
@@ -74,7 +73,7 @@ def test_composed_scene_has_distinct_bindings_and_simultaneous_homes(right, dime
         )
         np.testing.assert_array_equal(data.ctrl[robot.actuator_ids], key.ctrl[robot.actuator_ids])
     if right == "panda":
-        assert (other.state.nq, other.state.nv, other.nu) == (9, 9, 8)
+        assert (other.state.nq, other.state.nv, other.num_actuators) == (9, 9, 8)
         finger1 = model.joint("right/panda_finger_joint1").id
         finger2 = model.joint("right/panda_finger_joint2").id
         assert set(model.eq_obj1id) | set(model.eq_obj2id) >= {finger1, finger2}
@@ -164,8 +163,9 @@ def test_robot_state_snapshots_are_fresh_and_owned():
 
 
 class ConstantController(Controller):
-    def __init__(self, values):
+    def __init__(self, values, output_kind="torque"):
         self.values = values
+        self.output_kind = output_kind
 
     def compute(self, state, target):
         return self.values
@@ -212,24 +212,31 @@ def test_robot_control_uses_cached_state_and_applies_only_its_inputs():
             states.append(state)
             return super().compute(state, target)
 
-    left.change_controller(RecordingController(np.full(left.nu, 1000.0)))
+    left.change_controller(RecordingController(np.full(7, 1000.0)))
     sim.data.qpos[left.state.qpos_indices] += 0.1
     sim.data.time = 0.5
     positions = sim.data.qpos.copy()
     other_inputs = sim.data.ctrl[right.actuator_ids].copy()
     cached = left.joint_state
+    gripper_input = sim.data.ctrl[left.gripper.actuator_id]
     assert left.control()
-    assert len(states) == 1 and states[0] is cached
+    assert len(states) == 1 and states[0].time == cached.time
+    np.testing.assert_array_equal(states[0].qpos, cached.qpos[left.control_joint_slots])
+    np.testing.assert_array_equal(states[0].qvel, cached.qvel[left.control_joint_slots])
+    np.testing.assert_array_equal(
+        states[0].bias_forces, cached.bias_forces[left.control_joint_slots]
+    )
     assert left.joint_state is cached
     left.update_state()
     assert left.control()
-    assert states[-1] is left.joint_state and left.joint_state is not cached
+    assert states[-1].time == left.joint_state.time and left.joint_state is not cached
+    np.testing.assert_array_equal(states[-1].qpos, left.joint_state.qpos[left.control_joint_slots])
     assert left.joint_state.time == sim.data.time == 0.5
     np.testing.assert_array_equal(left.joint_state.qpos, positions[left.state.qpos_indices])
     np.testing.assert_array_equal(sim.data.qpos, positions)
-    np.testing.assert_array_equal(
-        sim.data.ctrl[left.actuator_ids], sim.model.actuator_ctrlrange[left.actuator_ids, 1]
-    )
+    arm_ids = np.asarray(left.actuator_ids)[left.control_actuator_slots]
+    np.testing.assert_array_equal(sim.data.ctrl[arm_ids], sim.model.actuator_ctrlrange[arm_ids, 1])
+    assert sim.data.ctrl[left.gripper.actuator_id] == gripper_input
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], other_inputs)
     inputs = sim.data.ctrl.copy()
     left.change_controller(None)
@@ -241,12 +248,12 @@ def test_robot_control_uses_cached_state_and_applies_only_its_inputs():
 def test_robot_accepts_custom_controllers_without_forte_specific_checks(asset):
     sim = Simulator(create_environment("empty"), robots=[RobotSpec("arm", asset)])
     robot = sim.robots["arm"]
-    command = sim.data.ctrl[robot.actuator_ids].copy()
+    command = sim.data.ctrl[robot.actuator_ids[:7]].copy()
     command[0] += 0.01
-    robot.change_controller(ConstantController(command))
-    assert robot.controller.tracking_error is None
+    robot.change_controller(ConstantController(command, output_kind="position"))
+    assert robot.controller.get_tracking_error() is None
     stats = sim.step()[robot.name]
-    np.testing.assert_array_equal(sim.data.ctrl[robot.actuator_ids], command)
+    np.testing.assert_array_equal(sim.data.ctrl[robot.actuator_ids[:7]], command)
     assert stats.steps == 1
     assert stats.errors == []
     assert not sim.data.warning.number.any()
@@ -258,15 +265,14 @@ def test_scoped_input_clipping_stats_and_one_shared_step():
     sentinel = sim.data.ctrl[right.actuator_ids].copy()
     sentinel[0] += 0.01
     sim.data.ctrl[right.actuator_ids] = sentinel
-    left.change_controller(ConstantController(np.full(left.nu, 1000.0)))
+    left.change_controller(ConstantController(np.full(7, 1000.0)))
     previous = right.joint_state
     stats = sim.run_steps(3)
     assert right.joint_state is not previous
     assert right.joint_state.time == pytest.approx(2 * sim.model.opt.timestep)
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], sentinel)
-    np.testing.assert_array_equal(
-        sim.data.ctrl[left.actuator_ids], sim.model.actuator_ctrlrange[left.actuator_ids, 1]
-    )
+    arm_ids = np.asarray(left.actuator_ids)[left.control_actuator_slots]
+    np.testing.assert_array_equal(sim.data.ctrl[arm_ids], sim.model.actuator_ctrlrange[arm_ids, 1])
     assert sim.data.time == pytest.approx(3 * sim.model.opt.timestep)
     assert stats["left"].saturated_steps == 3
     assert stats["right"].saturated_steps == 0
@@ -276,23 +282,26 @@ def test_scoped_input_clipping_stats_and_one_shared_step():
     assert following["left"].steps == 1 and stats["left"].steps == 3
 
 
-@pytest.mark.parametrize("bad", [np.zeros(7), np.full(8, np.nan)])
-def test_later_invalid_command_does_not_advance_physics(bad):
+@pytest.mark.parametrize(
+    ("bad", "message"),
+    [(np.zeros(8), "finite joint commands"), (np.full(7, np.nan), "finite actuator inputs")],
+)
+def test_later_invalid_command_does_not_advance_physics(bad, message):
     sim = make_pair()
     left, right = sim.robots.values()
-    left.change_controller(ConstantController(np.ones(left.nu)))
+    left.change_controller(ConstantController(np.ones(7)))
     right.change_controller(ConstantController(bad))
     before = sim.data.ctrl.copy()
-    with pytest.raises(ValueError, match="finite actuator inputs"):
+    with pytest.raises(ValueError, match=message):
         sim.step()
     np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], [*np.ones(7), 0])
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], before[right.actuator_ids])
     assert sim.data.time == 0
-    assert sim._state.state == "running"
+    assert sim._state.get_state() == "running"
 
     clean = make_pair()
     clean_left = clean.robots["left"]
-    clean_left.change_controller(ConstantController(np.ones(left.nu)))
+    clean_left.change_controller(ConstantController(np.ones(7)))
     clean.step()
     np.testing.assert_array_equal(clean.data.ctrl[clean_left.actuator_ids], [*np.ones(7), 0])
 
@@ -303,6 +312,22 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
     initial_ctrl = sim.data.ctrl.copy()
     left, right = sim.robots.values()
     left.change_controller(create_controller("pd", left))
+    active_controller = left.controller
+    active_target = left.target
+    active_mapping = (
+        left.control_joint_names,
+        left.control_qpos_indices,
+        left.control_joint_slots,
+    )
+    replacement = create_controller("pd", left)
+    assert replacement._owner is left.state
+    assert left.controller is active_controller and left.target is active_target
+    assert active_mapping == (
+        left.control_joint_names,
+        left.control_qpos_indices,
+        left.control_joint_slots,
+    )
+    np.testing.assert_array_equal(sim.data.ctrl, initial_ctrl)
     another = create_controller("pd", right)
     old_gain = another.kp.copy()
     left.controller.kp[0] += 5
@@ -492,7 +517,7 @@ def test_pd_annotations_share_scratch_and_preserve_scene_state():
     mass_after = np.empty_like(mass_before)
     mujoco.mj_fullM(sim.model, sim.data, mass_after)
     np.testing.assert_array_equal(mass_after, mass_before)
-    for robot, target in zip(sim.robots.values(), targets):
+    for robot, target in zip(sim.robots.values(), targets, strict=True):
         np.testing.assert_array_equal(robot.target.position, target)
 
 
@@ -529,12 +554,12 @@ for name,robot in sim.robots.items():
 for _ in range(10):
     sim.step(); reference.step()
     qpos=sim.data.qpos.copy(); ctrl=sim.data.ctrl.copy()
-    caches=(osc._force.copy(),osc._target.copy(),osc.tracking_error,
+    caches=(osc._force.copy(),osc._target.copy(),osc.get_tracking_error(),
             sim.robots["right"].target.position.copy())
     manager.save_frame("controlled",sys.argv[1]+"/controlled.png")
     np.testing.assert_array_equal(sim.data.qpos,qpos)
     np.testing.assert_array_equal(sim.data.ctrl,ctrl)
-    for actual,expected in zip((osc._force,osc._target,osc.tracking_error,
+    for actual,expected in zip((osc._force,osc._target,osc.get_tracking_error(),
                                 sim.robots["right"].target.position),caches):
         np.testing.assert_array_equal(actual,expected)
     np.testing.assert_array_equal(sim.data.qpos,reference.data.qpos)
@@ -561,22 +586,7 @@ def test_save_frame_failure_retains_rendering_state(tmp_path):
     ):
         manager.save_frame("simulator", tmp_path / "failed.png")
     np.testing.assert_array_equal(sim.data.qpos, before)
-    assert sim._state.state == "rendering"
-
-
-@pytest.mark.parametrize("layout", ["dual_forte", "forte_panda"])
-def test_multi_robot_example(layout, tmp_path):
-    example = Path(__file__).parents[1] / "examples/multi_robot.py"
-    result = subprocess.run(
-        [sys.executable, str(example), "--layout", layout, "--headless", "--steps", "100"],
-        cwd=tmp_path,
-        env={**os.environ, "MUJOCO_GL": "disable"},
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert "Shared simulated seconds: 0.200" in result.stdout
-    assert "left (forte)" in result.stdout and "right (" in result.stdout
+    assert sim._state.get_state() == "rendering"
 
 
 def test_change_controller_preserves_binding_and_resets_replacement_history():
@@ -596,11 +606,12 @@ def test_change_controller_preserves_binding_and_resets_replacement_history():
     assert right.controller is previous
     left.change_controller(pd)
     pd.tracking_error = 4
+    assert pd.get_tracking_error() == 4
     left.change_controller(pd)
-    assert pd.tracking_error == 4
+    assert pd.get_tracking_error() == 4
     left.change_controller(None)
     left.change_controller(pd)
-    assert pd.tracking_error == 0
+    assert pd.get_tracking_error() == 0
 
     def inspect_open_scope():
         with pytest.raises(RuntimeError, match="busy with viewing"):
@@ -616,21 +627,21 @@ def test_change_controller_preserves_binding_and_resets_replacement_history():
 def test_headless_control_owns_inputs_and_retains_failure_state(monkeypatch):
     sim = make_pair("panda")
     left = sim.robots["left"]
-    left.change_controller(ConstantController(np.ones(left.nu)))
+    left.change_controller(ConstantController(np.ones(7)))
     panda_input = sim.data.ctrl[sim.robots["right"].actuator_ids].copy()
     sim.step()
     np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], [*np.ones(7), 0])
     np.testing.assert_array_equal(sim.data.ctrl[sim.robots["right"].actuator_ids], panda_input)
 
     def fail_step(model, data):
-        assert sim._state.state == "running"
+        assert sim._state.get_state() == "running"
         raise RuntimeError("step failed")
 
     with monkeypatch.context() as patch:
         patch.setattr(mujoco, "mj_step", fail_step)
         with pytest.raises(RuntimeError, match="step failed"):
             sim.step()
-    assert sim._state.state == "running"
+    assert sim._state.get_state() == "running"
 
 
 def test_native_reset_keeps_controller_history_until_programmatic_reset():

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from ..collision import ObstacleCollisionChecker
 from ..space import EdgePath, EuclideanSpace, PlanningSpace
 from .prm import PRM, PRMConfig, PRMStar, PRMStarConfig
 from .rrg import RRG, RRGConfig
@@ -26,7 +25,6 @@ __all__ = [
     "GoalBiasedSampler",
     "InformedRRTStar",
     "InformedSampler",
-    "ObstacleCollisionChecker",
     "PRMConfig",
     "PRMStar",
     "PRMStarConfig",

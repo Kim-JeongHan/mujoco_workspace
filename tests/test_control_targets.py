@@ -23,7 +23,7 @@ class TargetRecorder(Controller):
 
     def compute(self, state, target):
         self.seen.append((state.time, target.position.copy()))
-        return np.zeros(8)
+        return np.zeros(state.qpos.shape)
 
 
 def test_updater_runs_before_each_control_and_replays_after_reset():
@@ -42,7 +42,7 @@ def test_updater_runs_before_each_control_and_replays_after_reset():
     assert [value[1][0] for value in recorder.seen] == list(range(1, 11))
     assert sim.target_updater is update
     sim.reset()
-    np.testing.assert_array_equal(robot.target.position, robot.joint_state.qpos)
+    np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
     sim.step()
     assert calls[-1] == 0
     assert recorder.seen[-1][1][0] == 11
@@ -62,7 +62,7 @@ def test_manual_target_persists_and_switch_reinitializes_target_space():
     np.testing.assert_allclose(robot.target.position, robot.state.get_frame_position("ee_site"))
     robot.change_controller(create_controller("pd", robot))
     robot.update_state()
-    np.testing.assert_array_equal(robot.target.position, robot.joint_state.qpos[:7])
+    np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
     sim.reset()
     np.testing.assert_array_equal(robot.target.position, initial)
 
@@ -95,14 +95,14 @@ def test_updater_and_controller_error_prevent_physics_step():
     before = sim.data.time
 
     def fail(current):
-        assert current._state.state == "running"
+        assert current._state.get_state() == "running"
         raise RuntimeError("updater failed")
 
     sim.target_updater = fail
     with pytest.raises(RuntimeError, match="updater failed"):
         sim.step()
     assert sim.data.time == before
-    assert sim._state.state == "running"
+    assert sim._state.get_state() == "running"
 
 
 def test_no_controller_native_input_and_updater_each_tick():
@@ -120,7 +120,7 @@ def test_osc_supplied_derivatives_change_command_without_changing_target_positio
     osc = create_controller("osc", robot)
     robot.change_controller(osc)
     robot.update_state()
-    state = robot.joint_state
+    state = robot.get_control_state()
     position = robot.target.position.copy()
     zero = osc.compute(state, ControlTarget(position))
     derivative = osc.compute(
@@ -128,7 +128,7 @@ def test_osc_supplied_derivatives_change_command_without_changing_target_positio
         ControlTarget(position, velocity=np.array([0.01, 0, 0]), acceleration=[0, 0.2, 0]),
     )
     assert not np.array_equal(zero, derivative)
-    assert osc.tracking_error == pytest.approx(0)
+    assert osc.get_tracking_error() == pytest.approx(0)
     np.testing.assert_array_equal(osc._target, position)
 
 
@@ -143,5 +143,7 @@ def test_demo_trajectory_replays_after_reset(mode):
     sim.reset()
     assert sim.target_updater is updater
     sim.run_steps(20)
-    for actual, reference in zip((sim.data.qpos, sim.data.qvel, sim.data.ctrl), expected):
+    for actual, reference in zip(
+        (sim.data.qpos, sim.data.qvel, sim.data.ctrl), expected, strict=True
+    ):
         np.testing.assert_array_equal(actual, reference)

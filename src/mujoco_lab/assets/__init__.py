@@ -1,16 +1,22 @@
 """Bundled robot and environment asset locations."""
 
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class RobotAsset:
+    path: Path
+    gripper_actuator: str | None = None
+
 
 ASSET_PATH = Path(__file__).parent
 ROBOT_PATH = ASSET_PATH / "robot"
-ROBOT_SCENES = {
-    # "ur20": ROBOT_PATH / "ur20" / "robot.xml",
-    # "ur30": ROBOT_PATH / "ur30" / "robot.xml",
-    "panda": ROBOT_PATH / "panda" / "robot.xml",
-    "forte": ROBOT_PATH / "forte" / "robot.xml",
+ROBOT_ASSETS = {
+    "panda": RobotAsset(ROBOT_PATH / "panda" / "robot.xml", gripper_actuator="panda_finger_joint1"),
+    "forte": RobotAsset(ROBOT_PATH / "forte" / "robot.xml", gripper_actuator="gripper_motor"),
 }
-ROBOT_NAMES = tuple(ROBOT_SCENES)
+ROBOT_NAMES = tuple(ROBOT_ASSETS)
 
 ENVIRONMENT_PATH = ASSET_PATH / "environment"
 ENVIRONMENT_SCENES = {

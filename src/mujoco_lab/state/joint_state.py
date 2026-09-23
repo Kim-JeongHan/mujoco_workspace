@@ -9,7 +9,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class JointState:
-    """One robot's state in controller joint order and SI units.
+    """One robot's state in robot or selected controller joint order.
 
     RobotState.snapshot() supplies owned arrays that remain stable across later
     reads or steps. Arrays are mutable copies; frozen prevents field reassignment.
@@ -20,3 +20,12 @@ class JointState:
     qpos: np.ndarray
     qvel: np.ndarray
     bias_forces: np.ndarray
+
+    def select(self, slots: list[int]) -> JointState:
+        """Return an owned snapshot in the requested scalar-joint order."""
+        return JointState(
+            self.time,
+            self.qpos[slots],
+            self.qvel[slots],
+            self.bias_forces[slots],
+        )

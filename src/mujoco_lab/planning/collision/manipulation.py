@@ -15,13 +15,15 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
 
     Construct carry stages only after observing a physical two-finger grasp.
     The active cube follows that measured grasp-to-cube pose only in private
-    MuJoCo data. Call ``refresh`` at a new stage boundary to capture the current
-    scene and, when carrying, the current relative pose.
+    MuJoCo data. Place paths may allow shallow support contact near the measured
+    departure and intended destination, but not between them. Call ``refresh``
+    at a new stage boundary to capture the scene and current relative pose.
     """
 
     _CARRY_STAGES = frozenset(("lift", "above_place", "place"))
     _BOUND_EPS = 1e-5  # MuJoCo's soft joint limits permit tiny measured overshoots.
     _SELF_CONTACT_EPS = 1e-5  # Ignore mesh tessellation contact at numerical scale.
+    _FINGER_HULL_EPS = 5e-4  # Allow tiny contact on the same bodies as physical pads.
     _GRASP_STAGES = frozenset(("pick", "close", "lift", "above_place", "place", "release"))
     _STAGES = frozenset(
         ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
@@ -35,6 +37,7 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         bounds: Sequence[Sequence[float]] | None = None,
         edge_resolution: float = 0.05,
         support_geom: str | int | None = None,
+        departure_support_geom: str | int | None = None,
         grasp_geoms: Sequence[str | int] | None = None,
         grasp_penetration: float = 0.012,
         support_penetration: float = 0.004,
@@ -50,18 +53,13 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         self._support_penetration = float(support_penetration)
         self._support_xy_tolerance = float(support_xy_tolerance)
         self._support_name = support_geom
+        self._departure_support_name = departure_support_geom
         self._grasp_names = grasp_geoms
         self._configured = False
 
         if bounds is None:
             model, state = robot.model, robot.state
-            site = state.site_id("grasp")
-            ancestors = set()
-            body = int(model.site_bodyid[site])
-            while body:
-                ancestors.add(body)
-                body = int(model.body_parentid[body])
-            selected = [j for j in state.joint_ids if model.jnt_bodyid[j] in ancestors]
+            selected = [state.joint_ids[slot] for slot in state.get_frame_joint_slots("grasp")]
             bounds = []
             for joint in selected:
                 if model.jnt_limited[joint]:
@@ -105,14 +103,26 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
             cube_owned[body] = cube_owned[model.body_parentid[body]]
         self._cube_geoms = cube_owned[model.geom_bodyid]
         self._grasp_geom_ids = self._resolve_grasp_geoms()
+        self._finger_bodies = frozenset(
+            int(model.geom_bodyid[geom]) for geom in self._grasp_geom_ids
+        )
         support = self._support_name
         if support is None and phase == "lift":
             support = "table/box"
         self._support_geom_id = self._geom_id(support) if support is not None else None
+        departure = self._departure_support_name
+        self._departure_support_geom_id = (
+            self._geom_id(departure) if departure is not None else None
+        )
         if self._support_geom_id is not None and (
             self._owned_geoms[self._support_geom_id] or self._cube_geoms[self._support_geom_id]
         ):
             raise ValueError("support_geom must belong to the surroundings")
+        if self._departure_support_geom_id is not None and (
+            self._owned_geoms[self._departure_support_geom_id]
+            or self._cube_geoms[self._departure_support_geom_id]
+        ):
+            raise ValueError("departure_support_geom must belong to the surroundings")
         self._target_body = None
         if phase == "place" and self._support_geom_id is not None:
             target = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{cube}/object_target_0")
@@ -169,8 +179,10 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         mujoco.mj_fwdPosition(self.model, self._snapshot)
         if self._phase == "lift":
             self._support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
-        elif self._phase == "place" and self._target_body is not None:
-            self._support_xy = self._snapshot.xpos[self._target_body, :2].copy()
+        elif self._phase == "place":
+            self._departure_support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
+            if self._target_body is not None:
+                self._support_xy = self._snapshot.xpos[self._target_body, :2].copy()
         site_pos = self._snapshot.site_xpos[self._site_id]
         site_quat = np.empty(4)
         mujoco.mju_mat2Quat(site_quat, self._snapshot.site_xmat[self._site_id])
@@ -235,6 +247,14 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
                 and contact.dist >= -self._grasp_penetration
             ):
                 continue
+            if self._phase in self._CARRY_STAGES and cube_contact:
+                finger_geom = second if self._cube_geoms[first] else first
+                if (
+                    self._owned_geoms[finger_geom]
+                    and int(self.model.geom_bodyid[finger_geom]) in self._finger_bodies
+                    and contact.dist >= -self._FINGER_HULL_EPS
+                ):
+                    continue
             if (
                 self._phase in ("lift", "place")
                 and self._support_geom_id is not None
@@ -242,6 +262,18 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
                 and self._support_geom_id in pair
                 and contact.dist >= -self._support_penetration
                 and np.linalg.norm(self._scratch.xpos[self._cube_body, :2] - self._support_xy)
+                <= self._support_xy_tolerance
+            ):
+                continue
+            if (
+                self._phase == "place"
+                and self._departure_support_geom_id is not None
+                and cube_contact
+                and self._departure_support_geom_id in pair
+                and contact.dist >= -self._support_penetration
+                and np.linalg.norm(
+                    self._scratch.xpos[self._cube_body, :2] - self._departure_support_xy
+                )
                 <= self._support_xy_tolerance
             ):
                 continue

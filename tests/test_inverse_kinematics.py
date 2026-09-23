@@ -72,6 +72,42 @@ def pose_for(state, positions, frame="tool"):
     return Transform(rotation=data.site_xmat[site].reshape(3, 3), translation=data.site_xpos[site])
 
 
+def test_scalar_robot_joint_slots_ignore_earlier_environment_free_joint(state):
+    assert state.nq == state.nv == 4
+    assert state.qpos_indices[0] != state.dof_indices[0]
+    snapshot = state.snapshot()
+    np.testing.assert_array_equal(snapshot.qpos, state.data.qpos[state.qpos_indices])
+    np.testing.assert_array_equal(snapshot.qvel, state.data.qvel[state.dof_indices])
+    selected = snapshot.select([2, 0])
+    np.testing.assert_array_equal(selected.qpos, snapshot.qpos[[2, 0]])
+    np.testing.assert_array_equal(selected.qvel, snapshot.qvel[[2, 0]])
+
+
+@pytest.mark.parametrize(
+    "joint_xml,joint_type",
+    [
+        ('<freejoint name="unsupported"/>', "mjJNT_FREE"),
+        ('<joint name="unsupported" type="ball"/>', "mjJNT_BALL"),
+    ],
+)
+def test_robot_state_rejects_non_scalar_owned_joint_even_without_actuator(joint_xml, joint_type):
+    model = mujoco.MjModel.from_xml_string(f"""
+        <mujoco><worldbody><body name="root">
+          {joint_xml}<geom type="sphere" size="0.05" mass="1"/>
+        </body></worldbody></mujoco>
+    """)
+    with pytest.raises(ValueError, match=f"hinge/slide joints only.*unsupported.*{joint_type}"):
+        RobotState(
+            model,
+            mujoco.MjData(model),
+            name="robot",
+            prefix="",
+            root_name="root",
+            joint_names=("unsupported",),
+            site_names=(),
+        )
+
+
 def shared_fields(state):
     kind = mujoco.mjtState.mjSTATE_INTEGRATION
     integration = np.empty(mujoco.mj_stateSize(state.model, kind))

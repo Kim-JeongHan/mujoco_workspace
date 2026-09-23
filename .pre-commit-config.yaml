@@ -1,0 +1,77 @@
+repos:
+  # ============================================================
+  # Ruff: linting + auto-fix + formatting
+  # ============================================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+
+      - id: ruff-format
+
+  # ============================================================
+  # ty: static type checking
+  # ============================================================
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.81
+    hooks:
+      - id: ty
+
+  # ============================================================
+  # General file / repository checks
+  # ============================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Git / repository
+      - id: check-case-conflict
+      - id: check-merge-conflict
+
+      # Config / data syntax
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+
+      # MuJoCo MJCF / URDF
+      - id: check-xml
+
+      # Python syntax
+      - id: check-ast
+
+      # Prevent breakpoint(), pdb.set_trace(), etc.
+      - id: debug-statements
+
+      # File formatting
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+
+      - id: end-of-file-fixer
+
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+      # Large files
+      - id: check-added-large-files
+        args: [--maxkb=5000]
+
+      # Security
+      - id: detect-private-key
+
+      # Symlinks
+      - id: check-symlinks
+      - id: destroyed-symlinks
+
+      # Executable scripts
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # ============================================================
+  # Spell checking
+  # ============================================================
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        args:
+          - --skip=*.lock,*.json,*.xml,*.urdf,*.mjcf,*.stl,*.dae,*.obj,*.glb,*.usd,*.usda

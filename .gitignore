@@ -5,8 +5,12 @@ __pycache__/
 .ruff_cache/
 dist/
 outputs/
+/log/
+/data/*
+!/data/README.md
 MUJOCO_LOG.TXT
 
 ur20
 ur30
 third_party
+/docs/

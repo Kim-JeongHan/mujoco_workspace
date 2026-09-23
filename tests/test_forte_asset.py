@@ -60,19 +60,50 @@ def test_cad_model_has_seven_arm_axes_and_coupled_sliders():
     np.testing.assert_allclose(model.dof_armature[:7], 0.01)
     np.testing.assert_allclose(model.dof_damping[:7], 0.05)
     np.testing.assert_array_equal(data.qpos, model.key("forte/home").qpos)
+    np.testing.assert_array_equal(data.qpos, np.zeros(9))
     assert data.ncon == 0
     assert not data.warning.number.any()
 
 
-def test_cad_mass_and_zero_pose_tool_frame():
+def test_cad_mass_and_home_pose_tool_frame():
     sim = forte_sim()
     model, data = sim.model, sim.data
     assert model.body_mass.sum() == pytest.approx(7.4975378572836, abs=1e-9)
     assert np.all(model.body_inertia[1:] > 0)
     np.testing.assert_allclose(
         data.site("forte/ee_site").xpos,
-        [0.6348954, -0.04638256, 0.46258412],
+        [0.40238419, -0.06129355, 0.29965013],
         atol=1e-6,
+    )
+    upper_arm = data.body("forte/elbowlink").xpos - data.body("forte/upperarmright").xpos
+    forearm = data.body("forte/spiral_gear_2").xpos - data.body("forte/elbowlink").xpos
+    assert np.linalg.norm(upper_arm[:2]) < 0.03
+    assert upper_arm[2] > 0.33
+    assert abs(forearm[2]) < 1e-3
+    assert abs(forearm[1]) < 1e-3
+    assert np.linalg.norm(forearm[:2]) > 0.36
+    hand = data.site("forte/ee_site").xpos - data.body("forte/part_8_2").xpos
+    jaw = data.geom("forte/gripper_right_pad").xpos - data.geom("forte/gripper_left_pad").xpos
+    np.testing.assert_allclose(hand[:2], [0, 0], atol=1e-6)
+    assert hand[2] < -0.17
+    assert abs(jaw[2]) < 2e-5
+    purple_mesh = model.mesh("forte/Part_62").id
+    purple_geom = next(
+        index
+        for index in range(model.ngeom)
+        if model.geom_type[index] == mujoco.mjtGeom.mjGEOM_MESH
+        and model.geom_dataid[index] == purple_mesh
+        and model.geom_group[index] == 1
+    )
+    vertices = model.mesh_vert[
+        model.mesh_vertadr[purple_mesh] : model.mesh_vertadr[purple_mesh]
+        + model.mesh_vertnum[purple_mesh]
+    ]
+    _, directions = np.linalg.eigh(np.cov(vertices.T))
+    purple_axis = data.geom_xmat[purple_geom].reshape(3, 3) @ directions[:, -1]
+    np.testing.assert_allclose(purple_axis, [0, 0, -1], atol=1e-5)
+    np.testing.assert_allclose(
+        model.body_quat[model.body("forte/main_drum").id], [1, 0, 0, 0], atol=1e-6
     )
     assert model.nmesh == 270
     assert sum((model.geom_type == mujoco.mjtGeom.mjGEOM_MESH) & (model.geom_group == 1)) == 830
@@ -97,15 +128,15 @@ def test_gripper_closes_and_reopens_under_native_physics():
     robot = sim.robots["forte"]
     controller = create_controller("pd", robot)
     robot.change_controller(controller)
-    controller.set_gripper_target(-0.02)
+    robot.gripper.set_target(-0.02)
     sim.run_steps(500)
     np.testing.assert_allclose(sim.data.qpos[-2:], -0.02, atol=0.001)
-    controller.set_gripper_target(0)
+    robot.gripper.set_target(0)
     sim.run_steps(500)
     np.testing.assert_allclose(sim.data.qpos[-2:], 0, atol=0.001)
     assert not sim.data.warning.number.any()
     sim.reset()
-    assert controller.gripper_target == 0
+    assert robot.gripper.get_target() == 0
     np.testing.assert_array_equal(sim.data.qpos[-2:], 0)
 
 
@@ -135,13 +166,23 @@ def test_collision_covers_previously_missed_cad_surfaces():
     )
     model = spec.compile()
     data = mujoco.MjData(model)
+    # Approximate the CAD frame after the simulated wrist zero and mount correction.
+    data.qpos[:7] = [
+        -0.031713138037,
+        0.392582419038,
+        0.354095618670,
+        0.005483411844,
+        -0.477127899210,
+        -2.530448267463,
+        -0.054828117868,
+    ]
     probe_id = model.geom("probe_geom").id
     collisions = np.flatnonzero(model.geom_group == 3)
     for point in (
         [-0.194757400, 0.024474315, 0.0],
         [-0.016441059, -0.104073676, 0.153765961],
         [0.569455487, -0.114946133, 0.414884609],
-        [0.580233372, -0.124904736, 0.461297988],
+        [0.585233372, -0.124904736, 0.461297988],
         [0.568575886, -0.075111719, 0.427127763],
     ):
         data.qpos[-7:-4] = point
@@ -190,7 +231,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
     mujoco.mj_forward(model, data)
     controller = create_controller("pd", robot)
     robot.change_controller(controller)
-    controller.set_gripper_target(-0.02)
+    robot.gripper.set_target(-0.02)
     pads = {"forte/gripper_left_pad", "forte/gripper_right_pad"}
     assert model.neq == 1  # Only the finger coupling; no object weld.
     for _ in range(10):
@@ -213,7 +254,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
     assert pads <= cube_contacts()
     assert np.linalg.norm(data.body("cube").xpos - grasp_center()) < 0.002
 
-    controller.set_gripper_target(0)
+    robot.gripper.set_target(0)
     sim.run_steps(1000)
     mujoco.mj_forward(model, data)
     assert "floor" in cube_contacts()
