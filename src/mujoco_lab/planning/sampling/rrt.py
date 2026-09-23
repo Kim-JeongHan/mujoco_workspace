@@ -3,14 +3,18 @@
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from tqdm import tqdm
+
+from mujoco_lab.utils.logger import Logger
 
 from ..collision import CollisionChecker
 from ..graph import Graph, Node
 from ..space import EuclideanSpace, PlanningSpace
 from .base import RRGBase, RRTBase
 from .sampler import GoalBiasedSampler, InformedSampler, Sampler, UniformSampler
+
+logger = Logger()
 
 
 class RRTConfig(BaseModel):
@@ -23,15 +27,6 @@ class RRTConfig(BaseModel):
     goal_tolerance: float = Field(default=0.5, ge=0)
     goal_bias: float = Field(default=0.05, ge=0, le=1)
     seed: int | None = None
-
-    @field_validator("sampler")
-    @classmethod
-    def validate_sampler(cls, v: type[Sampler]) -> type[Sampler]:
-        if not isinstance(v, type):
-            raise TypeError("sampler must be a class type")
-        if not issubclass(v, Sampler):
-            raise TypeError("sampler must inherit from Sampler")
-        return v
 
 
 class RRT(RRTBase):
@@ -128,10 +123,10 @@ class RRT(RRTBase):
                     self.goal_node = goal_candidate
                     if goal_candidate is not new_node:
                         self.nodes.append(goal_candidate)
-                    print(f"Goal reached in {iteration + 1} iterations!")
+                    logger.info(f"Goal reached in {iteration + 1} iterations!")
                     return self._extract_path()
 
-        print(f"Failed to reach goal after {self.max_iterations} iterations")
+        logger.warn(f"Failed to reach goal after {self.max_iterations} iterations")
         return None
 
     def _extract_path(self) -> list[Node]:
@@ -322,7 +317,7 @@ class RRTConnect(RRTBase):
                 if connection_node is not None:
                     self.connection_point_start = new_node_start
                     self.connection_point_goal = connection_node
-                    print(f"Trees connected in {iteration + 1} iterations!")
+                    logger.info(f"Trees connected in {iteration + 1} iterations!")
                     return self._extract_path()
 
             # Swap trees (alternate which tree extends)
@@ -331,7 +326,7 @@ class RRTConnect(RRTBase):
             self.goal_nodes = self.goal_graph.nodes
             self.swapped = not self.swapped
 
-        print(f"Failed to connect trees after {self.max_iterations} iterations")
+        logger.warn(f"Failed to connect trees after {self.max_iterations} iterations")
         return None
 
     def _extend_tree(self, tree: Graph, target: Node) -> Node | None:
@@ -502,15 +497,6 @@ class RRTStarConfig(BaseModel):
     space: PlanningSpace | None = None
     seed: int | None = None
 
-    @field_validator("sampler")
-    @classmethod
-    def validate_sampler(cls, v: type[Sampler]) -> type[Sampler]:
-        if not isinstance(v, type):
-            raise TypeError("sampler must be a class type")
-        if not issubclass(v, Sampler):
-            raise TypeError("sampler must inherit from Sampler")
-        return v
-
 
 class RRTStar(RRGBase):
     """RRT* (RRT-Star) path planner."""
@@ -620,19 +606,19 @@ class RRTStar(RRGBase):
                 if goal_candidate is not None:
                     if self.return_first_solution:
                         self.goal_node = goal_candidate
-                        print(f"Goal reached in {iteration + 1} iterations!")
+                        logger.info(f"Goal reached in {iteration + 1} iterations!")
                         self.path = self._extract_path()
                         return self.path
                     else:
                         goal_candidates.append(goal_candidate)
                         if len(goal_candidates) == 1:
-                            print(
+                            logger.info(
                                 f"First goal reached in {iteration + 1} iterations, continuing optimization..."
                             )
 
         if not self.return_first_solution and goal_candidates:
             self.goal_node = min(goal_candidates, key=lambda node: node.cost)
-            print(
+            logger.info(
                 f"Best goal found with cost {self.goal_node.cost:.3f} from {len(goal_candidates)} candidates"
             )
             self.path = self._extract_path()

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from enum import StrEnum
 from types import MappingProxyType
 
 import mujoco
 import numpy as np
 
-from mujoco_lab.robot import Robot, RobotSpec, _load_asset
+from mujoco_lab.assets.loader import load_asset
+from mujoco_lab.robot import Robot, RobotSpec
 from mujoco_lab.stats import RunStats
 from mujoco_lab.utils import StateMachine
 
@@ -64,7 +66,9 @@ class Simulator:
         scene = scene.copy()
         robot_info = []
         for robot_spec in robots:
-            asset, info = _load_asset(robot_spec.robot_type)
+            asset, info = load_asset(robot_spec.robot_type)
+            if robot_spec.gripper_actuator is not None:
+                info = replace(info, gripper_actuator=robot_spec.gripper_actuator)
             prefix = robot_spec.name + "/"
             if robot_spec.pose is None:
                 mount = scene.site("robot_mount")
@@ -98,6 +102,8 @@ class Simulator:
             mujoco.mj_resetDataKeyframe(model, self.data, environment_home)
         for robot in self.robots.values():
             robot._apply_home_keyframe()
+            if robot.gripper is not None:
+                robot.gripper._capture_home()
         mujoco.mj_forward(model, self.data)
         for robot in self.robots.values():
             robot.update_state()
@@ -106,8 +112,8 @@ class Simulator:
         mujoco.mj_getState(model, self.data, self._initial_state, self._initial_state_spec)
 
     def _require_idle(self):
-        if self._state.state is not SimulatorState.IDLE:
-            raise RuntimeError(f"Simulator is busy with {self._state.state}")
+        if self._state.get_state() is not SimulatorState.IDLE:
+            raise RuntimeError(f"Simulator is busy with {self._state.get_state()}")
 
     def physics_step(self):
         """Evaluate control and advance one physics tick."""
@@ -117,12 +123,12 @@ class Simulator:
         if self.target_updater is not None:
             self.target_updater(self)
         for name, robot in self.robots.items():
-            if robot.controller is None:
+            if robot.controller is None and (
+                robot.gripper is None or not robot.gripper.is_active()
+            ):
                 continue
             saturated = robot.control()
             samples[name] = (saturated, robot.get_tracking_error())
-        for robot in self.robots.values():
-            robot.update_state()
         mujoco.mj_step(self.model, self.data)
         return samples
 
@@ -135,9 +141,8 @@ class Simulator:
 
         if steps < 0:
             raise ValueError("steps must be zero or greater")
-        self._require_idle()
-        self._stop_requested = False
         self._state.transition(SimulatorState.RUNNING)
+        self._stop_requested = False
         stats = {name: RunStats() for name in self.robots}
         for _ in range(steps):
             if self._stop_requested:
@@ -153,7 +158,7 @@ class Simulator:
 
     def stop(self) -> None:
         """Request the active run or viewer to stop after its current physics step."""
-        if self._state.state in (SimulatorState.RUNNING, SimulatorState.VIEWING):
+        if self._state.get_state() in (SimulatorState.RUNNING, SimulatorState.VIEWING):
             self._stop_requested = True
 
     def reset(self) -> None:
@@ -172,9 +177,8 @@ class Simulator:
         for robot in self.robots.values():
             if robot.controller is not None:
                 robot.controller.reset()
+            if robot.gripper is not None:
+                robot.gripper.reset()
             robot.update_state()
-            if robot.controller is None:
-                robot.target = None
-            else:
-                robot.target = robot.controller.initial_target(robot.joint_state)
+            robot.target = robot.initial_target()
         self._state.transition(SimulatorState.IDLE)

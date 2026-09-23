@@ -4,9 +4,13 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from ..collision import CollisionChecker, EmptyCollisionChecker, ObstacleCollisionChecker
+from mujoco_lab.utils.logger import Logger
+
+from ..collision import CollisionChecker, EmptyCollisionChecker
 from ..graph import Graph, Node
 from ..search import AStar
+
+logger = Logger()
 
 
 class RRTBase(ABC):
@@ -51,7 +55,7 @@ class RRTBase(ABC):
         self.seed = seed
 
         # Collision checker
-        self.collision_checker: CollisionChecker | ObstacleCollisionChecker | EmptyCollisionChecker
+        self.collision_checker: CollisionChecker
         if collision_checker is None:
             self.collision_checker = EmptyCollisionChecker()
         else:
@@ -68,11 +72,11 @@ class RRTBase(ABC):
             True if both are collision-free, False otherwise
         """
         if not self.collision_checker.is_collision_free(self.start_state):
-            print("Start state is in collision!")
+            logger.warn("Start state is in collision!")
             return False
 
         if not self.collision_checker.is_collision_free(self.goal_state):
-            print("Goal state is in collision!")
+            logger.warn("Goal state is in collision!")
             return False
 
         return True

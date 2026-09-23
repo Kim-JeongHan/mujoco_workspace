@@ -10,16 +10,19 @@ from mujoco_lab.state import JointState
 
 class JointSpacePD(Controller):
     name = "joint-space PD"
+    output_kind = "torque"
 
     def __init__(
         self,
         kp: ArrayLike,
         kd: ArrayLike,
         gravity_compensation: bool = True,
+        frame: str = "ee_site",
     ) -> None:
         self.kp = np.array(kp, dtype=float, copy=True)
         self.kd = np.array(kd, dtype=float, copy=True)
         self.gravity_compensation = gravity_compensation
+        self.frame = frame
         self.tracking_error = 0.0
         self._desired = None
 

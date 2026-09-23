@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import mujoco
 import numpy as np
 from numpy.typing import ArrayLike
@@ -48,21 +50,17 @@ class RobotState:
         self.joint_ids = [model.joint(prefix + name).id for name in joint_names]
         if any(model.jnt_bodyid[j] not in bodies for j in self.joint_ids):
             raise ValueError("Robot joints must belong to its root body subtree")
-        qpos, dofs = [], []
-        # Convert enum keys to match NumPy joint-type values.
-        widths = {
-            int(mujoco.mjtJoint.mjJNT_FREE): (7, 6),
-            int(mujoco.mjtJoint.mjJNT_BALL): (4, 3),
-            int(mujoco.mjtJoint.mjJNT_SLIDE): (1, 1),
-            int(mujoco.mjtJoint.mjJNT_HINGE): (1, 1),
-        }
-        for joint_id in self.joint_ids:
-            nq, nv = widths[model.jnt_type[joint_id]]
-            qadr, dadr = model.jnt_qposadr[joint_id], model.jnt_dofadr[joint_id]
-            qpos.extend(range(qadr, qadr + nq))
-            dofs.extend(range(dadr, dadr + nv))
-        self.qpos_indices, self.dof_indices = qpos, dofs
-        self.nq, self.nv = len(qpos), len(dofs)
+        unsupported = [
+            f"{joint_names[index]} ({mujoco.mjtJoint(model.jnt_type[joint_id]).name})"
+            for index, joint_id in enumerate(self.joint_ids)
+            if model.jnt_type[joint_id]
+            not in (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
+        ]
+        if unsupported:
+            raise ValueError(f"Robot {name!r} supports hinge/slide joints only: {unsupported}")
+        self.qpos_indices = [int(model.jnt_qposadr[joint]) for joint in self.joint_ids]
+        self.dof_indices = [int(model.jnt_dofadr[joint]) for joint in self.joint_ids]
+        self.nq = self.nv = len(self.joint_ids)
         self._sites = {name: model.site(prefix + name).id for name in site_names}
         self._full_jacobian = np.zeros((6, model.nv))
         self._full_mass = np.zeros((model.nv, model.nv))
@@ -79,6 +77,13 @@ class RobotState:
             self.data.qfrc_bias[self.dof_indices],
         )
 
+    def get_joint_limits(self, slots: list[int]) -> np.ndarray:
+        """Return physical limits for selected robot joints; unbounded joints use infinities."""
+        joints = np.asarray(self.joint_ids, dtype=int)[slots]
+        limits = self.model.jnt_range[joints].copy()
+        limits[self.model.jnt_limited[joints] == 0] = (-np.inf, np.inf)
+        return limits
+
     def site_id(self, frame: str) -> int:
         """Resolve a local site name belonging to this robot."""
         try:
@@ -86,12 +91,33 @@ class RobotState:
         except KeyError:
             raise ValueError(f"Robot {self.name!r} has no site named {frame!r}") from None
 
+    def get_frame_joint_slots(self, frame: str) -> list[int]:
+        """Return robot joint slots on a site's ancestor chain, in joint-name order."""
+        site = self.site_id(frame)
+        ancestors = set()
+        body = int(self.model.site_bodyid[site])
+        while body:
+            ancestors.add(body)
+            body = int(self.model.body_parentid[body])
+        slots = [
+            slot
+            for slot, joint in enumerate(self.joint_ids)
+            if self.model.jnt_bodyid[joint] in ancestors
+        ]
+        if not slots:
+            raise ValueError(f"Frame {frame!r} has no movable joints belonging to this robot")
+        return slots
+
     def get_frame_position(self, frame: str) -> np.ndarray:
         """Borrow a site position in world coordinates, in meters."""
         return self.data.site_xpos[self.site_id(frame)]
 
-    def get_jacobian(self, frame: str) -> np.ndarray:
-        """Borrow the local (6, nv) geometric Jacobian, linear rows first."""
+    def get_jacobian(self, frame: str, dof_slots: Sequence[int] | None = None) -> np.ndarray:
+        """Get the robot Jacobian or selected robot-local DOF columns.
+
+        The full result borrows a persistent buffer; a selected result is a copy.
+        Linear rows precede angular rows.
+        """
 
         mujoco.mj_jacSite(
             self.model,
@@ -101,13 +127,16 @@ class RobotState:
             self.site_id(frame),
         )
         self._jacobian[:] = self._full_jacobian[:, self.dof_indices]
-        return self._jacobian
+        return self._jacobian if dof_slots is None else self._jacobian[:, dof_slots]
 
-    def get_mass_matrix(self) -> np.ndarray:
-        """Borrow the robot DOF block of the full generalized mass matrix."""
+    def get_mass_matrix(self, dof_slots: Sequence[int] | None = None) -> np.ndarray:
+        """Get the robot mass block or selected robot-local DOF block.
+
+        The full result borrows a persistent buffer; a selected result is a copy.
+        """
         mujoco.mj_fullM(self.model, self.data, self._full_mass)
         self._mass[:] = self._full_mass[np.ix_(self.dof_indices, self.dof_indices)]
-        return self._mass
+        return self._mass if dof_slots is None else self._mass[np.ix_(dof_slots, dof_slots)]
 
     def solve_ik(
         self,
@@ -130,24 +159,7 @@ class RobotState:
         The result is not collision-checked.
         """
         site = self.site_id(frame)
-        ancestors = set()
-        body = self.model.site_bodyid[site]
-        while body:
-            ancestors.add(body)
-            body = self.model.body_parentid[body]
-        joints = [joint for joint in self.joint_ids if self.model.jnt_bodyid[joint] in ancestors]
-        if not joints:
-            raise ValueError(f"Frame {frame!r} has no movable joints belonging to this robot")
-        if any(
-            self.model.jnt_type[joint]
-            not in (
-                int(mujoco.mjtJoint.mjJNT_HINGE),
-                int(mujoco.mjtJoint.mjJNT_SLIDE),
-            )
-            for joint in joints
-        ):
-            raise ValueError("IK supports hinge and slide joints only")
-
+        joints = [self.joint_ids[slot] for slot in self.get_frame_joint_slots(frame)]
         indices = self.model.jnt_qposadr[joints]
         limited = self.model.jnt_limited[joints]
         ranges = self.model.jnt_range[joints]

@@ -6,9 +6,15 @@ from .collision import (
     CubeStackCollisionChecker,
     EmptyCollisionChecker,
     MuJoCoCollisionChecker,
-    ObstacleCollisionChecker,
 )
 from .graph import Edge, Graph, Node
+from .planners import (
+    PathPlanner,
+    PRMPlanner,
+    RRTConnectPlanner,
+    RRTPlanner,
+    planner_from_config,
+)
 from .sampling import (
     PRM,
     RRG,
@@ -48,20 +54,24 @@ __all__ = [
     "InformedSampler",
     "MuJoCoCollisionChecker",
     "Node",
-    "ObstacleCollisionChecker",
     "PRM",
     "PRMConfig",
+    "PRMPlanner",
     "PRMStar",
     "PRMStarConfig",
     "PlanningSpace",
+    "PathPlanner",
     "RRG",
     "RRGConfig",
     "RRT",
     "RRTConfig",
     "RRTConnect",
     "RRTConnectConfig",
+    "RRTConnectPlanner",
+    "RRTPlanner",
     "RRTStar",
     "RRTStarConfig",
     "Sampler",
     "UniformSampler",
+    "planner_from_config",
 ]

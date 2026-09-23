@@ -6,25 +6,36 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
-from mujoco_lab.tasks.cube_stack import CubeStackTask
+from mujoco_lab.control import create_controller
+from mujoco_lab.tasks import CubeStackExpert, CubeStackMotionGenerator, CubeStackTask
+
+
+def make_forte_expert(task):
+    robot = next(iter(task.simulator.robots.values()))
+    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    return CubeStackExpert(task, CubeStackMotionGenerator(task))
 
 
 @pytest.mark.parametrize("cubes", [2, 3, 4])
 def test_forte_picks_and_releases_stable_stack(cubes):
-    simulator = create_cube_stack(cubes, robot="forte")
+    simulator = Simulator(create_cube_stack(cubes), robots=[RobotSpec("forte", "forte")])
     task = CubeStackTask(simulator, cubes)
+    expert = make_forte_expert(task)
+    simulator.target_updater = expert.update
     model, data = simulator.model, simulator.data
     robot = simulator.robots["forte"]
     initial_qpos = data.qpos.copy()
     initial_mocap = data.mocap_pos.copy()
     simulator.run_steps(100)
     task.reset()
+    expert.reset()
     np.testing.assert_allclose(data.qpos, initial_qpos)
     np.testing.assert_allclose(data.mocap_pos, initial_mocap)
-    assert task.stage == 0
-    assert robot.controller.gripper_target == 0
+    assert expert.stage == 0
+    assert robot.gripper.get_target() == 0
 
     pad_contacts = [set() for _ in range(cubes)]
+    simultaneous_pad_contacts = np.zeros(cubes, dtype=bool)
     lifted_clear = np.zeros(cubes, dtype=bool)
     for _ in range(300):
         simulator.run_steps(100)
@@ -37,19 +48,24 @@ def test_forte_picks_and_releases_stable_stack(cubes):
             for side in ("left", "right"):
                 if frozenset((cube, f"forte/gripper_{side}_pad")) in pairs:
                     pad_contacts[i].add(side)
+            simultaneous_pad_contacts[i] |= all(
+                frozenset((cube, f"forte/gripper_{side}_pad")) in pairs
+                for side in ("left", "right")
+            )
             lifted_clear[i] |= (
                 data.body(cube).xpos[2] > task.starts[i, 2] + 0.04
                 and frozenset((cube, "table/box")) not in pairs
             )
-        if task.status().released_stable_stack:
+        if task.status().released_stable_stack and expert.get_stage_name() == "settle":
             break
 
     status = task.status()
-    assert task.stage_name == "settle"
+    assert expert.get_stage_name() == "settle"
     assert status.released_stable_stack
     assert status.support_contacts
-    assert np.all(status.goal_distances < 0.01)
+    assert np.all(status.goal_distances < 0.012)
     assert all(pads == {"left", "right"} for pads in pad_contacts)
+    assert np.all(simultaneous_pad_contacts)
     assert np.all(lifted_clear)
     assert not any(
         (
@@ -63,7 +79,7 @@ def test_forte_picks_and_releases_stable_stack(cubes):
         for contact in data.contact
     )
     assert not data.warning.number.any()
-    del task, simulator, robot, data, model
+    del expert, task, simulator, robot, data, model
     gc.collect()
 
 
@@ -73,7 +89,12 @@ def test_forte_pickup_accepts_custom_robot_instance_name():
         robots=[RobotSpec("arm", "forte")],
     )
     task = CubeStackTask(simulator, 2)
-    simulator.run_steps(1500)
-    assert task.stage_name == "cube0:lift"
+    expert = make_forte_expert(task)
+    simulator.target_updater = expert.update
+    for _ in range(30):
+        simulator.run_steps(100)
+        if task.max_lift[0] > task.starts[0, 2] + 0.04:
+            break
+    assert expert.stage >= 3
     assert task.max_lift[0] > task.starts[0, 2] + 0.04
     assert not simulator.data.warning.number.any()

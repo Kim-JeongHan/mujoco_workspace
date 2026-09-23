@@ -20,8 +20,7 @@ class StateMachine(Generic[State]):
             source: frozenset(destinations) for source, destinations in transitions.items()
         }
 
-    @property
-    def state(self) -> State:
+    def get_state(self) -> State:
         """Return the current state."""
         return self._state
 

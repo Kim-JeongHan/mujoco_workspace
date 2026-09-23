@@ -4,7 +4,6 @@ from .collision_checker import (
     BoundedCollisionChecker,
     CollisionChecker,
     EmptyCollisionChecker,
-    ObstacleCollisionChecker,
 )
 from .manipulation import CubeStackCollisionChecker
 from .mujoco import MuJoCoCollisionChecker
@@ -15,5 +14,4 @@ __all__ = [
     "CubeStackCollisionChecker",
     "EmptyCollisionChecker",
     "MuJoCoCollisionChecker",
-    "ObstacleCollisionChecker",
 ]

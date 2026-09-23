@@ -61,8 +61,8 @@ def test_manipulator_example_runs_headless(name, environment, tmp_path, headless
         text=True,
         check=True,
     )
-    assert f"{name}: simulated 0.200 seconds" in result.stdout
-    assert f"environment = {environment}" in result.stdout
+    assert f"[INFO] {name}: simulated 0.200 seconds" in result.stderr
+    assert f"environment = {environment}" in result.stderr
 
 
 def test_factory_rejects_unknown_robot():

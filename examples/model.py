@@ -37,7 +37,7 @@ def main() -> None:
 
     if config.headless:
         simulator.run_steps(config.steps)
-        print(
+        logger.info(
             f"{config.model}: simulated {simulator.data.time:.3f} seconds; "
             f"qpos = {simulator.data.qpos}"
         )

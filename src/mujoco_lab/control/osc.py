@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -21,6 +22,7 @@ POSTURE_KD = 4.0
 
 class OperationalSpaceControl(Controller):
     name = "operational-space control"
+    output_kind = "torque"
 
     def __init__(
         self,
@@ -28,6 +30,7 @@ class OperationalSpaceControl(Controller):
         frame: str = "ee_site",
         *,
         posture: np.ndarray,
+        dof_slots: Sequence[int] | None = None,
         task_kp: float = TASK_KP,
         task_kd: float = TASK_KD,
         posture_kp: float = POSTURE_KP,
@@ -37,6 +40,7 @@ class OperationalSpaceControl(Controller):
         robot_state.get_frame_position(frame)
         self.robot_state = robot_state
         self.frame = frame
+        self.dof_slots = None if dof_slots is None else tuple(dof_slots)
         self.task_kp = task_kp
         self.task_kd = task_kd
         self.posture_kp = posture_kp
@@ -46,10 +50,6 @@ class OperationalSpaceControl(Controller):
         self.tracking_error = 0.0
         self._force = np.zeros(3)
         self._target = None
-
-    def bind(self, robot_state: RobotState) -> None:
-        if self.robot_state is not robot_state:
-            raise ValueError("OSC must be assigned to the RobotState it was constructed for")
         super().bind(robot_state)
 
     def initial_target(self, state: JointState) -> ControlTarget:
@@ -57,8 +57,12 @@ class OperationalSpaceControl(Controller):
         return ControlTarget(self.robot_state.get_frame_position(self.frame))
 
     def compute(self, state: JointState, target: ControlTarget) -> np.ndarray:
-        jacobian = self.robot_state.get_jacobian(self.frame)[:3]
-        mass = self.robot_state.get_mass_matrix()
+        if self.dof_slots is None:
+            jacobian = self.robot_state.get_jacobian(self.frame)[:3]
+            mass = self.robot_state.get_mass_matrix()
+        else:
+            jacobian = self.robot_state.get_jacobian(self.frame, self.dof_slots)[:3]
+            mass = self.robot_state.get_mass_matrix(self.dof_slots)
         mass_inverse = np.linalg.inv(mass)
 
         position = target.position
@@ -77,7 +81,7 @@ class OperationalSpaceControl(Controller):
         torque = jacobian.T @ self._force
 
         pseudo_inverse = mass_inverse @ jacobian.T @ task_inertia
-        null_space = np.eye(self.robot_state.nv) - jacobian.T @ pseudo_inverse.T
+        null_space = np.eye(mass.shape[0]) - jacobian.T @ pseudo_inverse.T
         posture = self.posture_kp * (self.posture - state.qpos) - self.posture_kd * state.qvel
         return torque + null_space @ posture + state.bias_forces
 

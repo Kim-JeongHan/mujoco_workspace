@@ -17,6 +17,7 @@ def _robot(
     other_cube=False,
     obstacle_z=0.0,
     self_penetration=None,
+    finger_hull_penetration=None,
 ):
     arm_position = "0.7 0 0" if arm_contact else "0.25 0 0"
     finger_x = 0.65 if finger_contact else 0.5
@@ -26,6 +27,12 @@ def _robot(
         f'<body name="sibling" pos="{0.3 - self_penetration} 0 0">'
         '<geom name="sibling_geom" type="sphere" size="0.025"/></body>'
         if self_penetration is not None
+        else ""
+    )
+    finger_hull = (
+        f'<geom name="left_hull" type="sphere" pos="0.2 0 0" '
+        f'size="{0.015 + finger_hull_penetration}"/>'
+        if finger_hull_penetration is not None
         else ""
     )
     model = mujoco.MjModel.from_xml_string(f"""
@@ -41,6 +48,7 @@ def _robot(
             <body name="left_finger" pos="{finger_x} 0.065 0">
               <joint name="left_joint" type="slide" axis="0 1 0" range="-0.02 0.02"/>
               <geom name="left_pad" type="sphere" size="0.025"/>
+              {finger_hull}
             </body>
             <body name="right_finger" pos="{finger_x} -0.065 0">
               <joint name="right_joint" type="slide" axis="0 1 0" range="-0.02 0.02"/>
@@ -189,6 +197,14 @@ def test_grasp_allowance_is_limited_to_fingers_and_penetration():
     )
 
 
+def test_carry_allows_only_tiny_contact_with_pad_body_hull():
+    shallow = _robot(finger_hull_penetration=0.0002)
+    deep = _robot(finger_hull_penetration=0.002)
+    assert _checker(shallow, "cube0:place").is_collision_free(np.array([0.0]))
+    assert not _checker(deep, "cube0:place").is_collision_free(np.array([0.0]))
+    assert not _checker(shallow, "cube0:close").is_collision_free(np.array([0.0]))
+
+
 def test_support_allowance_is_stage_and_depth_limited():
     robot = _robot(support_height=-0.045)
     assert _checker(robot, "cube0:lift", support_penetration=0.01).is_collision_free(
@@ -209,3 +225,27 @@ def test_support_allowance_is_stage_and_depth_limited():
     assert not _checker(
         robot, "cube0:place", support_geom="table/box", support_penetration=0.01
     ).is_collision_free(np.array([0.03]))
+
+
+def test_place_allows_shallow_support_contact_only_at_departure_or_destination():
+    robot = _robot(support_height=-0.045)
+    robot.data.mocap_pos[0, 1] = 0.07
+    mujoco.mj_forward(robot.model, robot.data)
+    checker = _checker(
+        robot,
+        "cube0:place",
+        support_geom="table/box",
+        departure_support_geom="table/box",
+        support_penetration=0.01,
+    )
+
+    assert checker.is_collision_free(np.array([0.0]))
+    assert not checker.is_collision_free(np.array([0.05]))
+    assert checker.is_collision_free(np.array([0.1]))
+    assert not _checker(
+        robot,
+        "cube0:place",
+        support_geom="table/box",
+        departure_support_geom="table/box",
+        support_penetration=0.001,
+    ).is_collision_free(np.array([0.0]))

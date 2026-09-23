@@ -139,7 +139,7 @@ def test_viewer_launch_failure_retains_viewing_state():
     ):
         manager.show("failed")
 
-    assert simulator._state.state == "viewing"
+    assert simulator._state.get_state() == "viewing"
 
 
 def test_viewer_close_failure_retains_viewing_state():
@@ -156,7 +156,7 @@ def test_viewer_close_failure_retains_viewing_state():
     ):
         manager.show("failed")
 
-    assert simulator._state.state == "viewing"
+    assert simulator._state.get_state() == "viewing"
 
 
 class FakeRenderer:
@@ -209,7 +209,7 @@ def test_manager_renders_selected_names_to_default_and_explicit_outputs(tmp_path
     assert FakeRenderer.created_models == [first.model, second.model]
     assert [data.qpos.size for data in FakeRenderer.updated_data] == [0, 1]
     assert [call.args[1] for call in annotate.call_args_list] == [first, second]
-    assert first._state.state == second._state.state == "idle"
+    assert first._state.get_state() == second._state.get_state() == "idle"
 
 
 def test_viewer_draw_hook_owns_user_scene_and_runs_under_lock():
@@ -257,7 +257,7 @@ def test_viewer_draw_hook_owns_user_scene_and_runs_under_lock():
     assert viewer.cam.distance == camera.distance
     assert viewer.cam.azimuth == camera.azimuth
     assert viewer.cam.elevation == camera.elevation
-    assert simulator._state.state == "idle"
+    assert simulator._state.get_state() == "idle"
 
 
 def test_save_frame_draw_hook_receives_copied_data(tmp_path):
@@ -284,7 +284,7 @@ def test_save_frame_draw_hook_receives_copied_data(tmp_path):
         manager.save_frame("drawn", tmp_path / "drawn.png", draw=draw)
     assert len(seen) == 1
     np.testing.assert_array_equal(simulator.data.qpos, before)
-    assert simulator._state.state == "idle"
+    assert simulator._state.get_state() == "idle"
 
 
 @pytest.mark.parametrize("operation", ["show", "save_frame"])

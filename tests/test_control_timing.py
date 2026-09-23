@@ -22,7 +22,7 @@ class RecordingController(Controller):
     def compute(self, state, target):
         self.times.append(state.time)
         self.tracking_error = float(len(self.times))
-        return np.full(8, len(self.times) if self.value is None else self.value)
+        return np.full(state.qpos.shape, len(self.times) if self.value is None else self.value)
 
     def reset(self):
         self.times.clear()
@@ -123,7 +123,7 @@ def test_stop_ends_headless_run_after_current_tick_and_does_not_affect_next_run(
     assert stats.steps == len(controller.times) == 3
     np.testing.assert_allclose(updates, [0, 0.001, 0.002], atol=1e-15)
     assert sim.data.time == pytest.approx(0.003)
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
     assert sim.run_steps(2)["arm"].steps == 2
     assert len(controller.times) == 5
 
@@ -134,7 +134,7 @@ def test_stop_closes_passive_viewer_after_current_tick():
     viewer = PassiveViewer(100)
 
     def update(current):
-        assert current._state.state == "viewing"
+        assert current._state.get_state() == "viewing"
         current.stop()
 
     sim.target_updater = update
@@ -142,7 +142,7 @@ def test_stop_closes_passive_viewer_after_current_tick():
         manager.show("simulator")
     assert viewer.sync_calls == 1 and viewer.closed
     assert sim.data.time == pytest.approx(0.001)
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
 
 
 def test_saturation_and_errors_are_counted_every_physics_step():
@@ -260,7 +260,7 @@ def test_passive_viewer_failure_retains_phase_and_lifecycle_state():
         pytest.raises(RuntimeError, match="controller failed"),
     ):
         manager.show("simulator")
-    assert sim._state.state == "viewing"
+    assert sim._state.get_state() == "viewing"
 
 
 def test_successful_nested_control_returns_to_its_lifecycle_parent():
@@ -268,20 +268,20 @@ def test_successful_nested_control_returns_to_its_lifecycle_parent():
     robot = sim.robots["arm"]
 
     sim.step()
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
     robot.control()
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
 
     def check_viewing():
-        assert sim._state.state == "viewing"
+        assert sim._state.get_state() == "viewing"
 
     manager = manager_with(sim)
     viewer = PassiveViewer(1, on_lock=check_viewing)
     with patch("mujoco.viewer.launch_passive", return_value=viewer):
         manager.show("simulator")
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
     sim.reset()
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
 
 
 def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_work():
@@ -305,20 +305,23 @@ def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_w
         np.testing.assert_array_equal(current, data)
         assert (controller.times, controller.tracking_error) == controller_state
 
+        sim._stop_requested = True
         operations = [
             sim.step,
+            lambda: manager.show("first"),
             lambda: manager.save_frame("first"),
         ]
         for operation in operations:
-            with pytest.raises(RuntimeError, match="busy with viewing"):
+            with pytest.raises(RuntimeError, match="Invalid state transition"):
                 operation()
+            assert sim._stop_requested
         assert other.step() == {}
         other.reset()
 
     viewer = PassiveViewer(1, on_lock=inspect_open_scope)
     with patch("mujoco.viewer.launch_passive", return_value=viewer):
         manager.show("first")
-    assert sim._state.state == "idle"
+    assert sim._state.get_state() == "idle"
 
 
 def test_passive_viewer_controls_after_gui_clock_rewind():
@@ -366,7 +369,7 @@ def test_passive_viewer_sync_failure_restores_timestep_and_closes_viewer():
     ):
         manager.show("simulator")
     assert sim.model.opt.timestep == sim.dt == 0.001
-    assert sim._state.state == "viewing"
+    assert sim._state.get_state() == "viewing"
     assert viewer.closed
 
 

@@ -4,11 +4,15 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 from tqdm import tqdm
 
+from mujoco_lab.utils.logger import Logger
+
 from ..collision import CollisionChecker
 from ..graph import Node
 from ..space import PlanningSpace
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler, UniformSampler
+
+logger = Logger()
 
 
 class PRMConfig(BaseModel):
@@ -137,9 +141,9 @@ class PRM(RRGBase):
                 self.path = candidate_path
                 break
             else:
-                print(f"No path found after {self.sample_number} samples; retrying...")
+                logger.info(f"No path found after {self.sample_number} samples; retrying...")
         else:
-            print(f"❌ Failed to connect to goal after {self.max_retries} retries.")
+            logger.warn(f"❌ Failed to connect to goal after {self.max_retries} retries.")
             return None
 
         return self.path

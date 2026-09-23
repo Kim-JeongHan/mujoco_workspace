@@ -1,7 +1,5 @@
-"""Map-related module."""
+"""Terrain-based planning helpers."""
 
-from .map import Map
-from .obstacles import BoxObstacle, Obstacle, ObstacleType, SphereObstacle
 from .terrain import (
     MountainTerrain,
     TerrainPlan,
@@ -10,12 +8,7 @@ from .terrain import (
 )
 
 __all__ = [
-    "BoxObstacle",
-    "Map",
     "MountainTerrain",
-    "Obstacle",
-    "ObstacleType",
-    "SphereObstacle",
     "TerrainPlan",
     "TerrainRiemannianSpace",
     "create_random_start_goal",

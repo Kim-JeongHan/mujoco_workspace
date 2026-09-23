@@ -43,13 +43,7 @@ class MuJoCoCollisionChecker(CollisionChecker):
         state = robot.state
 
         if frame is not None:
-            site = state.site_id(frame)
-            ancestors = set()
-            body = int(self.model.site_bodyid[site])
-            while body:
-                ancestors.add(body)
-                body = int(self.model.body_parentid[body])
-            selected = [j for j in state.joint_ids if self.model.jnt_bodyid[j] in ancestors]
+            selected = [state.joint_ids[slot] for slot in state.get_frame_joint_slots(frame)]
         else:
             names = tuple(joint_names)
             if not names or len(names) != len(set(names)):
@@ -61,27 +55,18 @@ class MuJoCoCollisionChecker(CollisionChecker):
 
         if not selected:
             raise ValueError("No robot joints selected")
-        if any(
-            self.model.jnt_type[j]
-            not in (
-                int(mujoco.mjtJoint.mjJNT_HINGE),
-                int(mujoco.mjtJoint.mjJNT_SLIDE),
-            )
-            for j in selected
-        ):
-            raise ValueError("Planning coordinates must be hinge or slide joints")
         self.joint_ids = tuple(selected)
         self.joint_names = tuple(
             self.model.joint(j).name.removeprefix(robot.prefix) for j in selected
         )
-        self.qpos_indices = np.asarray(self.model.jnt_qposadr[selected], dtype=int)
+        self.qpos_indices = self.model.jnt_qposadr[selected]
 
         if not np.isfinite(edge_resolution) or edge_resolution <= 0:
             raise ValueError("edge_resolution must be finite and positive")
         self.edge_resolution = float(edge_resolution)
 
-        limited = np.asarray(self.model.jnt_limited[selected], dtype=bool)
-        hardware = np.asarray(self.model.jnt_range[selected], dtype=float)
+        limited = self.model.jnt_limited[selected]
+        hardware = self.model.jnt_range[selected]
         if bounds is None:
             if not limited.all():
                 raise ValueError("Continuous joints require explicit finite bounds")

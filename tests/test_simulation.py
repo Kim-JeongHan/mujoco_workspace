@@ -89,7 +89,7 @@ def test_model_example_simulates_an_external_model_without_robot_binding(tmp_pat
         text=True,
         check=True,
     )
-    assert f"{path}: simulated 0.020 seconds" in result.stdout
+    assert f"[INFO] {path}: simulated 0.020 seconds" in result.stderr
 
 
 @pytest.mark.parametrize("controller", ["pd", "osc"])

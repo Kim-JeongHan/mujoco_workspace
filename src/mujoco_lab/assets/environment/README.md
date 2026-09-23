@@ -14,19 +14,21 @@ Environments place reusable objects and define the floor, lighting, camera defau
 
 ```bash
 # Inspect furniture without a robot
-uv run mujoco-lab --command view --environment warehouse
+uv run python examples/model.py --model src/mujoco_lab/assets/environment/warehouse/scene.xml
 
 # Compose a robot with an environment
 uv run python examples/manipulator.py --robot panda --environment warehouse
-uv run mujoco-lab --command view --robot panda --environment cube_stack_3
-uv run python examples/cube_stack.py --cubes 3 --environment warehouse --headless
+uv run python examples/manipulator.py --robot panda --environment cube_stack_3
+
+# Run the cube stacking task
+uv run mujoco-lab --cubes 3 --environment warehouse --headless
 ```
 
 `create_environment(name)` in `environment.py` returns a fresh, editable MuJoCo `MjSpec`. `Simulator(create_environment(...), robots=[RobotSpec(...)])` attaches robot-only `robot.xml` assets and combines their home states with the environment home. Each robot's entities receive an instance-name prefix. A single robot with no explicit pose uses `robot_mount`; explicit poses are world placements, and multiple robots require them. The environment supplies the only floor in the composed scene.
 
 Add an environment directory and register its scene in `ENVIRONMENT_SCENES` in `assets/__init__.py`. Every registered environment must define a site named `robot_mount`.
 
-The `cube_stack_2`, `cube_stack_3`, and `cube_stack_4` scenes contain the OGBench task-5 starting positions and translucent goals. Their warehouse variants add the existing small shelf. All six scenes can be loaded directly with `create_environment`; `mujoco_lab.create_cube_stack(cubes, environment=...)` attaches Panda by default and creates the same scene. Cube geometry, contact settings, and marker geometry match the OGBench source retained at [`third_party/ogbench/cube.xml`](../../../../third_party/ogbench/cube.xml), with colors and positions specified in each count's `layout.xml`. The source is MIT licensed; see `objects/ogbench_cube/LICENSE.txt`.
+The `cube_stack_2`, `cube_stack_3`, and `cube_stack_4` scenes contain the OGBench task-5 starting positions and translucent goals. Their warehouse variants add the existing small shelf. All six scenes can be loaded directly with `create_environment`; `mujoco_lab.create_cube_stack(cubes, environment=...)` returns the corresponding editable `MjSpec` for use with `Simulator(scene, robots=[RobotSpec(...)])`. Cube geometry, contact settings, and marker geometry match the OGBench source retained at [`third_party/ogbench/cube.xml`](../../../../third_party/ogbench/cube.xml), with colors and positions specified in each count's `layout.xml`. The source is MIT licensed; see `objects/ogbench_cube/LICENSE.txt`.
 
 ## Frames and source layout
 

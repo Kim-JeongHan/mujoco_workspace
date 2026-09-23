@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "StageRecipe": {
+      "additionalProperties": false,
+      "description": "One named pose and its execution limits, applied once per cube.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "offset_xyz_m": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Offset Xyz M",
+          "type": "array"
+        },
+        "gripper_target_m": {
+          "title": "Gripper Target M",
+          "type": "number"
+        },
+        "min_duration_s": {
+          "exclusiveMinimum": 0,
+          "title": "Min Duration S",
+          "type": "number"
+        },
+        "arm_max_velocity": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Arm Max Velocity"
+        },
+        "arm_max_acceleration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Arm Max Acceleration"
+        },
+        "require_grasp": {
+          "default": false,
+          "title": "Require Grasp",
+          "type": "boolean"
+        },
+        "min_lift_height_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Lift Height M"
+        }
+      },
+      "required": [
+        "name",
+        "offset_xyz_m",
+        "gripper_target_m",
+        "min_duration_s"
+      ],
+      "title": "StageRecipe",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Fixed eight-stage workflow and robot-specific numeric parameters.",
+  "properties": {
+    "euler_xyz_degrees": {
+      "anyOf": [
+        {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Euler Xyz Degrees"
+    },
+    "frame": {
+      "const": "grasp",
+      "title": "Frame",
+      "type": "string"
+    },
+    "arm_max_velocity": {
+      "exclusiveMinimum": 0,
+      "title": "Arm Max Velocity",
+      "type": "number"
+    },
+    "arm_max_acceleration": {
+      "exclusiveMinimum": 0,
+      "title": "Arm Max Acceleration",
+      "type": "number"
+    },
+    "gripper_max_velocity": {
+      "exclusiveMinimum": 0,
+      "title": "Gripper Max Velocity",
+      "type": "number"
+    },
+    "gripper_max_acceleration": {
+      "exclusiveMinimum": 0,
+      "title": "Gripper Max Acceleration",
+      "type": "number"
+    },
+    "arm_tolerance": {
+      "exclusiveMinimum": 0,
+      "title": "Arm Tolerance",
+      "type": "number"
+    },
+    "gripper_tolerance": {
+      "exclusiveMinimum": 0,
+      "title": "Gripper Tolerance",
+      "type": "number"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/StageRecipe"
+      },
+      "title": "Stages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "frame",
+    "arm_max_velocity",
+    "arm_max_acceleration",
+    "gripper_max_velocity",
+    "gripper_max_acceleration",
+    "arm_tolerance",
+    "gripper_tolerance",
+    "stages"
+  ],
+  "title": "CubeStackRecipe",
+  "type": "object"
+}

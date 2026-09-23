@@ -1,14 +1,18 @@
 """RRG (Rapidly-exploring Random Graph) algorithm implementation."""
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 from tqdm import tqdm
+
+from mujoco_lab.utils.logger import Logger
 
 from ..collision import CollisionChecker
 from ..graph import Node
 from ..space import PlanningSpace
 from .base import RRGBase
 from .sampler import GoalBiasedSampler, Sampler
+
+logger = Logger()
 
 
 class RRGConfig(BaseModel):
@@ -25,15 +29,6 @@ class RRGConfig(BaseModel):
     goal_bias: float = 0.05
     space: PlanningSpace | None = None
     seed: int | None = None
-
-    @field_validator("sampler")
-    @classmethod
-    def validate_sampler(cls, v: type[Sampler]) -> type[Sampler]:
-        if not isinstance(v, type):
-            raise TypeError("sampler must be a class type")
-        if not issubclass(v, Sampler):
-            raise TypeError("sampler must inherit from Sampler")
-        return v
 
 
 class RRG(RRGBase):
@@ -127,7 +122,7 @@ class RRG(RRGBase):
                 # Check if goal is reached (outside neighbor loop)
                 if self._is_goal_reached(new_node):
                     self.goal_node = new_node
-                    print(f"Goal reached in {iteration + 1} iterations!")
+                    logger.info(f"Goal reached in {iteration + 1} iterations!")
                     self.path = self.astar.search(self.root, self.goal_node)
                     return self.path
 

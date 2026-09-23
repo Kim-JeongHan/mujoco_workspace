@@ -1,94 +1,148 @@
-"""Command-line entry points for simulation, viewing, and rendering."""
+"""Command-line entry point for physical cube stacking."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 import tyro
 
-from mujoco_lab.assets import ENVIRONMENT_NAMES, ROBOT_NAMES
-from mujoco_lab.control import CONTROLLER_NAMES, create_controller, demo_target_updater
-from mujoco_lab.environment import create_environment
-from mujoco_lab.robot import RobotSpec
-from mujoco_lab.simulation import Simulator
+from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.control import create_controller
+from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
+from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.simulator_manager import SimulatorManager
-
-Command = Literal["simulate", "view", "render"]
-RobotName = Literal[ROBOT_NAMES]
-EnvironmentName = Literal[ENVIRONMENT_NAMES]
-ControllerName = Literal[CONTROLLER_NAMES]
+from mujoco_lab.tasks import (
+    CubeStackExpert,
+    CubeStackTask,
+    HeuristicCubeStackMotionGenerator,
+    SamplingCubeStackMotionGenerator,
+    default_planning,
+)
 
 
 @dataclass
 class Config:
-    """Options shared by the simulation, viewer, and renderer commands."""
+    """Choose the stack size, run mode, and optional image or video output."""
 
-    command: Command  # simulate, view, or render
-    steps: int = 100  # physics steps
-    output: Path = Path("outputs/scene.png")  # rendered PNG path
-    dt: float = 0.002  # physics and control period in seconds
-    controller: ControllerName = "none"  # none, position, pd, or osc
-    environment: EnvironmentName | None = None  # optional scene
-    robot: RobotName = "forte"  # robot asset
+    cubes: int = 2
+    robot: Literal["panda", "forte"] = "panda"
+    environment: Literal["table_shelf", "warehouse"] = "table_shelf"
+    method: Literal["heuristic", "sampling"] = "heuristic"
+    planning: RRTConnectConfig | RRTConfig | PRMConfig = field(default_factory=default_planning)
+    headless: bool = False
+    steps: int | None = None
+    output: Path | None = None
+    video: Path | None = None  # Record the direct simulator run as MP4.
+    fps: int = 30  # Saved video frames per simulated second.
+    video_width: int = 640  # MP4 frame width in pixels.
+    video_height: int = 480  # MP4 frame height in pixels.
+    camera_azimuth: float = 60.0  # Initial oblique view; the viewer can adjust it.
+    camera_elevation: float = -25.0  # Degrees below the horizontal plane.
+    camera_distance: float = 1.25  # View distance from the cube workspace in meters.
 
 
 def main() -> None:
+    config = tyro.cli(Config, description="Physical cube stacking with Panda or Forte")
     manager = SimulatorManager.get_instance()
     logger = manager.logger
-    config = tyro.cli(Config, description="MuJoCo workspace")
     steps = config.steps
     if steps is None:
-        steps = 0 if config.command == "render" else 1000
+        if config.method == "sampling":
+            steps = 90000 if config.robot == "forte" else 60000
+        else:
+            steps = 30000 if config.robot == "forte" else 22000
     if steps < 0:
         logger.error("--steps must be zero or greater", exit_code=2)
-    if not (config.robot or config.environment):
-        logger.error("select --robot or --environment", exit_code=2)
-    if config.controller != "none" and not config.robot:
-        logger.error(
-            "--controller requires --robot",
-            exit_code=2,
-        )
     try:
-        if config.robot:
-            simulator = Simulator(
-                create_environment(config.environment or "empty"),
-                robots=[RobotSpec(config.robot, config.robot)],
-                dt=config.dt,
+        simulator = Simulator(
+            create_cube_stack(config.cubes, environment=config.environment),
+            robots=[RobotSpec(config.robot, config.robot)],
+        )
+        robot = simulator.robots[config.robot]
+        if config.robot == "panda":
+            controller = create_controller(
+                "position", robot, gravity_compensation=True, frame="grasp"
             )
         else:
-            simulator = Simulator(
-                create_environment(config.environment),
-                dt=config.dt,
-            )
-        robot = next(iter(simulator.robots.values()), None)
-        if robot is not None:
-            robot.change_controller(create_controller(config.controller, robot))
-            if config.robot == "forte" and config.controller in ("pd", "osc"):
-                simulator.target_updater = demo_target_updater(
-                    simulator, {robot.name: config.controller}
-                )
+            controller = create_controller("pd", robot, frame="grasp")
+        robot.change_controller(controller)
+        task = CubeStackTask(simulator, config.cubes)
+        if config.method == "sampling":
+            planner = planner_from_config(config.planning)
+            generator = SamplingCubeStackMotionGenerator(task, planner=planner)
+            planner_label = planner.name
+        else:
+            generator = HeuristicCubeStackMotionGenerator(task)
+            planner_label = "none"
+        expert = CubeStackExpert(task, generator)
+        simulator.target_updater = expert.update
     except ValueError as error:
         logger.error(str(error), exit_code=2)
 
-    if config.command == "view":
-        name = "cli"
-        manager.add_simulator(name, simulator)
-        try:
-            manager.show(name)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            if manager.simulators.get(name) is simulator:
-                manager.remove_simulator(name)
-        return
-
-    simulator.run_steps(steps)
-    if config.command == "render":
-        name = "cli"
-        manager.add_simulator(name, simulator)
-        try:
-            logger.info(str(manager.save_frame(name, config.output)))
-        finally:
-            if manager.simulators.get(name) is simulator:
-                manager.remove_simulator(name)
-        return
+    name = "cube_stack"
+    manager.add_simulator(name, simulator)
+    try:
+        if config.video is not None:
+            center = (task.starts.mean(axis=0) + task.goals.mean(axis=0)) / 2
+            center[2] += 0.12
+            camera = create_free_camera(
+                lookat=center,
+                azimuth=config.camera_azimuth,
+                elevation=config.camera_elevation,
+                distance=config.camera_distance,
+            )
+        if config.headless:
+            if config.video is None:
+                simulator.run_steps(steps)
+            else:
+                video_path = manager.save_video(
+                    name,
+                    steps,
+                    config.video,
+                    camera=camera,
+                    fps=config.fps,
+                    width=config.video_width,
+                    height=config.video_height,
+                )
+                logger.info(f"Saved video: {video_path}")
+        else:
+            if config.video is None:
+                manager.show(name)
+            else:
+                video_path = manager.show(
+                    name,
+                    camera=camera,
+                    video=config.video,
+                    fps=config.fps,
+                    width=config.video_width,
+                    height=config.video_height,
+                    steps=steps,
+                )
+                if video_path is None:
+                    logger.info("Preview closed before recording; no new video was recorded")
+                else:
+                    logger.info(f"Saved video: {video_path}")
+        status = task.status()
+        failure = expert.failure_reason
+        if config.headless and not status.released_stable_stack and failure is None:
+            completed_steps = round(simulator.data.time / simulator.dt)
+            failure = (
+                f"step budget exhausted at {expert.get_stage_name()} after {completed_steps} steps"
+            )
+        if config.output is not None:
+            manager.save_frame(name, config.output)
+        logger.info(
+            f"robot={config.robot} cubes={config.cubes} method={config.method} "
+            f"planner={planner_label} "
+            f"simulated={simulator.data.time:.3f}s "
+            f"stage={expert.get_stage_name()} ogbench_goal={status.ogbench_success} "
+            f"released_stable_stack={status.released_stable_stack} "
+            f"support_contacts={status.support_contacts} "
+            f"goal_distances_m={status.goal_distances.round(4).tolist()} "
+            f"max_heights_m={task.max_lift.round(3).tolist()} "
+            f"failure={failure}"
+        )
+        if config.headless and not status.released_stable_stack:
+            raise SystemExit(1)
+    finally:
+        manager.remove_simulator(name)

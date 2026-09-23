@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=./schema.json
+frame: grasp
+arm_max_velocity: 2.0 # rad/s; task tuning, not a motor rating
+arm_max_acceleration: 8.0 # rad/s^2
+gripper_max_velocity: 0.2 # m/s
+gripper_max_acceleration: 1.0 # m/s^2
+arm_tolerance: 0.016
+gripper_tolerance: 0.001
+stages:
+  - name: above_pick
+    offset_xyz_m: [0.0, 0.0, 0.23]
+    gripper_target_m: 0.04
+    min_duration_s: 0.2
+  - name: pick
+    offset_xyz_m: [0.0, 0.0, 0.02]
+    gripper_target_m: 0.04
+    min_duration_s: 0.2
+  - name: close
+    offset_xyz_m: [0.0, 0.0, 0.02]
+    gripper_target_m: 0.011
+    min_duration_s: 0.5
+    require_grasp: true
+  - name: lift
+    offset_xyz_m: [0.0, 0.0, 0.25]
+    gripper_target_m: 0.011
+    min_duration_s: 0.2
+  - name: above_place
+    offset_xyz_m: [0.0, 0.0, 0.26]
+    gripper_target_m: 0.011
+    min_duration_s: 0.2
+  - name: place
+    offset_xyz_m: [0.0, 0.0, 0.035]
+    gripper_target_m: 0.011
+    min_duration_s: 0.2
+    arm_max_velocity: 0.8
+    arm_max_acceleration: 3.0
+  - name: release
+    offset_xyz_m: [0.0, 0.0, 0.035]
+    gripper_target_m: 0.04
+    min_duration_s: 1.0
+  - name: retract
+    offset_xyz_m: [0.0, 0.0, 0.26]
+    gripper_target_m: 0.04
+    min_duration_s: 0.2

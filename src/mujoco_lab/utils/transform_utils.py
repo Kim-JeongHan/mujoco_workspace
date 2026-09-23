@@ -208,10 +208,13 @@ class Transform:
 
 
 if __name__ == "__main__":
+    from mujoco_lab.utils.logger import Logger
+
+    logger = Logger()
     H1 = Transform.from_pose_mrad([0, 0, 0, 0, 0, 0])
     H2 = Transform.from_pose_mmdeg([500, 200, 400, 20, -15, 35])
-    print("Tool pose (m/rad):", H2.as_pose_mrad())
-    print("Tool pose (mm/deg):", H2.as_mmdeg())
-    print("Tool pose (m, wxyz):", H2.as_xyzquat())
+    logger.info(f"Tool pose (m/rad): {H2.as_pose_mrad()}")
+    logger.info(f"Tool pose (mm/deg): {H2.as_mmdeg()}")
+    logger.info(f"Tool pose (m, wxyz): {H2.as_xyzquat()}")
     ax = H1.plot(label="world", length=0.3, show=False)
     H2.plot(ax=ax, label="tool", length=0.3, show=True)

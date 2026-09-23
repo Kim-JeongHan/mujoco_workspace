@@ -3,7 +3,6 @@
 import mujoco
 import numpy as np
 
-from mujoco_lab.control.factory import ActuatorController
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
 
@@ -117,17 +116,14 @@ def draw_joint_torques(scene, robot, data) -> None:
 def annotate_controller(scene, robot, data, target_data) -> None:
     """Draw cached targets using rendering data and shared PD kinematics scratch."""
     model, controller = robot.model, robot.controller
-    binding = controller if isinstance(controller, ActuatorController) else None
-    if binding is not None:
-        controller = binding.algorithm
     if isinstance(controller, JointSpacePD):
         if robot.target is None:
             return
         target_data.qpos[:] = data.qpos
-        indices = binding.state.qpos_indices if binding is not None else robot.state.qpos_indices
+        indices = robot.control_qpos_indices
         target_data.qpos[indices] = robot.target.position
         mujoco.mj_kinematics(model, target_data)
-        site = robot.state.site_id(binding.frame if binding is not None else "ee_site")
+        site = robot.state.site_id(controller.frame)
         add_marker(scene, target_data.site_xpos[site], TARGET_RGBA, 0.028)
         add_marker(scene, data.site_xpos[site], ACTUAL_RGBA, 0.016)
     elif isinstance(controller, OperationalSpaceControl):
@@ -161,8 +157,6 @@ def annotate(scene, simulator, data) -> None:
     for robot in simulator.robots.values():
         if robot.controller is not None:
             controller = robot.controller
-            if isinstance(controller, ActuatorController):
-                controller = controller.algorithm
             if isinstance(controller, JointSpacePD) and target_data is None:
                 target_data = mujoco.MjData(simulator.model)
                 mujoco.mj_copyData(target_data, simulator.model, data)

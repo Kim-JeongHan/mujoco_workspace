@@ -15,6 +15,8 @@ from mujoco_lab import (
 )
 from mujoco_lab.control import CONTROLLER_NAMES, create_controller, demo_target_updater
 
+CONTROLLER_CHOICES = ("auto", *CONTROLLER_NAMES)
+
 
 @dataclass
 class Config:
@@ -22,7 +24,7 @@ class Config:
 
     robot: Literal[ROBOT_NAMES]
     environment: Literal[ENVIRONMENT_NAMES] = "empty"
-    controller: Literal[CONTROLLER_NAMES] = "none"
+    controller: Literal[CONTROLLER_CHOICES] = "auto"
     headless: bool = False
     steps: int = 1000
     dt: float = 0.002
@@ -42,7 +44,11 @@ def main() -> None:
             dt=config.dt,
         )
         robot = simulator.robots[config.robot]
-        robot.change_controller(create_controller(config.controller, robot))
+        if config.controller == "auto":
+            controller_name = "pd" if config.robot == "forte" else "none"
+        else:
+            controller_name = config.controller
+        robot.change_controller(create_controller(controller_name, robot))
         if config.robot == "forte" and config.controller in ("pd", "osc"):
             simulator.target_updater = demo_target_updater(
                 simulator, {robot.name: config.controller}
@@ -52,13 +58,13 @@ def main() -> None:
     data = simulator.data
     if config.headless:
         stats = simulator.run_steps(config.steps)[robot.name]
-        print(
+        logger.info(
             f"{config.robot}: simulated {data.time:.3f} seconds; "
             f"environment = {config.environment}; qpos = {data.qpos}"
         )
         if robot.controller is not None:
-            unit = {"pd": "joint units", "position": "joint units", "osc": "m"}[config.controller]
-            print(stats.describe("tracking error", unit))
+            unit = {"pd": "joint units", "position": "joint units", "osc": "m"}[controller_name]
+            logger.info(stats.describe("tracking error", unit))
         return
 
     name = "manipulator"
