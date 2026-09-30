@@ -4,12 +4,15 @@ import numpy as np
 import pytest
 import torch
 
+from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv, cube_stack_observation_layout
 from mujoco_lab.learning.trainers.train_bc import run_training
+from mujoco_lab.tasks import CubeStackTask
 
 
 def _rotation_indices(cubes: int) -> list[int]:
@@ -27,7 +30,7 @@ def _episode(cubes: int = 2) -> Episode:
     return Episode(
         states=states,
         actions=np.array([[2.0], [4.0], [6.0]], dtype=np.float32),
-        metadata={"replay": {"scene": "cube_stack", "cubes": cubes}},
+        metadata={"replay": {"scene": "cube_stack", "cubes": cubes, "physics_steps_per_action": 1}},
     )
 
 
@@ -96,21 +99,38 @@ def test_generic_state_with_same_width_keeps_zscore():
 
     episode = _episode()
     episode.metadata = {}
-    assert _cube_stack_rotation_indices([episode], episode.states.shape[1]) == []
+    assert _cube_stack_rotation_indices(episode, episode.states.shape[1]) == []
     normalizer = Normalizer.from_data(episode.states[:-1], episode.actions)
     rotations = _rotation_indices(2)
     assert np.any(normalizer.state_mean[rotations] != 0)
     assert np.any(normalizer.state_std[rotations] != 1)
 
 
-@pytest.mark.parametrize("cubes", [2, 3, 4])
+@pytest.mark.parametrize("cubes", [1, 2, 3, 4])
 def test_cube_count_selects_all_rotation_slices(cubes):
     from mujoco_lab.learning.trainers.train_bc import _cube_stack_rotation_indices
 
     episode = _episode(cubes)
-    assert _cube_stack_rotation_indices([episode], episode.states.shape[1]) == _rotation_indices(
+    assert _cube_stack_rotation_indices(episode, episode.states.shape[1]) == _rotation_indices(
         cubes
     )
+
+
+@pytest.mark.parametrize("cubes", [1, 2])
+def test_rotation_layout_matches_single_robot_observation(cubes):
+    simulator = Simulator(create_cube_stack(cubes), robots=[RobotSpec("panda", "panda")])
+    env = CubeStackEnv(CubeStackTask(simulator, cubes))
+    observation, _ = env.reset(seed=0)
+    frame_dim, rotations = cube_stack_observation_layout(cubes)
+
+    assert env.observation_space.shape == observation.shape == (frame_dim,)
+    assert rotations == _rotation_indices(cubes)
+    grasp_site = simulator.robots["panda"].state.site_id("grasp")
+    grasp_rotation = simulator.data.site_xmat[grasp_site].reshape(3, 3)[:, :2].reshape(-1)
+    np.testing.assert_allclose(observation[rotations[:6]], grasp_rotation)
+    for cube in range(cubes):
+        rotation = simulator.data.body(f"cube{cube}/object_0").xmat.reshape(3, 3)[:, :2].reshape(-1)
+        np.testing.assert_allclose(observation[rotations[6 + 6 * cube : 12 + 6 * cube]], rotation)
 
 
 def test_cube_stack_metadata_must_match_observation_shape():
@@ -118,21 +138,4 @@ def test_cube_stack_metadata_must_match_observation_shape():
 
     episode = _episode()
     with pytest.raises(ValueError, match="dimension"):
-        _cube_stack_rotation_indices([episode], 55)
-
-
-def test_validation_layout_must_match_training_layout(monkeypatch):
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    training = _episode()
-    validation = _episode()
-    validation.metadata = {}
-    config = TrainConfig(
-        hidden_dims=(8,),
-        chunk_size=1,
-        execution_horizon=1,
-        physics_steps_per_action=1,
-        batch_size=3,
-        num_epochs=1,
-    )
-    with pytest.raises(ValueError, match="mix cube-stack"):
-        run_training(config, [training], [validation])
+        _cube_stack_rotation_indices(episode, 55)

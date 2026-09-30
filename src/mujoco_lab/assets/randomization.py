@@ -18,8 +18,7 @@ def sample_cube_positions(
             candidate = rng.uniform(home - xy_range, home + xy_range)
             if all(
                 np.any(
-                    np.abs(candidate - accepted)
-                    >= half_sizes[index] + half_sizes[other] + min_gap
+                    np.abs(candidate - accepted) >= half_sizes[index] + half_sizes[other] + min_gap
                 )
                 for other, accepted in enumerate(positions)
             ):

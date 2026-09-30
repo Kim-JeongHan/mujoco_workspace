@@ -1,11 +1,16 @@
+"""Demonstration episode storage and validation."""
+
 import json
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
+from zipfile import BadZipFile
 
 import numpy as np
+
+from mujoco_lab.learning.datasets.replay import replay_action_repeat
 
 
 @dataclass
@@ -27,6 +32,30 @@ class Episode:
 
     def __len__(self) -> int:
         return len(self.actions)
+
+    def validate_training_data(self) -> tuple[int, int]:
+        """Check observation and action arrays and return their feature dimensions."""
+        if (
+            self.states.ndim != 2
+            or self.actions.ndim != 2
+            or 0 in self.states.shape
+            or 0 in self.actions.shape
+            or len(self.states) != len(self.actions) + 1
+        ):
+            raise ValueError("states/actions must have shapes (T+1, S)/(T, A) with T,S,A > 0")
+        if not np.isfinite(self.states).all() or not np.isfinite(self.actions).all():
+            raise ValueError("states/actions must be finite")
+        return self.states.shape[1], self.actions.shape[1]
+
+    def check_physics_step_consistency(self, physics_steps_per_action: int) -> None:
+        replay = self.metadata.get("replay") or {}
+        repeat = replay_action_repeat(replay)
+        if repeat != physics_steps_per_action:
+            raise ValueError(
+                f"physics_steps_per_action={repeat} differs from config "
+                f"{physics_steps_per_action}; recollect with "
+                "--physics-steps-per-action matching the config"
+            )
 
 
 def save_episode(path: str | Path, episode: Episode) -> None:
@@ -78,3 +107,38 @@ def load_episode(path: str | Path) -> Episode:
             mocap_pos=data.get("mocap_pos"),
             mocap_quat=data.get("mocap_quat"),
         )
+
+
+def load_episodes(data_dir: str | Path, *, success_only: bool = True) -> list[Episode]:
+    """Load sorted top-level NPZ episodes with a common training shape.
+
+    By default only episodes whose metadata has ``success is True`` are kept.
+    Failed and unlabeled attempts remain available with ``success_only=False``.
+    Optional rewards and replay arrays are left untouched.
+    """
+    directory = Path(data_dir)
+    if not directory.is_dir():
+        raise ValueError(f"Episode directory does not exist: {directory}")
+    paths = sorted(path for path in directory.glob("*.npz") if path.is_file())
+    if not paths:
+        raise ValueError(f"No NPZ episodes found in {directory}")
+
+    episodes: list[Episode] = []
+    dimensions: tuple[int, int] | None = None
+    for path in paths:
+        try:
+            episode = load_episode(path)
+            if success_only and episode.metadata.get("success") is not True:
+                continue
+            shape = episode.validate_training_data()
+            if dimensions is None:
+                dimensions = shape
+            elif shape != dimensions:
+                raise ValueError(f"feature dimensions {shape} differ from expected {dimensions}")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, BadZipFile) as error:
+            raise ValueError(f"Invalid episode {path}: {error}") from error
+        episodes.append(episode)
+
+    if not episodes:
+        raise ValueError(f"No eligible episodes found in {directory}")
+    return episodes

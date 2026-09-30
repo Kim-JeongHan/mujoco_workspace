@@ -1,5 +1,5 @@
-"""Demonstration episode loading and splitting."""
+"""Demonstration episode loading."""
 
-from mujoco_lab.learning.datasets.loading import load_episodes, split_episodes
+from mujoco_lab.learning.datasets.episode import load_episodes
 
-__all__ = ["load_episodes", "split_episodes"]
+__all__ = ["load_episodes"]

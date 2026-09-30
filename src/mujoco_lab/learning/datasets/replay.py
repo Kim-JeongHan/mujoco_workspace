@@ -160,24 +160,11 @@ def capture_frame(simulator: Simulator) -> dict[str, np.ndarray]:
 
 
 def replay_action_repeat(metadata: Mapping[str, Any]) -> int:
-    """Return recorded physics ticks per action; legacy recordings use one."""
-    repeat = metadata.get("physics_steps_per_action", 1)
+    """Return the recorded physics ticks per action."""
+    repeat = metadata.get("physics_steps_per_action")
     if isinstance(repeat, bool) or not isinstance(repeat, Integral) or repeat <= 0:
         raise ValueError("physics_steps_per_action must be a positive integer")
     return int(repeat)
-
-
-def replay_cube_yaw_range_degrees(metadata: Mapping[str, Any]) -> float:
-    """Return the recorded yaw range; legacy recordings used zero yaw."""
-    value = metadata.get("cube_yaw_range_degrees", 0.0)
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not np.isfinite(value)
-        or value < 0
-    ):
-        raise ValueError("cube_yaw_range_degrees must be finite and nonnegative")
-    return float(value)
 
 
 def cube_stack_metadata(
@@ -188,17 +175,9 @@ def cube_stack_metadata(
     physics_steps_per_action: int = 1,
     cube_yaw_range_degrees: float = 0.0,
 ) -> dict[str, Any]:
-    """Describe a bundled cube scene with one robot at its scene mount.
-
-    New v2 recordings use a visual compatibility signature. Legacy v1 replay
-    still requires the original MuJoCo version and full model binary hash.
-    """
+    """Describe a bundled cube scene with one robot at its scene mount."""
     repeat = replay_action_repeat({"physics_steps_per_action": physics_steps_per_action})
-    yaw_range = replay_cube_yaw_range_degrees(
-        {"cube_yaw_range_degrees": cube_yaw_range_degrees}
-    )
     return {
-        "schema_version": 2,
         "scene": "cube_stack",
         "environment": "table_shelf",
         "cubes": cubes,
@@ -206,7 +185,7 @@ def cube_stack_metadata(
         "robot_name": next(iter(simulator.robots)),
         "dt": simulator.dt,
         "physics_steps_per_action": repeat,
-        "cube_yaw_range_degrees": yaw_range,
+        "cube_yaw_range_degrees": cube_yaw_range_degrees,
         "mujoco_version": mujoco.__version__,
         "model_sha256": model_signature(simulator.model),
         "visual_sha256": visual_signature(simulator.model),

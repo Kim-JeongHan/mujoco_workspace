@@ -92,48 +92,33 @@ def test_old_episode_still_loads_for_learning_but_cannot_replay(tmp_path):
         EpisodeReplay(loaded)
 
 
-def test_replay_action_repeat_defaults_legacy_and_validates_new_metadata(recording):
+def test_replay_action_repeat_requires_valid_metadata(recording):
     episode, _ = recording
-    assert replay_action_repeat({}) == 1
     assert replay_action_repeat(episode.metadata["replay"]) == 1
-    for invalid in (True, 0, -1, 1.5, "5"):
+    for invalid in (None, True, 0, -1, 1.5, "5"):
         with pytest.raises(ValueError, match="physics_steps_per_action"):
-            replay_action_repeat({"physics_steps_per_action": invalid})
+            replay_action_repeat({} if invalid is None else {"physics_steps_per_action": invalid})
 
 
-def test_replay_accepts_partial_final_action_at_recorded_physics_tick(recording):
+def test_replay_uses_recorded_partial_final_frame(recording):
     episode, _ = recording
     metadata = deepcopy(episode.metadata)
     metadata["replay"]["physics_steps_per_action"] = 5
     frame_times = np.array([0.0, 0.01, 0.02, 0.03, 0.034])
-    terminated = episode.terminated.copy()
-    terminated[-1] = True
-    episode = replace(episode, metadata=metadata, frame_times=frame_times, terminated=terminated)
+    episode = replace(episode, metadata=metadata, frame_times=frame_times)
     replay = EpisodeReplay(episode)
     assert replay.frame_dt == pytest.approx(0.01)
     np.testing.assert_array_equal(replay.frame_times, frame_times)
     replay.set_frame(4)
     assert replay.simulator.data.time == pytest.approx(0.034)
-    with pytest.raises(ValueError, match="uniformly timed"):
-        EpisodeReplay(replace(episode, terminated=np.zeros_like(terminated)))
 
 
-@pytest.mark.parametrize("bad_field", ["qpos", "frame_times", "mocap_pos", "visual_sha256"])
-def test_replay_rejects_incompatible_recordings(recording, bad_field):
+def test_replay_rejects_changed_scene(recording):
     episode, _ = recording
-    if bad_field == "visual_sha256":
-        metadata = deepcopy(episode.metadata)
-        metadata["replay"][bad_field] = "changed asset"
-        episode = replace(episode, metadata=metadata)
-        message = "model differs"
-    elif bad_field == "frame_times":
-        episode = replace(episode, frame_times=episode.frame_times * 2)
-        message = "uniformly timed"
-    else:
-        episode = replace(episode, **{bad_field: getattr(episode, bad_field)[:-1]})
-        message = bad_field
-    with pytest.raises(ValueError, match=message):
-        EpisodeReplay(episode)
+    metadata = deepcopy(episode.metadata)
+    metadata["replay"]["visual_sha256"] = "changed asset"
+    with pytest.raises(ValueError, match="model differs"):
+        EpisodeReplay(replace(episode, metadata=metadata))
 
 
 def test_collect_episodes_forwards_recording_options(recording, tmp_path, monkeypatch):

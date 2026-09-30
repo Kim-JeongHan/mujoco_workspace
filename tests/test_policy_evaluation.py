@@ -9,32 +9,44 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import EvalConfig, TrainConfig
+from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig, TrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
-from mujoco_lab.learning.evaluate import _scene_settings, _verify_replay, run
-from mujoco_lab.learning.evaluation import evaluate_policy, validate_contract
+from mujoco_lab.learning.evaluate import _verify_replay, run
+from mujoco_lab.learning.evaluation import evaluate_policy
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.simulation import Simulator
 
 
 class TinyEnv:
-    def __init__(self, *, low=-10.0, high=10.0, finish=3, success=False):
+    physics_steps_per_action = 1
+    task = None
+
+    def __init__(self, *, low=-10.0, high=10.0, finish=3, success=False, dt=0.002):
         self.observation_space = SimpleNamespace(shape=(1,))
-        self.action_space = SimpleNamespace(shape=(1,), low=np.array([low]), high=np.array([high]))
+        self.action_space = SimpleNamespace(
+            shape=(1,), low=np.array([low]), high=np.array([high]), dtype=np.float32
+        )
+        self.simulator = SimpleNamespace(dt=dt, data=SimpleNamespace(time=0.0))
         self.finish = finish
         self.wins = success
         self.actions = []
         self.seeds = []
         self.steps = 0
 
+    @property
+    def action_dt(self):
+        return self.simulator.dt * self.physics_steps_per_action
+
     def reset(self, *, seed):
         self.steps = 0
+        self.simulator.data.time = 0.0
         self.seeds.append(seed)
         return np.array([2.0], dtype=np.float32), {}
 
     def step(self, action):
         self.actions.append(float(action[0]))
         self.steps += 1
+        self.simulator.data.time += self.simulator.dt
         ended = self.steps == self.finish
         success = ended and self.wins
         return (
@@ -66,7 +78,14 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
         action_std=np.array([2.0], dtype=np.float32),
     )
     path = tmp_path / "checkpoint.pt"
-    save_checkpoint(path, model, normalizer, config, optimizer_step=7)
+    save_checkpoint(
+        path,
+        model,
+        normalizer,
+        config,
+        optimizer_step=7,
+        dataset_metadata={"replay": {"physics_steps_per_action": 1}},
+    )
     return load_checkpoint(path)
 
 
@@ -82,7 +101,6 @@ def evaluate(
         seed=seed,
         policy_seed=policy_seed,
         max_steps=max_steps,
-        dt=0.002,
         device=torch.device("cpu"),
         flow_num_steps=3,
     )
@@ -183,52 +201,11 @@ def test_flow_seed_reproducibility_and_rng_and_mode_restoration(tmp_path):
     assert different.actions != env1.actions[: len(different.actions)]
 
 
-def test_contract_rejects_bad_timing_dimensions_and_stats(tmp_path):
-    model, stats, metadata = checkpoint(tmp_path)
-    env = TinyEnv()
-    metadata["architecture"]["physics_steps_per_action"] = 2
-    metadata["train_config"]["physics_steps_per_action"] = 2
-    with pytest.raises(ValueError, match="dataset replay physics_steps_per_action"):
-        validate_contract(model, stats, metadata, env)
-    metadata["architecture"]["physics_steps_per_action"] = 1
-    metadata["train_config"]["physics_steps_per_action"] = 1
-    env.observation_space.shape = (2,)
-    with pytest.raises(ValueError, match="observation dimension"):
-        validate_contract(model, stats, metadata, env)
-    env.observation_space.shape = (1,)
-    stats.state_std[0] = 0
-    with pytest.raises(ValueError, match="state_std must be positive"):
-        validate_contract(model, stats, metadata, env)
-
-
-def test_scene_settings_prefer_replay_and_reject_conflicts():
-    metadata = {
-        "train_config": {"robot": "panda", "cubes": 2, "environment": "table_shelf"},
-        "dataset_metadata": {
-            "replay": {"robot": "forte", "cubes": 2, "environment": "table_shelf", "dt": 0.002}
-        },
-    }
-    with pytest.raises(ValueError, match="replay robot differs"):
-        _scene_settings(metadata)
-    metadata["train_config"]["robot"] = "forte"
-    robot, robot_name, cubes, environment, dt, sources = _scene_settings(metadata)
-    assert (robot, robot_name, cubes, environment, dt) == (
-        "forte",
-        "forte",
-        2,
-        "table_shelf",
-        0.002,
-    )
-    assert sources["robot"] == "dataset_metadata.replay"
-    assert sources["robot_name"] == "robot"
-
-
 def test_replay_rejects_physics_change_with_same_visual_hash(monkeypatch):
     simulator = SimpleNamespace(dt=0.004)
     metadata = {
         "dataset_metadata": {
             "replay": {
-                "schema_version": 2,
                 "model_sha256": "old-physics",
                 "visual_sha256": "same-visual",
                 "mujoco_version": "3.13.0",
@@ -244,7 +221,12 @@ def test_replay_rejects_physics_change_with_same_visual_hash(monkeypatch):
         },
     )
     with pytest.raises(ValueError, match="model_sha256"):
-        _verify_replay(cast(Simulator, simulator), metadata, robot="forte", cubes=2, dt=0.004)
+        _verify_replay(
+            cast(Simulator, simulator),
+            metadata["dataset_metadata"]["replay"],
+            robot="forte",
+            cubes=2,
+        )
 
 
 def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monkeypatch):
@@ -257,6 +239,8 @@ def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monke
             "cubes": 2,
             "environment": "table_shelf",
             "dt": 0.004,
+            "physics_steps_per_action": 1,
+            "cube_yaw_range_degrees": 0.0,
         },
         "train_seeds": [50],
     }
@@ -269,6 +253,7 @@ def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monke
         def __init__(self, scene, *, robots, dt):
             assert robots[0].name == "arm" and robots[0].robot_type == "forte"
             assert dt == 0.004
+            self.dt = dt
             self.robots = {"arm": Robot()}
 
     monkeypatch.setattr(
@@ -281,16 +266,13 @@ def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monke
     monkeypatch.setattr("mujoco_lab.learning.evaluate.CubeStackTask", lambda *a, **k: None)
     monkeypatch.setattr(
         "mujoco_lab.learning.evaluate.CubeStackEnv",
-        lambda *a, **k: TinyEnv(finish=1, success=True),
+        lambda *a, **k: TinyEnv(finish=1, success=True, dt=0.004),
     )
     run_dir, summary = run(
         EvalConfig(
             checkpoint=tmp_path / "checkpoint.pt",
             device="cpu",
-            num_episodes=2,
-            num_video_episodes=0,
-            seed=50,
-            max_steps=1,
+            rollout=RolloutConfig(num_episodes=2, env_seed=50, max_steps=1, video_episodes=0),
             output_dir=tmp_path / "logs",
         )
     )

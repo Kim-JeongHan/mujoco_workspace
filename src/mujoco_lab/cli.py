@@ -7,6 +7,7 @@ from typing import Literal
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets import CubeCount, RobotName
 from mujoco_lab.control import create_controller
 from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
 from mujoco_lab.rendering.camera import create_free_camera
@@ -24,8 +25,8 @@ from mujoco_lab.tasks import (
 class Config:
     """Choose the stack size, run mode, and optional image or video output."""
 
-    cubes: int = 2
-    robot: Literal["panda", "forte"] = "panda"
+    cubes: CubeCount = 2
+    robot: RobotName = "panda"
     environment: Literal["table_shelf", "warehouse"] = "table_shelf"
     method: Literal["heuristic", "sampling"] = "heuristic"
     planning: RRTConnectConfig | RRTConfig | PRMConfig = field(default_factory=default_planning)

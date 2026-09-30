@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from mujoco_lab.assets import ENVIRONMENT_SCENES, ROBOT_ASSETS
+from mujoco_lab.assets import CUBE_COUNTS, ENVIRONMENT_SCENES, ROBOT_ASSETS
 from mujoco_lab.assets.randomization import sample_cube_positions
 
 
@@ -37,13 +37,10 @@ def load_asset(name: str) -> tuple[mujoco.MjSpec, AssetInfo]:
     asset = ROBOT_ASSETS[name]
 
     spec = mujoco.MjSpec.from_file(str(asset.path))
-    if (
-        any(
-            actuator.dyntype != mujoco.mjtDyn.mjDYN_NONE or actuator.actdim > 0
-            for actuator in spec.actuators
-        )
-        or any(body.mocap for body in spec.bodies)
-    ):
+    if any(
+        actuator.dyntype != mujoco.mjtDyn.mjDYN_NONE or actuator.actdim > 0
+        for actuator in spec.actuators
+    ) or any(body.mocap for body in spec.bodies):
         raise ValueError("Robot assets must have no activation or mocap state")
     info = asset_info(spec, asset.gripper_actuator)
     if any(not name for name in info.joint_names + info.actuator_names):
@@ -67,8 +64,8 @@ def create_cube_stack(
     environment: str = "table_shelf",
 ) -> mujoco.MjSpec:
     """Load the requested cube scene for later composition with a robot."""
-    if cubes not in (2, 3, 4):
-        raise ValueError("cubes must be 2, 3, or 4")
+    if cubes not in CUBE_COUNTS:
+        raise ValueError(f"cubes must be one of {CUBE_COUNTS}")
     if environment not in ("table_shelf", "warehouse"):
         raise ValueError("Cube stacking requires table_shelf or warehouse")
     scene_name = f"cube_stack_{cubes}"

@@ -3,38 +3,48 @@
 import json
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config.config import RolloutConfig, TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation import evaluate_policy
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.learning.trainers.train_bc import run_training
 
 
 class TinyEnv:
+    physics_steps_per_action = 1
+    simulator = SimpleNamespace(dt=0.002, data=SimpleNamespace(time=0.0))
+    task = None
+
     observation_space = SimpleNamespace(shape=(1,))
     action_space = SimpleNamespace(
         shape=(1,), low=np.array([-1.0]), high=np.array([1.0]), dtype=np.float32
     )
 
     def reset(self, *, seed):
+        self.simulator.data.time = 0.0
         return np.array([0.0], dtype=np.float32), {}
 
     def step(self, action):
+        self.simulator.data.time += self.simulator.dt
         return np.array([0.0], dtype=np.float32), 0.0, False, True, {"success": False}
 
 
-def test_evaluation_interval_final_step_and_training_rng(monkeypatch):
+@pytest.mark.parametrize("ema_decay", [None, 0.5])
+def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     demonstration = Episode(
         states=np.arange(6, dtype=np.float32).reshape(-1, 1),
         actions=np.arange(5, dtype=np.float32).reshape(-1, 1),
+        metadata={"replay": {"physics_steps_per_action": 1}},
     )
     config = TrainConfig(
         policy_type="flow",
@@ -47,14 +57,15 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch):
         num_epochs=2,
         log_interval=100,
         eval_interval=4,
+        ema_decay=ema_decay,
     )
     observed = []
 
     def evaluate(model, normalizer, step):
-        assert model.training
+        assert model.training == (ema_decay is None)
         metadata = checkpoint_metadata(model, normalizer, config, optimizer_step=step)
         rows, summary = evaluate_policy(
-            TinyEnv(),
+            cast(CubeStackEnv, TinyEnv()),
             model,
             normalizer,
             metadata,
@@ -62,14 +73,13 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch):
             seed=100,
             policy_seed=200,
             max_steps=1,
-            dt=0.002,
             device=torch.device("cpu"),
             flow_num_steps=2,
         )
-        assert model.training
+        assert model.training == (ema_decay is None)
         observed.append((step, rows[0]["env_seed"], summary["attempted"]))
 
-    evaluated, _ = run_training(config, [demonstration], evaluate=evaluate)
+    evaluated, _ = run_training(config, [demonstration], [], evaluate=evaluate)
     reference, _ = run_training(config, [demonstration])
     assert observed == [(4, 100, 1), (6, 100, 1)]
     for name, parameter in evaluated.state_dict().items():
@@ -79,6 +89,7 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch):
     run_training(
         replace(config, num_epochs=1, eval_interval=0),
         [demonstration],
+        [],
         evaluate=lambda *_args: disabled.append(True),
     )
     assert disabled == []
@@ -91,6 +102,7 @@ def test_training_cli_writes_step_results_video_and_same_step_logs(tmp_path, mon
         data_dir=tmp_path / "data",
         output_dir=tmp_path / "logs",
         robot="forte",
+        policy_type="mse",
         hidden_dims=(8,),
         obs_horizon=1,
         chunk_size=1,
@@ -99,13 +111,14 @@ def test_training_cli_writes_step_results_video_and_same_step_logs(tmp_path, mon
         batch_size=2,
         num_epochs=1,
         eval_interval=1,
-        num_eval_episodes=1,
+        rollout=RolloutConfig(num_episodes=1, env_seed=10_000, video_episodes=1),
+        validation_ratio=0,
     )
     monkeypatch.setenv("WANDB_MODE", "disabled")
     demonstration = Episode(
         states=np.zeros((3, 1), dtype=np.float32),
         actions=np.zeros((2, 1), dtype=np.float32),
-        metadata={"seed": 7},
+        metadata={"seed": 7, "replay": {"dt": 0.002, "physics_steps_per_action": 1}},
     )
     model = build_policy("mse", state_dim=1, action_dim=1, chunk_size=1, hidden_dims=(8,))
     normalizer = Normalizer(
@@ -117,10 +130,7 @@ def test_training_cli_writes_step_results_video_and_same_step_logs(tmp_path, mon
     env = TinyEnv()
     monkeypatch.setattr(cli.tyro, "cli", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(cli, "load_episodes", lambda _path: [demonstration])
-    monkeypatch.setattr(
-        cli, "split_episodes", lambda _episodes, **_kwargs: ([demonstration], [], [])
-    )
-    monkeypatch.setattr(cli, "create_evaluation_env", lambda *_args, **_kwargs: (env, 0.002, {}))
+    monkeypatch.setattr(cli, "create_evaluation_env", lambda *_args, **_kwargs: (env, {}))
 
     def fake_training(_config, _train, _validation, *, logger, evaluate):
         evaluate(model, normalizer, 1)

@@ -8,6 +8,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from mujoco_lab.assets import RobotName
+
 STAGE_ORDER = ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
 
 
@@ -56,7 +58,7 @@ class CubeStackRecipe(BaseModel):
         return self
 
 
-def load_recipe(robot_type: Literal["panda", "forte"]) -> CubeStackRecipe:
+def load_recipe(robot_type: RobotName) -> CubeStackRecipe:
     """Read and validate the bundled recipe for one supported robot."""
     path = files("mujoco_lab.tasks").joinpath("recipes", "cube_stack", f"{robot_type}.yaml")
     return CubeStackRecipe.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))

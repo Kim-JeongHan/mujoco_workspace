@@ -15,6 +15,14 @@ from mujoco_lab.control import ControlTarget
 from mujoco_lab.tasks import CubeStackTask
 
 
+def cube_stack_observation_layout(cubes: int) -> tuple[int, list[int]]:
+    """Return the frame width and rot6d indices for one robot and ``cubes`` cubes."""
+    return 24 + 15 * cubes, [
+        *range(18, 24),
+        *(index for cube in range(cubes) for index in range(27 + 15 * cube, 33 + 15 * cube)),
+    ]
+
+
 class CubeStackEnv(gym.Env):
     """Apply each robot's arm targets and optional gripper target per step.
 
@@ -25,6 +33,9 @@ class CubeStackEnv(gym.Env):
     and gripper targets use their joints' native radians or meters. Configure
     joint-target arm controllers before stepping; this environment selects none.
     """
+
+    action_space: spaces.Box
+    observation_space: spaces.Box
 
     def __init__(
         self,
@@ -119,6 +130,8 @@ class CubeStackEnv(gym.Env):
         grippers = sum(robot.gripper is not None for robot in self.robots)
         size = 2 * arm_values + grippers + 9 * len(self.robots)
         size += task.cubes * (12 + 3 * len(self.robots))
+        if len(self.robots) == 1 and arm_values == 7 and grippers == 1:
+            size, _ = cube_stack_observation_layout(task.cubes)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(size,), dtype=np.float32
         )
@@ -140,10 +153,8 @@ class CubeStackEnv(gym.Env):
             sines = np.abs(np.sin(angles))
             half_sizes = np.column_stack(
                 (
-                    cosines * self._cube_half_sizes[:, 0]
-                    + sines * self._cube_half_sizes[:, 1],
-                    sines * self._cube_half_sizes[:, 0]
-                    + cosines * self._cube_half_sizes[:, 1],
+                    cosines * self._cube_half_sizes[:, 0] + sines * self._cube_half_sizes[:, 1],
+                    sines * self._cube_half_sizes[:, 0] + cosines * self._cube_half_sizes[:, 1],
                 )
             )
         else:

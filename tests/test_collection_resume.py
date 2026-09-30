@@ -35,8 +35,7 @@ def test_stream_releases_previous_episode_and_list_api_remains(tmp_path, monkeyp
         assert item.metadata["seed"] in (10, 11, 12)
         del item
     assert [
-        load_episode(tmp_path / f"episode_{index:06d}.npz").metadata["seed"]
-        for index in range(3)
+        load_episode(tmp_path / f"episode_{index:06d}.npz").metadata["seed"] for index in range(3)
     ] == [10, 11, 12]
     streaming = False
     retained = collect_episodes(Mock(), Mock(), 2, seed=20)
@@ -63,47 +62,55 @@ def test_interrupted_collection_resumes_absolute_indices_without_changes(tmp_pat
     assert [item.metadata["seed"] for item in resumed] == [12, 13]
     assert calls == [10, 11, 12, 12, 13]
     assert [path.read_bytes() for path in sorted(tmp_path.glob("*.npz"))[:2]] == originals
-    assert list(
-        iter_episodes(
-            Mock(), Mock(), 4, seed=10, output_dir=tmp_path, resume=True, replay_metadata=replay
+    assert (
+        list(
+            iter_episodes(
+                Mock(), Mock(), 4, seed=10, output_dir=tmp_path, resume=True, replay_metadata=replay
+            )
         )
-    ) == []
-    assert list(
-        iter_episodes(
-            Mock(), Mock(), 3, seed=10, output_dir=tmp_path, resume=True, replay_metadata=replay
+        == []
+    )
+    assert (
+        list(
+            iter_episodes(
+                Mock(), Mock(), 3, seed=10, output_dir=tmp_path, resume=True, replay_metadata=replay
+            )
         )
-    ) == []
+        == []
+    )
     assert calls == [10, 11, 12, 12, 13]
 
 
-def test_resume_accepts_legacy_repeat_one_but_rejects_new_cadence(tmp_path, monkeypatch):
+def test_resume_rejects_missing_or_different_action_cadence(tmp_path, monkeypatch):
     replay = {"model": "same"}
     monkeypatch.setattr(
         "mujoco_lab.learning.rollout.collector.collect_episode",
         lambda _env, _expert, *, seed, **_kwargs: episode(seed, replay),
     )
     collect_episodes(Mock(), Mock(), 1, seed=10, output_dir=tmp_path)
-    assert list(
-        iter_episodes(
-            Mock(), Mock(), 1, seed=10, output_dir=tmp_path, resume=True,
-            replay_metadata={**replay, "physics_steps_per_action": 1},
-        )
-    ) == []
-    with pytest.raises(ValueError, match="different replay metadata"):
-        list(
-            iter_episodes(
-                Mock(), Mock(), 2, seed=10, output_dir=tmp_path, resume=True,
-                replay_metadata={**replay, "physics_steps_per_action": 5},
+    for repeat in (1, 5):
+        with pytest.raises(ValueError, match="different replay metadata"):
+            list(
+                iter_episodes(
+                    Mock(),
+                    Mock(),
+                    2,
+                    seed=10,
+                    output_dir=tmp_path,
+                    resume=True,
+                    replay_metadata={**replay, "physics_steps_per_action": repeat},
+                )
             )
-        )
 
 
-def test_resume_accepts_legacy_zero_yaw_but_rejects_changed_range(tmp_path):
+def test_resume_requires_matching_yaw_metadata(tmp_path):
     from mujoco_lab.learning.rollout.collector import _resume_index
 
-    recorded = {"model": "same"}
+    recorded = {"model": "same", "cube_yaw_range_degrees": 0.0}
     save_episode(tmp_path / "episode_000000.npz", episode(10, recorded))
-    assert _resume_index(tmp_path, 10, {**recorded, "cube_yaw_range_degrees": 0.0}) == 1
+    assert _resume_index(tmp_path, 10, recorded) == 1
+    with pytest.raises(ValueError, match="different replay metadata"):
+        _resume_index(tmp_path, 10, {"model": "same"})
     with pytest.raises(ValueError, match="different replay metadata"):
         _resume_index(tmp_path, 10, {**recorded, "cube_yaw_range_degrees": 45.0})
 
@@ -167,11 +174,15 @@ def test_atomic_save_never_exposes_partial_final_or_replaces_existing(tmp_path, 
 
 
 @pytest.mark.parametrize(
-    ("method", "cube_yaw_range_degrees", "max_steps"),
-    [("heuristic", 0.0, 6000), ("sampling", 15.0, 18000)],
+    ("method", "cube_yaw_range_degrees", "max_steps", "robot_name"),
+    [
+        ("heuristic", 0.0, 6000, "forte"),
+        ("sampling", 15.0, 18000, "forte"),
+        ("heuristic", 0.0, 6000, "panda"),
+    ],
 )
 def test_cli_streams_resume_and_counts_only_new_episodes(
-    tmp_path, monkeypatch, capsys, method, cube_yaw_range_degrees, max_steps
+    tmp_path, monkeypatch, capsys, method, cube_yaw_range_degrees, max_steps, robot_name
 ):
     from mujoco_lab.learning import collect as cli
 
@@ -180,11 +191,12 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
         seed=10,
         output_dir=tmp_path,
         resume=True,
+        robot=robot_name,
         method=method,
         cube_yaw_range_degrees=cube_yaw_range_degrees,
     )
     simulator = Mock()
-    simulator.robots = {"forte": Mock()}
+    simulator.robots = {robot_name: Mock()}
     iteration = Mock(return_value=iter([episode(12), episode(13)]))
     monkeypatch.setattr(cli.tyro, "cli", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(cli, "Simulator", lambda *_args, **_kwargs: simulator)
@@ -205,6 +217,9 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
     assert iteration.call_args.kwargs["replay_metadata"] == {"model": "same"}
     assert cli.CubeStackEnv.call_args.kwargs["cube_yaw_range_degrees"] == cube_yaw_range_degrees
     assert cli.create_expert.call_args.kwargs["method"] == method
+    assert cli.create_controller.call_args.args[0] == (
+        "position" if robot_name == "panda" else "pd"
+    )
     captured = capsys.readouterr()
     assert captured.out == ""
     output = captured.err

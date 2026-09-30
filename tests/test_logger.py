@@ -33,15 +33,16 @@ def test_logger_writes_levels_to_console_and_file(tmp_path, capsys):
         assert re.fullmatch(rf"{timestamp} {re.escape(message)}", line)
 
 
-def test_logger_can_disable_console_and_multiple_instances_append_once(tmp_path, capsys):
+def test_multiple_instances_write_to_console_and_append_file_once(tmp_path, capsys):
     log_file = tmp_path / "simulation.log"
 
-    Logger(log_file, console=False).info("first")
-    Logger(log_file, console=False).info("second")
+    Logger(log_file).info("first")
+    Logger(log_file).info("second")
 
     captured = capsys.readouterr()
-    assert captured.out == captured.err == ""
+    assert captured.out == ""
     lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert captured.err.splitlines() == lines
     assert [line.rsplit(" ", 1)[-1] for line in lines] == ["first", "second"]
 
 

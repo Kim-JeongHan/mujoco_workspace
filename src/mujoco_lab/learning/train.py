@@ -6,19 +6,20 @@ import json
 import math
 from dataclasses import asdict
 from datetime import datetime
+from typing import cast
 from uuid import uuid4
 
+import torch
 import tyro
+from torch.utils.data import Dataset, random_split
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
-from mujoco_lab.learning.datasets import load_episodes, split_episodes
-from mujoco_lab.learning.datasets.loading import validate_episode_cadence
+from mujoco_lab.learning.datasets import load_episodes
 from mujoco_lab.learning.evaluate import create_evaluation_env
 from mujoco_lab.learning.evaluation import (
     evaluate_policy,
     evaluation_log_metrics,
-    validate_contract,
 )
 from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.trainers.train_bc import run_training
@@ -30,13 +31,25 @@ def main() -> None:
     config = tyro.cli(TrainConfig, description="Train offline cube-stack behavior cloning")
     config.validate()
     episodes = load_episodes(config.data_dir)
-    validate_episode_cadence(episodes, config.physics_steps_per_action)
-    train, validation, test = split_episodes(
-        episodes,
-        validation_ratio=config.validation_ratio,
-        test_ratio=config.test_ratio,
-        seed=config.seed,
+    for episode in episodes:
+        episode.check_physics_step_consistency(config.physics_steps_per_action)
+    validation_count = (
+        max(1, round(len(episodes) * config.validation_ratio)) if config.validation_ratio else 0
     )
+    test_count = max(1, round(len(episodes) * config.test_ratio)) if config.test_ratio else 0
+    train_count = len(episodes) - validation_count - test_count
+    if train_count <= 0:
+        raise ValueError("Not enough episodes for the requested holdouts and train")
+    parts = iter(
+        random_split(
+            cast(Dataset, episodes),
+            [count for count in (train_count, validation_count, test_count) if count],
+            generator=torch.Generator().manual_seed(config.seed),
+        )
+    )
+    train = [episodes[index] for index in next(parts).indices]
+    validation = [episodes[index] for index in next(parts).indices] if validation_count else []
+    test = [episodes[index] for index in next(parts).indices] if test_count else []
     dataset_metadata = {
         "data_dir": str(config.data_dir),
         "train_episodes": len(train),
@@ -45,21 +58,21 @@ def main() -> None:
         "train_seeds": [episode.metadata.get("seed") for episode in train],
         "validation_seeds": [episode.metadata.get("seed") for episode in validation],
         "test_seeds": [episode.metadata.get("seed") for episode in test],
-        "replay": train[0].metadata.get("replay", {}),
+        "replay": train[0].metadata["replay"],
     }
     settings = asdict(config)
     settings["data_dir"] = str(config.data_dir)
     settings["output_dir"] = str(config.output_dir)
     settings["dataset"] = dataset_metadata
+    rollout = config.rollout
     eval_env = None
-    eval_dt = None
     if config.eval_interval:
-        eval_env, eval_dt, _ = create_evaluation_env(
+        eval_env, _ = create_evaluation_env(
             {"train_config": settings, "dataset_metadata": dataset_metadata},
-            xy_range=config.eval_xy_range,
-            min_gap=config.eval_min_gap,
-            max_steps=config.eval_max_steps,
-            cube_yaw_range_degrees=config.eval_cube_yaw_range_degrees,
+            xy_range=rollout.xy_range,
+            min_gap=rollout.min_gap,
+            max_steps=rollout.max_steps,
+            cube_yaw_range_degrees=rollout.cube_yaw_range_degrees,
         )
         if eval_env.observation_space.shape != train[0].states.shape[1:]:
             raise ValueError("Evaluation observation dimension differs from training episodes")
@@ -88,7 +101,7 @@ def main() -> None:
         )
 
         def evaluate(model, normalizer, step: int) -> None:
-            assert eval_env is not None and eval_dt is not None
+            assert eval_env is not None
             metadata = checkpoint_metadata(
                 model,
                 normalizer,
@@ -96,7 +109,6 @@ def main() -> None:
                 optimizer_step=step,
                 dataset_metadata=dataset_metadata,
             )
-            validate_contract(model, normalizer, metadata, eval_env)
             checkpoint = run_dir / f"checkpoint_step_{step:08d}.pt"
             save_checkpoint(
                 checkpoint,
@@ -124,19 +136,18 @@ def main() -> None:
                     model,
                     normalizer,
                     metadata,
-                    num_episodes=config.num_eval_episodes,
-                    seed=config.eval_seed,
-                    policy_seed=config.eval_policy_seed,
-                    max_steps=config.eval_max_steps,
-                    dt=eval_dt,
+                    num_episodes=rollout.num_episodes,
+                    seed=rollout.env_seed,
+                    policy_seed=rollout.policy_seed,
+                    max_steps=rollout.max_steps,
                     device=next(model.parameters()).device,
                     flow_num_steps=config.flow_num_steps,
                     on_episode=record,
                     video_dir=step_dir / "videos",
-                    num_video_episodes=config.eval_video_episodes,
-                    video_fps=config.eval_video_fps,
-                    video_width=config.eval_video_width,
-                    video_height=config.eval_video_height,
+                    num_video_episodes=rollout.video_episodes,
+                    video_fps=rollout.video_fps,
+                    video_width=rollout.video_width,
+                    video_height=rollout.video_height,
                 )
             with (step_dir / "summary.json").open("x", encoding="utf-8") as summary_file:
                 json.dump(summary, summary_file, indent=2, allow_nan=False)

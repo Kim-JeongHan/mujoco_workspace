@@ -4,11 +4,22 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+import tyro
 
-from mujoco_lab.learning.config.config import EvalConfig, TrainConfig
+from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig, TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.evaluate import run
 from mujoco_lab.learning.trainers.train_bc import run_training
+
+
+def test_rollout_options_share_cli_names_with_separate_defaults(tmp_path):
+    train = tyro.cli(TrainConfig, args=["--rollout.env-seed", "123"])
+    evaluation = tyro.cli(
+        EvalConfig,
+        args=["--checkpoint", str(tmp_path / "checkpoint.pt"), "--rollout.env-seed", "123"],
+    )
+    assert train.rollout.env_seed == evaluation.rollout.env_seed == 123
+    assert (train.rollout.num_episodes, evaluation.rollout.num_episodes) == (3, 10)
 
 
 @pytest.mark.parametrize(
@@ -21,9 +32,9 @@ from mujoco_lab.learning.trainers.train_bc import run_training
         ({"num_epochs": 0}, "num_epochs"),
         ({"log_interval": 0}, "log_interval"),
         ({"eval_interval": -1}, "eval_interval"),
-        ({"num_eval_episodes": 0}, "num_eval_episodes"),
-        ({"eval_max_steps": 0}, "eval_max_steps"),
-        ({"eval_video_episodes": 2}, "eval_video_episodes"),
+        ({"rollout": RolloutConfig(num_episodes=0)}, "num_episodes"),
+        ({"rollout": RolloutConfig(max_steps=0)}, "max_steps"),
+        ({"rollout": RolloutConfig(num_episodes=1, video_episodes=2)}, "video_episodes"),
     ],
 )
 def test_train_config_rejects_project_invariants(overrides, field):
@@ -35,16 +46,22 @@ def test_disabled_training_evaluation_ignores_unused_settings():
     replace(
         TrainConfig(),
         eval_interval=0,
-        num_eval_episodes=0,
-        eval_max_steps=0,
-        eval_video_episodes=-1,
-        eval_video_width=1,
+        rollout=RolloutConfig(num_episodes=0, max_steps=0, video_episodes=-1, video_width=1),
     ).validate()
+
+
+@pytest.mark.parametrize(
+    "ratios",
+    [(-0.1, 0), (float("nan"), 0), (0.6, 0.4)],
+)
+def test_training_rejects_invalid_split_ratios(ratios):
+    with pytest.raises(ValueError, match="Holdout ratios"):
+        replace(TrainConfig(), validation_ratio=ratios[0], test_ratio=ratios[1]).validate()
 
 
 def test_direct_training_validates_before_episode_access():
     with pytest.raises(ValueError, match="num_epochs"):
-        run_training(TrainConfig(num_epochs=0), [])
+        run_training(TrainConfig(num_epochs=0), [], [])
 
 
 def test_batch_size_reaches_dataloader_validation():
@@ -60,7 +77,7 @@ def test_batch_size_reaches_dataloader_validation():
         eval_interval=0,
     )
     with pytest.raises(ValueError, match="batch_size should be a positive integer"):
-        run_training(config, [episode])
+        run_training(config, [episode], [])
 
 
 @pytest.mark.parametrize(
@@ -68,7 +85,7 @@ def test_batch_size_reaches_dataloader_validation():
     [
         ({"num_episodes": 0}, "num_episodes"),
         ({"max_steps": 0}, "max_steps"),
-        ({"num_video_episodes": 4}, "num_video_episodes"),
+        ({"video_episodes": 11}, "video_episodes"),
     ],
 )
 def test_eval_config_rejects_project_invariants_before_checkpoint_load(
@@ -78,6 +95,9 @@ def test_eval_config_rejects_project_invariants_before_checkpoint_load(
         pytest.fail("Checkpoint must not load before config validation")
 
     monkeypatch.setattr("mujoco_lab.learning.evaluate.load_checkpoint", unexpected_load)
-    config = replace(EvalConfig(checkpoint=tmp_path / "missing.pt"), **overrides)
+    config = replace(
+        EvalConfig(checkpoint=tmp_path / "missing.pt"),
+        rollout=replace(RolloutConfig(), **overrides),
+    )
     with pytest.raises(ValueError, match=field):
         run(config)

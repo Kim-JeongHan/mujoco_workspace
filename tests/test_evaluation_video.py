@@ -16,6 +16,8 @@ from mujoco_lab.learning.policies.mse import MSEPolicy
 
 
 class Env:
+    physics_steps_per_action = 1
+
     def __init__(self, *, fail_step=False):
         self.observation_space = SimpleNamespace(shape=(1,))
         self.action_space = SimpleNamespace(
@@ -25,18 +27,20 @@ class Env:
             starts=np.array([[0.0, 0.0, 0.0]]),
             goals=np.array([[0.1, 0.1, 0.0]]),
         )
-        self.simulator = SimpleNamespace()
+        self.simulator = SimpleNamespace(dt=0.002, data=SimpleNamespace(time=0.0))
         self.steps = 0
         self.fail_step = fail_step
 
     def reset(self, *, seed):
         self.steps = 0
+        self.simulator.data.time = 0.0
         return np.array([0.0], dtype=np.float32), {}
 
     def step(self, action):
         if self.fail_step:
             raise RuntimeError("step failed")
         self.steps += 1
+        self.simulator.data.time += self.simulator.dt
         return (
             np.array([0.0], dtype=np.float32),
             0.0,
@@ -81,7 +85,6 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
         seed=100,
         policy_seed=200,
         max_steps=2,
-        dt=0.002,
         device=torch.device("cpu"),
         flow_num_steps=1,
         video_dir=video_dir,

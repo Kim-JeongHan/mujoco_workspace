@@ -13,34 +13,7 @@ import gymnasium as gym
 import numpy as np
 
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
-from mujoco_lab.learning.datasets.replay import (
-    replay_action_repeat,
-    replay_cube_yaw_range_degrees,
-)
-from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.tasks import Expert
-
-
-def _replay_metadata_for_env(
-    env: gym.Env, replay_metadata: dict[str, Any] | None
-) -> dict[str, Any] | None:
-    if replay_metadata is None:
-        return None
-    result = replay_metadata.copy()
-    if isinstance(env, CubeStackEnv):
-        if (
-            "physics_steps_per_action" in result
-            and replay_action_repeat(result) != env.physics_steps_per_action
-        ):
-            raise ValueError("Replay action cadence differs from the environment")
-        result["physics_steps_per_action"] = env.physics_steps_per_action
-        if (
-            "cube_yaw_range_degrees" in result
-            and replay_cube_yaw_range_degrees(result) != env.cube_yaw_range_degrees
-        ):
-            raise ValueError("Replay cube yaw range differs from the environment")
-        result["cube_yaw_range_degrees"] = env.cube_yaw_range_degrees
-    return result
 
 
 def collect_episode(
@@ -63,7 +36,6 @@ def collect_episode(
     """
     if max_steps <= 0:
         raise ValueError("max_steps must be positive")
-    replay_metadata = _replay_metadata_for_env(env, replay_metadata)
 
     obs, reset_info = env.reset(seed=seed, options=options)
     states = [obs.copy()]
@@ -104,8 +76,6 @@ def collect_episode(
             break
 
     success = final_info.get("success")
-    if success is not None and not isinstance(success, (bool, np.bool_)):
-        raise ValueError("info['success'] must be a boolean when provided")
     reason = final_info.get("termination_reason")
     if expert.failed and not (terminated or truncated):
         reason = expert.failure_reason or "expert_failed"
@@ -183,13 +153,7 @@ def _resume_index(
             recorded = metadata.get("replay")
             if not isinstance(recorded, dict):
                 raise ValueError(f"Episode {path} has different replay metadata")
-            expected = replay_metadata.copy()
-            recorded = recorded.copy()
-            expected["physics_steps_per_action"] = replay_action_repeat(expected)
-            recorded["physics_steps_per_action"] = replay_action_repeat(recorded)
-            expected["cube_yaw_range_degrees"] = replay_cube_yaw_range_degrees(expected)
-            recorded["cube_yaw_range_degrees"] = replay_cube_yaw_range_degrees(recorded)
-            if recorded != expected:
+            if recorded != replay_metadata:
                 raise ValueError(f"Episode {path} has different replay metadata")
     return len(paths)
 
@@ -216,7 +180,6 @@ def iter_episodes(
         raise ValueError("count must be positive")
     if resume and output_dir is None:
         raise ValueError("resume requires output_dir")
-    replay_metadata = _replay_metadata_for_env(env, replay_metadata)
     directory = None if output_dir is None else Path(output_dir)
     start_index = 0
     if directory is not None:

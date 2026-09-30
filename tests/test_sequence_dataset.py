@@ -79,9 +79,14 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
     episode = Episode(
         states=rng.normal(size=(5, 54)).astype(np.float32),
         actions=rng.normal(size=(4, 8)).astype(np.float32),
+        metadata={"replay": {"physics_steps_per_action": 1}},
     )
     initial_states, initial_actions = episode.states.copy(), episode.actions.copy()
-    validation = Episode(states=np.full((3, 54), 1000.0), actions=np.zeros((2, 8)))
+    validation = Episode(
+        states=np.full((3, 54), 1000.0),
+        actions=np.zeros((2, 8)),
+        metadata={"replay": {"physics_steps_per_action": 1}},
+    )
     config = TrainConfig(
         policy_type=policy_type,
         obs_horizon=2,

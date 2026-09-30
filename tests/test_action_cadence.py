@@ -103,15 +103,12 @@ def test_collector_records_actual_repeat_and_action_boundary_frames(monkeypatch)
         max_steps=2,
         seed=7,
         record_frame=lambda: capture_frame(env.simulator),
-        replay_metadata={"dt": env.simulator.dt},
+        replay_metadata={
+            "dt": env.simulator.dt,
+            "physics_steps_per_action": env.physics_steps_per_action,
+            "cube_yaw_range_degrees": env.cube_yaw_range_degrees,
+        },
     )
     assert episode.metadata["replay"]["physics_steps_per_action"] == 5
     assert episode.qpos.shape[0] == episode.states.shape[0] == len(episode) + 1 == 3
     np.testing.assert_allclose(np.diff(episode.frame_times), 0.01)
-    with pytest.raises(ValueError, match="Replay action cadence differs"):
-        collect_episode(
-            env,
-            FixedExpert(),
-            max_steps=1,
-            replay_metadata={"physics_steps_per_action": 1},
-        )

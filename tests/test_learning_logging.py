@@ -336,10 +336,15 @@ def test_training_logs_true_held_out_loss_with_training_only_stats(
     tmp_path, monkeypatch, policy_type
 ):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    train = Episode(states=np.zeros((3, 54), dtype=np.float32), actions=np.zeros((2, 8)))
+    train = Episode(
+        states=np.zeros((3, 54), dtype=np.float32),
+        actions=np.zeros((2, 8)),
+        metadata={"replay": {"physics_steps_per_action": 1}},
+    )
     validation = Episode(
         states=np.full((3, 54), 1000.0, dtype=np.float32),
         actions=np.ones((2, 8), dtype=np.float32),
+        metadata={"replay": {"physics_steps_per_action": 1}},
     )
     config = TrainConfig(
         policy_type=policy_type,

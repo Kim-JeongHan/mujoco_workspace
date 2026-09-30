@@ -2,6 +2,11 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+type RobotName = Literal["panda", "forte"]
+type CubeCount = Literal[1, 2, 3, 4]
+CUBE_COUNTS: tuple[CubeCount, ...] = (1, 2, 3, 4)
 
 
 @dataclass(frozen=True)
@@ -25,11 +30,11 @@ ENVIRONMENT_SCENES = {
     "warehouse": ENVIRONMENT_PATH / "warehouse" / "scene.xml",
     **{
         f"cube_stack_{count}": ENVIRONMENT_PATH / f"cube_stack_{count}" / "scene.xml"
-        for count in (2, 3, 4)
+        for count in CUBE_COUNTS
     },
     **{
         f"cube_stack_{count}_warehouse": ENVIRONMENT_PATH / f"cube_stack_{count}" / "warehouse.xml"
-        for count in (2, 3, 4)
+        for count in CUBE_COUNTS
     },
 }
 ENVIRONMENT_NAMES = tuple(ENVIRONMENT_SCENES)

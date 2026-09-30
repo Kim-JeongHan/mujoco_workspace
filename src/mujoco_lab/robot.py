@@ -70,7 +70,11 @@ class Robot:
 
         # Arm actuator mapping and properties.
         self._arm_actuator_slots = np.asarray(
-            [slot for slot in range(self.num_actuators) if self.gripper is None or slot != self.gripper.slot],
+            [
+                slot
+                for slot in range(self.num_actuators)
+                if self.gripper is None or slot != self.gripper.slot
+            ],
             dtype=int,
         )
         arm_ids = np.asarray(self.actuator_ids, dtype=int)[self._arm_actuator_slots]
@@ -250,7 +254,9 @@ class Robot:
                 raise ValueError(f"Robot {self.name!r} needs {required} finite joint commands")
             command[self.control_actuator_slots] = values * self.control_scale
         if not np.isfinite(command).all():
-            raise ValueError(f"Robot {self.name!r} needs {self.num_actuators} finite actuator inputs")
+            raise ValueError(
+                f"Robot {self.name!r} needs {self.num_actuators} finite actuator inputs"
+            )
         if self.gripper is not None and self.gripper.is_active():
             command[self.gripper.slot] = self.gripper.get_target() * self.gripper.gear
         limits = self.model.actuator_ctrlrange[self.actuator_ids]

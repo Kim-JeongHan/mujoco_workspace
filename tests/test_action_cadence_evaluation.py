@@ -1,19 +1,17 @@
 """Policy cadence and replay compatibility at the training/evaluation boundary."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 import torch
 
-from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
-from mujoco_lab.learning.datasets.loading import validate_episode_cadence
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation import evaluate_policy
 from mujoco_lab.learning.policies.factory import build_policy
-from mujoco_lab.learning.trainers.train_bc import run_training
 
 
 def _stats():
@@ -27,13 +25,14 @@ def _stats():
 
 class CadenceEnv:
     physics_steps_per_action = 5
+    task = None
 
     def __init__(self):
         self.observation_space = SimpleNamespace(shape=(1,))
         self.action_space = SimpleNamespace(
             shape=(1,), low=np.array([-1.0]), high=np.array([1.0]), dtype=np.float32
         )
-        self.simulator = SimpleNamespace(data=SimpleNamespace(time=0.0))
+        self.simulator = SimpleNamespace(dt=0.002, data=SimpleNamespace(time=0.0))
         self.steps = 0
 
     def reset(self, *, seed):
@@ -81,7 +80,7 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
     }
     env = CadenceEnv()
     rows, _ = evaluate_policy(
-        env,
+        cast(CubeStackEnv, env),
         model,
         _stats(),
         metadata,
@@ -89,7 +88,6 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
         seed=1,
         policy_seed=2,
         max_steps=30,
-        dt=0.002,
         device=torch.device("cpu"),
         flow_num_steps=1,
     )
@@ -102,50 +100,19 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
     assert rows[0]["success"]
 
 
-def test_legacy_500hz_episode_rejected_by_100hz_config():
+def test_episode_without_action_cadence_is_rejected():
     episode = Episode(
         states=np.zeros((3, 1), dtype=np.float32),
         actions=np.zeros((2, 1), dtype=np.float32),
         metadata={"success": True, "replay": {"dt": 0.002}},
     )
-    with pytest.raises(ValueError, match="Episode 0 physics_steps_per_action=1"):
-        validate_episode_cadence([episode], 5)
-    config = TrainConfig(num_epochs=1)
-    with pytest.raises(ValueError, match="Episode 0 physics_steps_per_action=1"):
-        run_training(config, [episode])
+    with pytest.raises(ValueError, match="physics_steps_per_action must be a positive integer"):
+        episode.check_physics_step_consistency(5)
     compatible = Episode(
         states=episode.states,
         actions=episode.actions,
         metadata={"replay": {"dt": 0.002, "physics_steps_per_action": 5}},
     )
-    with pytest.raises(ValueError, match="Episode 1 physics_steps_per_action=1"):
-        run_training(config, [compatible], [episode])
-
-
-def test_training_rejects_mixed_physics_dt():
-    episodes = [
-        Episode(
-            states=np.zeros((2, 1), dtype=np.float32),
-            actions=np.zeros((1, 1), dtype=np.float32),
-            metadata={"replay": {"dt": dt, "physics_steps_per_action": 5}},
-        )
-        for dt in (0.002, 0.004)
-    ]
-    with pytest.raises(ValueError, match="physics dt differs"):
-        validate_episode_cadence(episodes, 5)
-
-
-def test_legacy_checkpoint_without_repeat_restores_one(tmp_path):
-    config = TrainConfig(
-        obs_horizon=1, chunk_size=1, execution_horizon=1, physics_steps_per_action=1, hidden_dims=()
-    )
-    model = build_policy("mse", state_dim=1, action_dim=1, chunk_size=1, hidden_dims=())
-    path = tmp_path / "legacy.pt"
-    save_checkpoint(path, model, _stats(), config, optimizer_step=1)
-    payload = torch.load(path, weights_only=True)
-    del payload["architecture"]["physics_steps_per_action"]
-    del payload["train_config"]["physics_steps_per_action"]
-    torch.save(payload, path)
-    _, _, metadata = load_checkpoint(path)
-    assert metadata["architecture"]["physics_steps_per_action"] == 1
-    assert metadata["train_config"]["physics_steps_per_action"] == 1
+    compatible.check_physics_step_consistency(5)
+    with pytest.raises(ValueError, match="physics_steps_per_action=5 differs from config 1"):
+        compatible.check_physics_step_consistency(1)

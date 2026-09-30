@@ -7,10 +7,8 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.randomization import sample_cube_positions
-from mujoco_lab.learning.datasets.replay import replay_cube_yaw_range_degrees
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
-from mujoco_lab.learning.rollout.collector import _replay_metadata_for_env
 from mujoco_lab.tasks import CubeStackTask
 
 
@@ -46,9 +44,6 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
     # The observed rotation columns retain the physical yaw in the flat observation.
     observed_rotation = simulator.data.body("cube0/object_0").xmat.reshape(3, 3)[:, :2]
     np.testing.assert_allclose(obs[27:33], observed_rotation.reshape(-1), atol=1e-6)
-    assert _replay_metadata_for_env(env, {})["cube_yaw_range_degrees"] == 45.0
-    with pytest.raises(ValueError, match="Replay cube yaw range"):
-        _replay_metadata_for_env(env, {"cube_yaw_range_degrees": 0.0})
     # With fixed close centers, default axis-aligned boxes fit, but the
     # sampled rotated footprints require more clearance and must be rejected.
     distance = sum(env._cube_half_sizes[:, 0]) + env.min_gap + 0.001
@@ -85,29 +80,21 @@ def test_evaluation_restores_recorded_yaw(monkeypatch):
     )
     metadata = {
         "dataset_metadata": {"replay": {
-            "robot": "forte", "cubes": 2, "environment": "table_shelf", "dt": 0.002,
+            "robot": "forte", "robot_name": "forte", "cubes": 2,
+            "environment": "table_shelf", "dt": 0.002,
             "cube_yaw_range_degrees": 45.0,
+            "physics_steps_per_action": 1,
         }}
     }
-    env, _, scene = create_evaluation_env(metadata, xy_range=0.02, min_gap=0.01, max_steps=1)
+    env, scene = create_evaluation_env(metadata, xy_range=0.02, min_gap=0.01, max_steps=1)
     assert env.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 45.0
     assert max(map(abs, env.reset(seed=11)[1]["cube_yaws_degrees"])) > 0
     del env
     gc.collect()
-    overridden, _, scene = create_evaluation_env(
+    overridden, scene = create_evaluation_env(
         metadata, xy_range=0.02, min_gap=0.01, max_steps=1,
         cube_yaw_range_degrees=0.0,
     )
     assert overridden.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 0.0
     del overridden
     gc.collect()
-    del metadata["dataset_metadata"]["replay"]["cube_yaw_range_degrees"]
-    legacy, _, scene = create_evaluation_env(
-        metadata, xy_range=0.02, min_gap=0.01, max_steps=1,
-    )
-    assert legacy.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 0.0
-    assert replay_cube_yaw_range_degrees({}) == 0.0
-    assert replay_cube_yaw_range_degrees({"cube_yaw_range_degrees": 0}) == 0.0
-    for value in (-1, float("inf"), True):
-        with pytest.raises(ValueError, match="cube_yaw_range_degrees"):
-            replay_cube_yaw_range_degrees({"cube_yaw_range_degrees": value})

@@ -12,7 +12,6 @@ import tyro
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.learning.datasets.episode import Episode, load_episode
 from mujoco_lab.learning.datasets.replay import (
-    model_signature,
     replay_action_repeat,
     visual_signature,
 )
@@ -38,78 +37,36 @@ class EpisodeReplay:
                 "learning states are not MuJoCo qpos."
             )
         required = {
-            "schema_version",
             "scene",
             "environment",
             "cubes",
             "robot",
             "robot_name",
             "dt",
-            "mujoco_version",
-            "model_sha256",
+            "visual_sha256",
         }
         if not required.issubset(metadata):
             raise ValueError("Episode replay metadata is incomplete")
-        if (
-            metadata["schema_version"] not in (1, 2)
-            or metadata["scene"] != "cube_stack"
-            or metadata["environment"] != "table_shelf"
-            or metadata["cubes"] not in (2, 3, 4)
-            or metadata["robot"] not in ("forte", "panda")
-        ):
+        if metadata["scene"] != "cube_stack" or metadata["environment"] != "table_shelf":
             raise ValueError("Unsupported replay scene; expected a bundled cube-stack mount")
-        if metadata["schema_version"] == 1 and metadata["mujoco_version"] != mujoco.__version__:
-            raise ValueError("Replay requires the MuJoCo version used during collection")
         self.simulator = Simulator(
             create_cube_stack(metadata["cubes"]),
             robots=[RobotSpec(metadata["robot_name"], metadata["robot"])],
             dt=metadata["dt"],
         )
         model = self.simulator.model
-        if metadata["schema_version"] == 1:
-            compatible = model_signature(model) == metadata["model_sha256"]
-        else:
-            compatible = (
-                "visual_sha256" in metadata and visual_signature(model) == metadata["visual_sha256"]
-            )
-        if not compatible:
+        if visual_signature(model) != metadata["visual_sha256"]:
             raise ValueError(
                 "Replay model differs from the recorded model. Use the same assets and layout."
             )
         self.frame_count = len(episode) + 1
-        self.frame_dt = self.simulator.dt * replay_action_repeat(metadata)
-        shapes = {
-            "qpos": (self.frame_count, model.nq),
-            "frame_times": (self.frame_count,),
-            "mocap_pos": (self.frame_count, model.nmocap, 3),
-            "mocap_quat": (self.frame_count, model.nmocap, 4),
+        action_repeat = replay_action_repeat(metadata)
+        self.frame_dt = self.simulator.dt * action_repeat
+        self._frames: dict[str, np.ndarray] = {
+            name: getattr(episode, name)
+            for name in ("qpos", "frame_times", "mocap_pos", "mocap_quat")
         }
-        self._frames: dict[str, np.ndarray] = {}
-        for name, shape in shapes.items():
-            value = getattr(episode, name)
-            if value is None or value.shape != shape or not np.isfinite(value).all():
-                raise ValueError(f"Replay {name} must contain finite values with shape {shape}")
-            self._frames[name] = value
         self.frame_times = self._frames["frame_times"].copy()
-        if self.frame_count > 1:
-            intervals = np.diff(self.frame_times)
-            regular = np.allclose(intervals[:-1], self.frame_dt, rtol=1e-6, atol=1e-9)
-            final = intervals[-1]
-            final_ticks = round(final / self.simulator.dt)
-            terminal = (
-                episode.terminated is not None
-                and episode.terminated.shape == (len(episode),)
-                and bool(episode.terminated[-1])
-            )
-            final_valid = (
-                1 <= final_ticks <= replay_action_repeat(metadata)
-                and np.isclose(final, final_ticks * self.simulator.dt, rtol=1e-6, atol=1e-9)
-                and (final_ticks == replay_action_repeat(metadata) or terminal)
-            )
-            if not regular or not final_valid:
-                raise ValueError(
-                    "Replay requires uniformly timed action frames except a terminal partial action"
-                )
 
     def set_frame(self, index: int) -> None:
         """Restore a frame's qpos, mocap targets, and time without physics steps."""

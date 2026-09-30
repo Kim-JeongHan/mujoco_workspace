@@ -11,69 +11,13 @@ from typing import Any
 import numpy as np
 import torch
 
-from mujoco_lab.learning.checkpoint import checkpoint_action_repeat
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation.progress import CubeProgressTracker
 from mujoco_lab.learning.policies.base import BasePolicy
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
 from mujoco_lab.tasks.cube_stack import CubeStackTask
-
-
-def validate_contract(
-    model: BasePolicy,
-    normalizer: Normalizer,
-    metadata: Mapping[str, Any],
-    env: Any,
-) -> None:
-    """Reject checkpoint and environment dimensions or timing that cannot align."""
-    architecture = metadata["architecture"]
-    training = metadata["train_config"]
-    for name in ("obs_horizon", "chunk_size", "execution_horizon", "physics_steps_per_action"):
-        value = architecture[name]
-        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise ValueError(f"Checkpoint {name} must be a positive integer")
-        if name in training and training[name] != value:
-            raise ValueError(f"Checkpoint {name} differs from train_config")
-    repeat = checkpoint_action_repeat(dict(metadata))
-    env_repeat = getattr(env, "physics_steps_per_action", 1)
-    if env_repeat != repeat:
-        raise ValueError(
-            f"Environment physics_steps_per_action={env_repeat} differs from checkpoint {repeat}"
-        )
-    if architecture["execution_horizon"] > architecture["chunk_size"]:
-        raise ValueError("execution_horizon cannot exceed chunk_size")
-    for name in ("frame_dim", "state_dim", "action_dim"):
-        if not isinstance(architecture[name], int) or architecture[name] <= 0:
-            raise ValueError(f"Checkpoint {name} must be a positive integer")
-    if (
-        model.state_dim != architecture["state_dim"]
-        or model.action_dim != architecture["action_dim"]
-        or model.chunk_size != architecture["chunk_size"]
-        or architecture["state_dim"] != architecture["frame_dim"] * architecture["obs_horizon"]
-    ):
-        raise ValueError("Checkpoint policy dimensions are inconsistent")
-    if env.observation_space.shape != (architecture["frame_dim"],):
-        raise ValueError("Environment observation dimension differs from checkpoint frame_dim")
-    if env.action_space.shape != (architecture["action_dim"],):
-        raise ValueError("Environment action dimension differs from checkpoint action_dim")
-    for name, size in (
-        ("state_mean", architecture["frame_dim"]),
-        ("state_std", architecture["frame_dim"]),
-        ("action_mean", architecture["action_dim"]),
-        ("action_std", architecture["action_dim"]),
-    ):
-        array = getattr(normalizer, name)
-        if array.shape != (size,) or not np.isfinite(array).all():
-            raise ValueError(f"Checkpoint normalizer {name} must be finite with shape ({size},)")
-        if name.endswith("std") and np.any(array <= 0):
-            raise ValueError(f"Checkpoint normalizer {name} must be positive")
-    low = np.asarray(env.action_space.low)
-    high = np.asarray(env.action_space.high)
-    if low.shape != (model.action_dim,) or high.shape != (model.action_dim,):
-        raise ValueError("Environment action bounds have wrong dimensions")
-    if np.isnan(low).any() or np.isnan(high).any() or np.any(low > high):
-        raise ValueError("Environment action bounds are invalid")
 
 
 def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -162,7 +106,7 @@ def evaluation_log_metrics(summary: Mapping[str, Any]) -> dict[str, int | float]
 
 
 def evaluate_policy(
-    env: Any,
+    env: CubeStackEnv,
     model: BasePolicy,
     normalizer: Normalizer,
     metadata: Mapping[str, Any],
@@ -171,7 +115,6 @@ def evaluate_policy(
     seed: int,
     policy_seed: int,
     max_steps: int,
-    dt: float,
     device: torch.device,
     flow_num_steps: int,
     on_episode: Callable[[dict[str, Any]], None] | None = None,
@@ -181,32 +124,13 @@ def evaluate_policy(
     video_width: int = 640,
     video_height: int = 480,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Execute fresh seeded episodes; dt is seconds per physics tick."""
-    validate_contract(model, normalizer, metadata, env)
-    if num_episodes <= 0 or max_steps <= 0 or flow_num_steps <= 0:
-        raise ValueError("num_episodes, max_steps, and flow_num_steps must be positive")
+    """Execute fresh seeded episodes using the environment's physics timestep."""
     if seed < 0 or policy_seed < 0:
         raise ValueError("Seeds must be nonnegative")
-    if not np.isfinite(dt) or dt <= 0:
-        raise ValueError("Simulation dt must be finite and positive")
-    simulator = getattr(env, "simulator", None)
-    simulator_dt = getattr(simulator, "dt", None)
-    if simulator_dt is not None and not np.isclose(simulator_dt, dt, rtol=0, atol=1e-12):
-        raise ValueError("Evaluation physics dt differs from environment simulator dt")
-    action_dt = getattr(env, "action_dt", None)
-    if action_dt is not None and not np.isclose(
-        action_dt, dt * metadata["architecture"]["physics_steps_per_action"], rtol=0, atol=1e-12
-    ):
-        raise ValueError("Evaluation action dt differs from environment action cadence")
-    if not 0 <= num_video_episodes <= num_episodes:
-        raise ValueError("num_video_episodes must be between zero and num_episodes")
-    if num_video_episodes and video_dir is None:
-        raise ValueError("video_dir is required when num_video_episodes is positive")
 
     architecture = metadata["architecture"]
     obs_horizon = architecture["obs_horizon"]
     execution_horizon = architecture["execution_horizon"]
-    action_repeat = architecture["physics_steps_per_action"]
     low = np.asarray(env.action_space.low, dtype=np.float64)
     high = np.asarray(env.action_space.high, dtype=np.float64)
     was_training = model.training
@@ -218,13 +142,10 @@ def evaluate_policy(
                 env_seed = seed + index
                 episode_policy_seed = policy_seed + index
                 raw_obs, _ = env.reset(seed=env_seed)
-                simulator_data = getattr(getattr(env, "simulator", None), "data", None)
-                start_sim_time = float(simulator_data.time) if simulator_data is not None else None
-                task = getattr(env, "task", None)
+                start_sim_time = float(env.simulator.data.time)
+                task = env.task
                 progress = CubeProgressTracker(task) if isinstance(task, CubeStackTask) else None
                 raw_obs = np.asarray(raw_obs)
-                if raw_obs.shape != (architecture["frame_dim"],) or not np.isfinite(raw_obs).all():
-                    raise ValueError("Environment reset returned an invalid observation")
                 history = deque((raw_obs.copy() for _ in range(obs_horizon)), maxlen=obs_horizon)
                 steps = 0
                 clipped_actions = 0
@@ -265,11 +186,6 @@ def evaluate_policy(
                                 normalized.astype(np.float32, copy=False), device=device
                             ).unsqueeze(0)
                             chunk = model.sample_actions(state, num_steps=flow_num_steps)
-                            expected = (1, model.chunk_size, model.action_dim)
-                            if chunk.shape != expected:
-                                raise ValueError(
-                                    f"Policy returned {tuple(chunk.shape)}, expected {expected}"
-                                )
                             predicted = chunk[0].detach().cpu().numpy()
                             physical = normalizer.denormalize_action(predicted)
                             if not np.isfinite(predicted).all() or not np.isfinite(physical).all():
@@ -284,9 +200,7 @@ def evaluate_policy(
                                 clipped_action_axes += clipped_axes
                                 action_overrun_sum += overrun
                                 action_overrun_max = np.maximum(action_overrun_max, overrun)
-                                clipped = bounded.astype(
-                                    getattr(env.action_space, "dtype", np.float32), copy=False
-                                )
+                                clipped = bounded.astype(env.action_space.dtype, copy=False)
                                 next_obs, reward, terminated, truncated, info = env.step(clipped)
                                 if progress is not None:
                                     progress.observe()
@@ -294,21 +208,8 @@ def evaluate_policy(
                                 if recorder is not None:
                                     recorder.record_due(camera)
                                 episode_return += float(reward)
-                                reported_success = info.get("success", False)
-                                success = (
-                                    isinstance(reported_success, (bool, np.bool_))
-                                    and bool(reported_success)
-                                    and terminated
-                                    and not truncated
-                                )
+                                success = bool(info["success"]) and terminated and not truncated
                                 raw_obs = np.asarray(next_obs)
-                                if (
-                                    raw_obs.shape != (architecture["frame_dim"],)
-                                    or not np.isfinite(raw_obs).all()
-                                ):
-                                    raise ValueError(
-                                        "Environment step returned an invalid observation"
-                                    )
                                 history.append(raw_obs.copy())
                                 if terminated or truncated or steps >= max_steps:
                                     if success:
@@ -327,11 +228,7 @@ def evaluate_policy(
                     "policy_seed": episode_policy_seed,
                     "success": success,
                     "steps": steps,
-                    "sim_seconds": (
-                        float(simulator_data.time) - start_sim_time
-                        if simulator_data is not None and start_sim_time is not None
-                        else steps * dt * action_repeat
-                    ),
+                    "sim_seconds": float(env.simulator.data.time) - start_sim_time,
                     "termination_reason": reason,
                     "clipped_actions": clipped_actions,
                     "action_clip_rate": clipped_actions / steps if steps else 0.0,

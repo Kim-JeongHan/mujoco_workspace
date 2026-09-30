@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from numbers import Integral
 from pathlib import Path
 from typing import Literal
 
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets import CubeCount, RobotName
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
@@ -27,7 +27,7 @@ from mujoco_lab.utils import Logger
 
 @dataclass
 class Config:
-    """Choose the initial Forte two-cube demonstration collection run."""
+    """Choose a Panda or Forte cube demonstration collection run."""
 
     count: int = 100  # Total target attempts, including existing episodes when resuming.
     seed: int = 42  # Starting seed for repeatable attempts.
@@ -35,13 +35,13 @@ class Config:
     xy_range: float = 0.02  # Cube offset range, in meters.
     min_gap: float = 0.01  # Minimum cube edge gap, in meters.
     # Maximum absolute initial cube yaw, in degrees.
-    cube_yaw_range_degrees: float = 0.0
+    cube_yaw_range_degrees: float = 45.0
     physics_steps_per_action: int = 5  # Physics steps per expert action.
 
     output_dir: Path = Path("data/demos")  # Directory for episode NPZ files.
     resume: bool = False  # Continue or extend a collection to count total attempts.
-    robot: Literal["forte"] = "forte"  # Currently supported robot.
-    cubes: Literal[2] = 2  # Currently supported cube count.
+    robot: RobotName = "forte"  # Bundled robot for demonstration collection.
+    cubes: CubeCount = 2  # Supported collection cube counts.
     method: Literal["heuristic", "sampling"] = "heuristic"  # Expert execution method.
     planning: RRTConnectConfig | RRTConfig | PRMConfig = field(
         default_factory=default_planning
@@ -65,15 +65,12 @@ def create_expert(
 
 
 def main() -> None:
-    config = tyro.cli(Config, description="Collect Forte two-cube demonstrations")
-    if config.count <= 0:
-        raise ValueError("count must be positive")
-    if (
-        isinstance(config.physics_steps_per_action, bool)
-        or not isinstance(config.physics_steps_per_action, Integral)
-        or config.physics_steps_per_action <= 0
-    ):
-        raise ValueError("physics_steps_per_action must be a positive integer")
+    config = tyro.cli(Config, description="Collect Panda or Forte cube demonstrations")
+    logger = Logger()
+    logger.info(
+        f"Collecting {config.count} total attempts to {config.output_dir.resolve()} "
+        f"as compressed episode_<index:06d>.npz files (resume={config.resume})."
+    )
     simulator = Simulator(
         create_cube_stack(config.cubes),
         robots=[RobotSpec(config.robot, config.robot)],
@@ -86,7 +83,12 @@ def main() -> None:
         cube_yaw_range_degrees=config.cube_yaw_range_degrees,
     )
     robot = simulator.robots[config.robot]
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    controller = (
+        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        if config.robot == "panda"
+        else create_controller("pd", robot, frame="grasp")
+    )
+    robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
     physics_budget = 90_000 if config.method == "sampling" else 30_000
     max_steps = (
@@ -102,7 +104,6 @@ def main() -> None:
     )
     expert = create_expert(task, method=config.method, planning=config.planning)
 
-    logger = Logger()
     saved = 0
     successes = 0
     for episode in iter_episodes(
