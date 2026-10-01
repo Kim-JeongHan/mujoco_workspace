@@ -12,9 +12,6 @@ from torch import nn
 
 from .nn import TemporalValueNet
 
-_DEFAULT_DIM = 32
-_DEFAULT_DIM_MULTS = (1, 2, 4, 8)
-
 
 class ValueModel(nn.Module):
     """Trajectory value estimator J_φ.
@@ -42,8 +39,8 @@ class ValueModel(nn.Module):
         *,
         state_dim: int,
         horizon: int,
-        dim: int = _DEFAULT_DIM,
-        dim_mults: tuple[int, ...] = _DEFAULT_DIM_MULTS,
+        dim: int = (1, 2, 4, 8),
+        dim_mults: tuple[int, ...] = 32,
         **_: object,
     ) -> None:
         super().__init__()

@@ -11,9 +11,6 @@ from torch import nn
 
 from .nn import TemporalUnet
 
-_DEFAULT_DIM = 32
-_DEFAULT_DIM_MULTS = (1, 2, 4, 8)
-
 
 class DiffusionModel(nn.Module):
     """Temporal U-Net that predicts the denoising noise ε for a trajectory.
@@ -39,8 +36,8 @@ class DiffusionModel(nn.Module):
         state_dim: int,
         horizon: int,
         n_diffusion_steps: int = 100,
-        dim: int = _DEFAULT_DIM,
-        dim_mults: tuple[int, ...] = _DEFAULT_DIM_MULTS,
+        dim: int = 32,
+        dim_mults: tuple[int, ...] = (1, 2, 4, 8),
         **_: object,
     ) -> None:
         super().__init__()
@@ -102,9 +99,6 @@ class DiffusionModel(nn.Module):
     ) -> tuple[list[str], list[str]]:
         incompatible = super().load_state_dict(state_dict, strict=strict)  # type: ignore[arg-type]
         return incompatible.missing_keys, incompatible.unexpected_keys
-
-    def state_dict(self) -> dict[str, object]:  # type: ignore[override]
-        return super().state_dict()
 
     def set_seed(self, seed: int) -> None:
         torch.manual_seed(seed)

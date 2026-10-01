@@ -1,6 +1,4 @@
 # 추가 구현 방향
-# 현재 누락된 sample_actions를 구현해야 BasePolicy의 추상 메서드가 충족된다.
-# forward의 mean.view(...) 뒤 쉼표 때문에 mean이 tuple이 되므로 해당 부분을 수정해야 한다.
 # 분포 샘플과 평균 행동을 선택할 수 있게 하고 log_std의 허용 범위를 정한다.
 # PPO용으로 저장된 행동의 log_prob와 entropy를 재계산하는 메서드를 제공한다.
 # 행동 차원 축을 합산해 샘플별 값을 반환하고 초기 PPO는 chunk_size=1로 연결한다.
@@ -67,10 +65,22 @@ class GaussianPolicy(BasePolicy):
         h = self.net(state)
 
         mean = self.mean_head(h)
-        mean = (mean.view(batch, self.chunk_size, self.action_dim),)
+        mean = mean.view(batch, self.chunk_size, self.action_dim)
 
         std = self.log_std.exp()
         return torch.distributions.Normal(mean, std)
+
+    def sample_actions(
+        self,
+        state: torch.Tensor,
+        *,
+        num_steps: int = 10,
+    ) -> torch.Tensor:
+        """Sample action chunks of shape (B, C, N_a) with gradient support.
+
+        ``num_steps`` is unused and retained for the shared policy interface.
+        """
+        return self(state).rsample()
 
     def compute_loss(self, state, action_chunk):
         """Compute the negative log likelihood of expert action chunks.
