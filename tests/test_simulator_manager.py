@@ -1,5 +1,5 @@
 import io
-from contextlib import redirect_stderr
+from contextlib import nullcontext, redirect_stderr
 from unittest.mock import Mock, patch
 
 import mujoco
@@ -128,35 +128,80 @@ def test_direct_managers_keep_registries_independent():
     assert second_manager.simulators["shared-name"] is second
 
 
-def test_viewer_launch_failure_retains_viewing_state():
+@pytest.mark.parametrize("recording", [False, True])
+@pytest.mark.parametrize("stage", ["launch", "close"])
+def test_viewer_failure_restores_idle_state(stage, recording, tmp_path):
     simulator = make_empty_simulator()
     manager = SimulatorManager()
     manager.add_simulator("failed", simulator)
-
-    with (
-        patch("mujoco.viewer.launch_passive", side_effect=RuntimeError("launch failed")),
-        pytest.raises(RuntimeError, match="launch failed"),
-    ):
-        manager.show("failed")
-
-    assert simulator._state.get_state() == "viewing"
-
-
-def test_viewer_close_failure_retains_viewing_state():
-    simulator = make_empty_simulator()
-    manager = SimulatorManager()
-    manager.add_simulator("failed", simulator)
+    failure = RuntimeError("viewer failed")
     viewer = Mock()
     viewer.is_running.return_value = False
-    viewer.close.side_effect = RuntimeError("close failed")
+    viewer.close.side_effect = failure if stage == "close" else None
 
     with (
-        patch("mujoco.viewer.launch_passive", return_value=viewer),
-        pytest.raises(RuntimeError, match="close failed"),
+        patch(
+            "mujoco.viewer.launch_passive",
+            side_effect=failure if stage == "launch" else None,
+            return_value=viewer,
+        ),
+        pytest.raises(RuntimeError, match="viewer failed") as raised,
     ):
-        manager.show("failed")
+        manager.show("failed", video=tmp_path / "failed.mp4" if recording else None)
 
-    assert simulator._state.get_state() == "viewing"
+    assert raised.value is failure
+    assert simulator._state.get_state() == "idle"
+    assert not simulator._stop_requested
+    simulator.reset()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_recording_closes_before_viewer_and_restores_idle_state(failure, tmp_path):
+    simulator = make_empty_simulator()
+    manager = SimulatorManager()
+    manager.add_simulator("recording", simulator)
+    events = []
+    viewer = Mock()
+    viewer._sim = lambda: None
+    viewer.cam = mujoco.MjvCamera()
+    viewer.lock.side_effect = nullcontext
+    viewer.is_running.side_effect = [True, False]
+    viewer.close.side_effect = lambda: events.append("viewer closed")
+
+    class Recorder:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            assert simulator._state.get_state() == "viewing"
+            events.append("recorder closed")
+
+        def record_initial(self, camera):
+            events.append("initial frame")
+
+        def record_due(self, camera):
+            events.append("physics frame")
+            if failure:
+                raise RuntimeError("recording failed")
+
+    def launch(model, data, *, key_callback):
+        key_callback(32)
+        return viewer
+
+    with (
+        patch("mujoco.viewer.launch_passive", side_effect=launch),
+        patch("mujoco_lab.simulator_manager.VideoRecorder", Recorder),
+        pytest.raises(RuntimeError, match="recording failed") if failure else nullcontext(),
+    ):
+        manager.show("recording", video=tmp_path / "recording.mp4")
+
+    assert events == ["initial frame", "physics frame", "recorder closed", "viewer closed"]
+    assert simulator._state.get_state() == "idle"
+    assert not simulator._stop_requested
+    simulator.reset()
 
 
 class FakeRenderer:
@@ -179,6 +224,46 @@ class FakeRenderer:
 
     def render(self):
         return np.zeros((2, 3, 3), dtype=np.uint8)
+
+
+@pytest.mark.parametrize("stage", ["create", "render", "save", "close"])
+def test_frame_failure_closes_renderer_and_releases_lifecycle(stage, tmp_path):
+    simulator = make_empty_simulator()
+    manager = SimulatorManager()
+    manager.add_simulator("failed", simulator)
+    failure = RuntimeError("frame failed")
+    closed = []
+
+    class Renderer(FakeRenderer):
+        def __init__(self, *args, **kwargs):
+            if stage == "create":
+                raise failure
+            super().__init__(*args, **kwargs)
+
+        def render(self):
+            if stage == "render":
+                raise failure
+            return super().render()
+
+        def __exit__(self, *_):
+            assert simulator._state.get_state() == "rendering"
+            closed.append(True)
+            if stage == "close":
+                raise failure
+
+    with (
+        patch("mujoco.Renderer", Renderer),
+        patch("mujoco_lab.rendering.annotations.annotate"),
+        patch("PIL.Image.Image.save", side_effect=failure) if stage == "save" else nullcontext(),
+        pytest.raises(RuntimeError, match="frame failed") as raised,
+    ):
+        manager.save_frame("failed", tmp_path / "failed.png")
+    assert raised.value is failure
+    assert closed == ([] if stage == "create" else [True])
+    assert simulator._state.get_state() == "idle"
+    assert not simulator._stop_requested
+    simulator.reset()
+    simulator.run_steps(1)
 
 
 def test_manager_renders_selected_names_to_default_and_explicit_outputs(tmp_path, monkeypatch):

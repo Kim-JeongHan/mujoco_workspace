@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from bisect import bisect_right
 from collections import deque
-from collections.abc import Callable, Sequence
-from contextlib import ExitStack
+from collections.abc import Callable, Generator, Sequence
+from contextlib import ExitStack, contextmanager
 from math import isfinite
 from operator import index
 from pathlib import Path
@@ -15,9 +15,12 @@ from typing import TYPE_CHECKING, ClassVar
 import mujoco
 
 from mujoco_lab.rendering.video import VideoRecorder
+from mujoco_lab.simulation import SimulatorState
 from mujoco_lab.utils import Logger
 
 if TYPE_CHECKING:
+    from mujoco.viewer import Handle
+
     from mujoco_lab.simulation import Simulator
 
 SceneDraw = Callable[[mujoco.MjvScene, mujoco.MjData], None]
@@ -36,6 +39,54 @@ def _copy_camera(source: mujoco.MjvCamera) -> mujoco.MjvCamera:
     camera.azimuth = source.azimuth
     camera.elevation = source.elevation
     return camera
+
+
+def _close_viewer(viewer: Handle) -> None:
+    """Close the passive viewer and wait for its native render owner to exit."""
+    viewer.close()
+    # close() requests exit but does not join the daemon render thread. Wait
+    # so interpreter shutdown cannot race viewer destruction.
+    simulate_ref = getattr(viewer, "_sim", None)
+    if simulate_ref is not None:
+        while simulate_ref() is not None:
+            time.sleep(0.001)
+
+
+@contextmanager
+def _passive_viewer(
+    simulator: Simulator,
+    camera: mujoco.MjvCamera | None = None,
+    *,
+    key_callback: Callable[[int], None] | None = None,
+) -> Generator[Handle, None, None]:
+    """Launch a viewer without mutating live data, set its camera, and own cleanup."""
+    import mujoco.viewer
+
+    with ExitStack() as stack:
+        # launch_passive calls mj_forward on live data before its render copy
+        # exists. Preserve the next control sample by restoring the launch state.
+        launch_data = mujoco.MjData(simulator.model)
+        mujoco.mj_copyData(launch_data, simulator.model, simulator.data)
+        try:
+            if key_callback is None:
+                viewer = mujoco.viewer.launch_passive(simulator.model, simulator.data)
+            else:
+                viewer = mujoco.viewer.launch_passive(
+                    simulator.model, simulator.data, key_callback=key_callback
+                )
+            stack.callback(_close_viewer, viewer)
+        finally:
+            mujoco.mj_copyData(simulator.data, simulator.model, launch_data)
+        if camera is not None:
+            with viewer.lock():
+                viewer.cam.type = camera.type
+                viewer.cam.fixedcamid = camera.fixedcamid
+                viewer.cam.trackbodyid = camera.trackbodyid
+                viewer.cam.lookat[:] = camera.lookat
+                viewer.cam.distance = camera.distance
+                viewer.cam.azimuth = camera.azimuth
+                viewer.cam.elevation = camera.elevation
+        yield viewer
 
 
 class SimulatorManager:
@@ -92,31 +143,10 @@ class SimulatorManager:
             return self._show_recording(name, video, draw, camera, fps, width, height, steps)
         simulator = self.simulators[name]
 
-        import mujoco.viewer
-
-        from mujoco_lab.simulation import SimulatorState
-
-        simulator._state.transition(SimulatorState.VIEWING)
-        simulator._stop_requested = False
-        # launch_passive calls mj_forward on the live data before its
-        # private render copy exists. Restore the exact pre-launch data
-        # so entering the GUI does not change the next control sample.
-        launch_data = mujoco.MjData(simulator.model)
-        mujoco.mj_copyData(launch_data, simulator.model, simulator.data)
-        try:
-            viewer = mujoco.viewer.launch_passive(simulator.model, simulator.data)
-        finally:
-            mujoco.mj_copyData(simulator.data, simulator.model, launch_data)
-        try:
-            if camera is not None:
-                with viewer.lock():
-                    viewer.cam.type = camera.type
-                    viewer.cam.fixedcamid = camera.fixedcamid
-                    viewer.cam.trackbodyid = camera.trackbodyid
-                    viewer.cam.lookat[:] = camera.lookat
-                    viewer.cam.distance = camera.distance
-                    viewer.cam.azimuth = camera.azimuth
-                    viewer.cam.elevation = camera.elevation
+        with (
+            simulator._state_scope(SimulatorState.VIEWING),
+            _passive_viewer(simulator, camera) as viewer,
+        ):
             while not simulator._stop_requested and viewer.is_running():
                 started = time.monotonic()
                 with viewer.lock():
@@ -134,17 +164,6 @@ class SimulatorManager:
                 remaining = simulator.dt - (time.monotonic() - started)
                 if remaining > 0:
                     time.sleep(remaining)
-        finally:
-            viewer.close()
-            # close() requests exit but does not join the daemon render
-            # thread. Wait for its native owner before returning so that
-            # interpreter shutdown cannot race viewer destruction.
-            simulate_ref = getattr(viewer, "_sim", None)
-            if simulate_ref is not None:
-                while simulate_ref() is not None:
-                    time.sleep(0.001)
-        simulator._state.transition(SimulatorState.IDLE)
-        simulator._stop_requested = False
 
     def _show_recording(
         self,
@@ -163,32 +182,11 @@ class SimulatorManager:
             if steps < 0:
                 raise ValueError("steps must be zero or greater")
         simulator = self.simulators[name]
-        import mujoco.viewer
-
-        from mujoco_lab.simulation import SimulatorState
-
         keys: deque[int] = deque()
-        simulator._state.transition(SimulatorState.VIEWING)
-        simulator._stop_requested = False
-        viewer = None
-        try:
-            launch_data = mujoco.MjData(simulator.model)
-            mujoco.mj_copyData(launch_data, simulator.model, simulator.data)
-            try:
-                viewer = mujoco.viewer.launch_passive(
-                    simulator.model, simulator.data, key_callback=keys.append
-                )
-            finally:
-                mujoco.mj_copyData(simulator.data, simulator.model, launch_data)
-            with viewer.lock():
-                if camera is not None:
-                    viewer.cam.type = camera.type
-                    viewer.cam.fixedcamid = camera.fixedcamid
-                    viewer.cam.trackbodyid = camera.trackbodyid
-                    viewer.cam.lookat[:] = camera.lookat
-                    viewer.cam.distance = camera.distance
-                    viewer.cam.azimuth = camera.azimuth
-                    viewer.cam.elevation = camera.elevation
+        with (
+            simulator._state_scope(SimulatorState.VIEWING),
+            _passive_viewer(simulator, camera, key_callback=keys.append) as viewer,
+        ):
             self.logger.info(
                 "Adjust the camera, then press Space to start recording; press R to finish"
             )
@@ -238,15 +236,6 @@ class SimulatorManager:
                     if remaining > 0:
                         time.sleep(remaining)
             return None if recorder is None else Path(output).expanduser().resolve()
-        finally:
-            if viewer is not None:
-                viewer.close()
-                simulate_ref = getattr(viewer, "_sim", None)
-                if simulate_ref is not None:
-                    while simulate_ref() is not None:
-                        time.sleep(0.001)
-            simulator._state.transition(SimulatorState.IDLE)
-            simulator._stop_requested = False
 
     def save_video(
         self,
@@ -265,11 +254,7 @@ class SimulatorManager:
         if steps < 0:
             raise ValueError("steps must be zero or greater")
         simulator = self.simulators[name]
-        from mujoco_lab.simulation import SimulatorState
-
-        simulator._state.transition(SimulatorState.RUNNING)
-        simulator._stop_requested = False
-        try:
+        with simulator._state_scope(SimulatorState.RUNNING):
             with VideoRecorder(
                 simulator, output, fps=fps, width=width, height=height, draw=draw
             ) as recorder:
@@ -280,9 +265,6 @@ class SimulatorManager:
                     simulator.physics_step()
                     recorder.record_due(camera)
             return Path(output).expanduser().resolve()
-        finally:
-            simulator._state.transition(SimulatorState.IDLE)
-            simulator._stop_requested = False
 
     def show_replay(
         self,
@@ -319,30 +301,14 @@ class SimulatorManager:
             if any(later <= earlier for earlier, later in zip(offsets, offsets[1:], strict=False)):
                 raise ValueError("frame_times must increase strictly")
 
-        import mujoco.viewer
-
-        from mujoco_lab.simulation import SimulatorState
-
         # The viewer invokes callbacks on its render thread. Consume input only
         # on this thread, alongside state restoration under the viewer lock.
         keys: deque[int] = deque()
-        simulator._state.transition(SimulatorState.VIEWING)
-        simulator._stop_requested = False
-        viewer = None
-        try:
+        with simulator._state_scope(SimulatorState.VIEWING), ExitStack() as stack:
             set_frame(0)
-            viewer = mujoco.viewer.launch_passive(
-                simulator.model, simulator.data, key_callback=keys.append
+            viewer = stack.enter_context(
+                _passive_viewer(simulator, camera, key_callback=keys.append)
             )
-            if camera is not None:
-                with viewer.lock():
-                    viewer.cam.type = camera.type
-                    viewer.cam.fixedcamid = camera.fixedcamid
-                    viewer.cam.trackbodyid = camera.trackbodyid
-                    viewer.cam.lookat[:] = camera.lookat
-                    viewer.cam.distance = camera.distance
-                    viewer.cam.azimuth = camera.azimuth
-                    viewer.cam.elevation = camera.elevation
             frame = 0
             playhead = 0.0
             playing = True
@@ -379,15 +345,6 @@ class SimulatorManager:
                 remaining = 1 / 60 - (time.monotonic() - started)
                 if remaining > 0:
                     time.sleep(remaining)
-        finally:
-            if viewer is not None:
-                viewer.close()
-                simulate_ref = getattr(viewer, "_sim", None)
-                if simulate_ref is not None:
-                    while simulate_ref() is not None:
-                        time.sleep(0.001)
-            simulator._state.transition(SimulatorState.IDLE)
-            simulator._stop_requested = False
 
     def save_frame(
         self,
@@ -402,23 +359,21 @@ class SimulatorManager:
         from PIL import Image
 
         from mujoco_lab.rendering.annotations import annotate
-        from mujoco_lab.simulation import SimulatorState
 
         path = Path(output).expanduser().resolve()
-        simulator._state.transition(SimulatorState.RENDERING)
-        scratch = mujoco.MjData(simulator.model)
-        mujoco.mj_copyData(scratch, simulator.model, simulator.data)
-        mujoco.mj_forward(simulator.model, scratch)
-        with mujoco.Renderer(simulator.model, height=480, width=640) as renderer:
-            if camera is None:
-                renderer.update_scene(scratch)
-            else:
-                renderer.update_scene(scratch, camera=camera)
-            annotate(renderer.scene, simulator, scratch)
-            if draw is not None:
-                draw(renderer.scene, scratch)
-            pixels = renderer.render()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(pixels).save(path, format="PNG")
-        simulator._state.transition(SimulatorState.IDLE)
+        with simulator._state_scope(SimulatorState.RENDERING):
+            scratch = mujoco.MjData(simulator.model)
+            mujoco.mj_copyData(scratch, simulator.model, simulator.data)
+            mujoco.mj_forward(simulator.model, scratch)
+            with mujoco.Renderer(simulator.model, height=480, width=640) as renderer:
+                if camera is None:
+                    renderer.update_scene(scratch)
+                else:
+                    renderer.update_scene(scratch, camera=camera)
+                annotate(renderer.scene, simulator, scratch)
+                if draw is not None:
+                    draw(renderer.scene, scratch)
+                pixels = renderer.render()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.fromarray(pixels).save(path, format="PNG")
         return path

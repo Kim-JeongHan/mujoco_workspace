@@ -1,18 +1,18 @@
 import os
 import subprocess
 import sys
-from contextlib import nullcontext
-from unittest.mock import Mock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import mujoco
 import numpy as np
 import pytest
 from controller_config import create_test_controller
+from simulator_helpers import PassiveViewer, manager_with
 
 from mujoco_lab import (
     RobotSpec,
     Simulator,
-    SimulatorManager,
     create_environment,
 )
 from mujoco_lab.assets.loader import load_robot_config
@@ -35,32 +35,6 @@ def make_pair(right="forte", *, environment="empty", scene=None):
             ),
         ],
     )
-
-
-def manager_with(simulator, name="simulator"):
-    manager = SimulatorManager()
-    manager.add_simulator(name, simulator)
-    return manager
-
-
-def passive_viewer(*, on_lock=None, on_sync=None):
-    viewer = Mock()
-    viewer.is_running.side_effect = [True, False]
-
-    def lock():
-        if on_lock is not None:
-            on_lock()
-        return nullcontext()
-
-    def sync(*, state_only=False):
-        assert state_only
-        if on_sync is not None:
-            on_sync()
-
-    viewer.lock.side_effect = lock
-    viewer.sync.side_effect = sync
-    viewer._sim = lambda: None
-    return viewer
 
 
 @pytest.mark.parametrize("right,dimensions", [("forte", (18, 18, 16)), ("panda", (18, 18, 16))])
@@ -319,7 +293,8 @@ def test_later_invalid_command_does_not_advance_physics(bad, message):
     np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], [*np.ones(7), 0])
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], before[right.actuator_ids])
     assert sim.data.time == 0
-    assert sim._state.get_state() == "running"
+    assert sim._state.get_state() == "idle"
+    assert not sim._stop_requested
 
     clean = make_pair()
     clean_left = clean.robots["left"]
@@ -333,7 +308,7 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
     initial_qpos = sim.data.qpos.copy()
     initial_ctrl = sim.data.ctrl.copy()
     left, right = sim.robots.values()
-    left.change_controller(create_test_controller(left, "pd"))
+    left.change_controller(create_test_controller(left, controller="pd"))
     active_controller = left.controller
     active_target = left.target
     active_mapping = (
@@ -341,7 +316,7 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
         left.control_qpos_indices,
         left.control_joint_slots,
     )
-    replacement = create_test_controller(left, "pd")
+    replacement = create_test_controller(left, controller="pd")
     assert replacement._owner is left.state
     assert left.controller is active_controller and left.target is active_target
     assert active_mapping == (
@@ -350,12 +325,12 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
         left.control_joint_slots,
     )
     np.testing.assert_array_equal(sim.data.ctrl, initial_ctrl)
-    another = create_test_controller(right, "pd")
+    another = create_test_controller(right, controller="pd")
     old_gain = another.kp.copy()
     left.controller.kp[0] += 5
     left.target = ControlTarget(left.target.position + 0.02)
     np.testing.assert_array_equal(another.kp, old_gain)
-    right.change_controller(create_test_controller(right, "osc"))
+    right.change_controller(create_test_controller(right, controller="osc"))
     right.controller.task_kp = 850
     stats = sim.run_steps(50)
     assert right.controller._target is not None
@@ -410,7 +385,7 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     assert sim.model.body("left/helper").id not in sim.model.jnt_bodyid[left.state.joint_ids]
     with pytest.raises(ValueError, match="no site"):
         left.state.get_frame_position("helper_site")
-    left.change_controller(create_test_controller(left, "osc"))
+    left.change_controller(create_test_controller(left, controller="osc"))
     sim.step()
     assert left.state.get_jacobian("ee_site").shape == (6, 9)
 
@@ -491,7 +466,7 @@ def test_pd_annotations_share_scratch_and_preserve_scene_state():
     sim = make_pair()
     left, right = sim.robots.values()
     for robot, offset in [(left, 0.15), (right, -0.25)]:
-        controller = create_test_controller(robot, "pd")
+        controller = create_test_controller(robot, controller="pd")
         robot.change_controller(controller)
         target = robot.target.position.copy()
         target[0] += offset
@@ -549,15 +524,17 @@ import sys
 import mujoco
 import numpy as np
 from mujoco_lab import Simulator, RobotSpec, SimulatorManager, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import create_controller
 from mujoco_lab.utils import Transform
 
 def make():
-    specs=[RobotSpec(n,"forte",Transform(translation=[x,0,0]))
+    specs=[RobotSpec(n,"forte",Transform(translation=[x,0,0]),config=load_robot_config("forte"))
            for n,x in [("left",-.8),("right",.8)]]
     sim=Simulator(create_environment("empty"), robots=specs)
     for name,mode in [("left","pd"),("right","osc")]:
-        sim.robots[name].change_controller(create_controller(mode,sim.robots[name]))
+        controller = create_test_controller(sim.robots[name], controller=mode)
+        sim.robots[name].change_controller(controller)
     return sim
 
 sim, reference = make(), make()
@@ -589,6 +566,11 @@ for _ in range(10):
 sim.step(); reference.step()
 np.testing.assert_array_equal(sim.data.qpos,reference.data.qpos)
 """
+    code = code.replace(
+        "from mujoco_lab.control import create_controller",
+        f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
+        + "from controller_config import create_test_controller",
+    )
     subprocess.run(
         [sys.executable, "-c", code, str(tmp_path)],
         env={**os.environ, "MUJOCO_GL": "egl"},
@@ -598,31 +580,18 @@ np.testing.assert_array_equal(sim.data.qpos,reference.data.qpos)
     assert (tmp_path / "controlled.png").stat().st_size > 1000
 
 
-def test_save_frame_failure_retains_rendering_state(tmp_path):
-    sim = make_pair()
-    manager = manager_with(sim)
-    before = sim.data.qpos.copy()
-    with (
-        patch.object(mujoco, "Renderer", side_effect=RuntimeError("render failed")),
-        pytest.raises(RuntimeError, match="render failed"),
-    ):
-        manager.save_frame("simulator", tmp_path / "failed.png")
-    np.testing.assert_array_equal(sim.data.qpos, before)
-    assert sim._state.get_state() == "rendering"
-
-
 def test_change_controller_preserves_binding_and_resets_replacement_history():
     sim = make_pair()
     manager = manager_with(sim)
     left, right = sim.robots.values()
-    previous = create_test_controller(right, "pd")
+    previous = create_test_controller(right, controller="pd")
     right.change_controller(previous)
-    osc = create_test_controller(left, "osc")
+    osc = create_test_controller(left, controller="osc")
     assert osc.robot_state is left.state
     with pytest.raises(ValueError, match="only one Robot"):
         right.change_controller(osc)
     assert right.controller is previous
-    pd = create_test_controller(left, "pd")
+    pd = create_test_controller(left, controller="pd")
     with pytest.raises(ValueError, match="only one Robot"):
         right.change_controller(pd)
     assert right.controller is previous
@@ -640,30 +609,10 @@ def test_change_controller_preserves_binding_and_resets_replacement_history():
             left.change_controller(None)
 
     with patch(
-        "mujoco.viewer.launch_passive", return_value=passive_viewer(on_lock=inspect_open_scope)
+        "mujoco.viewer.launch_passive", return_value=PassiveViewer(on_lock=inspect_open_scope)
     ):
         manager.show("simulator")
     assert left.controller is pd
-
-
-def test_headless_control_owns_inputs_and_retains_failure_state(monkeypatch):
-    sim = make_pair("panda")
-    left = sim.robots["left"]
-    left.change_controller(ConstantController(np.ones(7)))
-    panda_input = sim.data.ctrl[sim.robots["right"].actuator_ids].copy()
-    sim.step()
-    np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], [*np.ones(7), 0])
-    np.testing.assert_array_equal(sim.data.ctrl[sim.robots["right"].actuator_ids], panda_input)
-
-    def fail_step(model, data):
-        assert sim._state.get_state() == "running"
-        raise RuntimeError("step failed")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(mujoco, "mj_step", fail_step)
-        with pytest.raises(RuntimeError, match="step failed"):
-            sim.step()
-    assert sim._state.get_state() == "running"
 
 
 def test_native_reset_keeps_controller_history_until_programmatic_reset():
@@ -671,7 +620,7 @@ def test_native_reset_keeps_controller_history_until_programmatic_reset():
     initial_qpos = sim.data.qpos.copy()
     manager = manager_with(sim)
     robot = sim.robots["left"]
-    robot.change_controller(create_test_controller(robot, "osc"))
+    robot.change_controller(create_test_controller(robot, controller="osc"))
     sim.step()
     target = robot.target.position.copy()
     cached_target = robot.controller._target.copy()
@@ -683,7 +632,7 @@ def test_native_reset_keeps_controller_history_until_programmatic_reset():
         np.testing.assert_array_equal(robot.target.position, target)
         np.testing.assert_array_equal(robot.controller._target, cached_target)
 
-    with patch("mujoco.viewer.launch_passive", return_value=passive_viewer(on_sync=native_reset)):
+    with patch("mujoco.viewer.launch_passive", return_value=PassiveViewer(on_sync=native_reset)):
         manager.show("simulator")
     assert not np.array_equal(sim.data.qpos, initial_qpos)
     sim.reset()

@@ -52,17 +52,17 @@ def test_updater_runs_before_each_control_and_replays_after_reset():
 
 def test_manual_target_persists_and_switch_reinitializes_target_space():
     sim, robot = forte_sim()
-    robot.change_controller(create_test_controller(robot, "pd"))
+    robot.change_controller(create_test_controller(robot, controller="pd"))
     initial = robot.target.position.copy()
     commanded = initial.copy()
     commanded[0] += 0.03
     robot.target = ControlTarget(commanded)
     sim.run_steps(3)
     np.testing.assert_array_equal(robot.target.position, commanded)
-    robot.change_controller(create_test_controller(robot, "osc"))
+    robot.change_controller(create_test_controller(robot, controller="osc"))
     assert robot.target.position.shape == (3,)
     np.testing.assert_allclose(robot.target.position, robot.state.get_frame_position("ee_site"))
-    robot.change_controller(create_test_controller(robot, "pd"))
+    robot.change_controller(create_test_controller(robot, controller="pd"))
     robot.update_state()
     np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
     sim.reset()
@@ -88,8 +88,8 @@ def test_external_targets_and_updater_are_robot_local():
         ],
     )
     left, right = sim.robots.values()
-    left.change_controller(create_test_controller(left, "pd"))
-    right.change_controller(create_test_controller(right, "pd"))
+    left.change_controller(create_test_controller(left, controller="pd"))
+    right.change_controller(create_test_controller(right, controller="pd"))
     original_right = right.target.position.copy()
 
     def update(current):
@@ -114,7 +114,9 @@ def test_updater_and_controller_error_prevent_physics_step():
     with pytest.raises(RuntimeError, match="updater failed"):
         sim.step()
     assert sim.data.time == before
-    assert sim._state.get_state() == "running"
+    assert sim._state.get_state() == "idle"
+    assert not sim._stop_requested
+    sim.reset()
 
 
 def test_no_controller_native_input_and_updater_each_tick():
@@ -129,7 +131,7 @@ def test_no_controller_native_input_and_updater_each_tick():
 
 def test_osc_supplied_derivatives_change_command_without_changing_target_position():
     sim, robot = forte_sim()
-    osc = create_test_controller(robot, "osc")
+    osc = create_test_controller(robot, controller="osc")
     robot.change_controller(osc)
     robot.update_state()
     state = robot.get_control_state()
@@ -147,7 +149,7 @@ def test_osc_supplied_derivatives_change_command_without_changing_target_positio
 @pytest.mark.parametrize("mode", ["pd", "osc"])
 def test_demo_trajectory_replays_after_reset(mode):
     sim, robot = forte_sim()
-    robot.change_controller(create_test_controller(robot, mode))
+    robot.change_controller(create_test_controller(robot, controller=mode))
     updater = demo_target_updater(sim, {robot.name: mode})
     sim.target_updater = updater
     sim.run_steps(20)

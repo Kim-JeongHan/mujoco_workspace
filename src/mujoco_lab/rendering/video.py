@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from contextlib import ExitStack
 from math import ceil, isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -104,37 +105,22 @@ class VideoRecorder:
 
     def __enter__(self) -> VideoRecorder:
         global_vis = self.simulator.model.vis.global_
-        self._offscreen_size = (global_vis.offwidth, global_vis.offheight)
-        global_vis.offwidth = max(global_vis.offwidth, self.width)
-        global_vis.offheight = max(global_vis.offheight, self.height)
-        try:
+        with ExitStack() as stack:
+            stack.callback(setattr, global_vis, "offwidth", global_vis.offwidth)
+            stack.callback(setattr, global_vis, "offheight", global_vis.offheight)
+            global_vis.offwidth = max(global_vis.offwidth, self.width)
+            global_vis.offheight = max(global_vis.offheight, self.height)
             self._renderer = mujoco.Renderer(
                 self.simulator.model, height=self.height, width=self.width
             )
-        except BaseException:
-            global_vis.offwidth, global_vis.offheight = self._offscreen_size
-            raise
-        try:
+            stack.callback(self._renderer.close)
             self._writer = VideoWriter(self.output, self.fps, self.width, self.height)
-        except BaseException:
-            try:
-                self._renderer.close()
-            finally:
-                global_vis.offwidth, global_vis.offheight = self._offscreen_size
-            raise
+            stack.callback(self._writer.close)
+            self._resources = stack.pop_all()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        try:
-            self._writer.close()
-        finally:
-            try:
-                self._renderer.close()
-            finally:
-                (
-                    self.simulator.model.vis.global_.offwidth,
-                    self.simulator.model.vis.global_.offheight,
-                ) = self._offscreen_size
+        self._resources.__exit__(exc_type, exc_value, traceback)
 
     def _render(self, camera: mujoco.MjvCamera | None) -> np.ndarray:
         simulator = self.simulator

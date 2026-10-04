@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import replace
 from enum import StrEnum
 from types import MappingProxyType
@@ -44,8 +46,8 @@ class Simulator:
 
     Headless and GUI stepping use the same control-before-mj_step sequence.
     Headless running covers both control evaluation and physics advancement.
-    Lifecycle operations return to idle only after successful work. Neither mode
-    is an RL environment batch.
+    Lifecycle operations release ownership and return to idle on exit. Neither
+    mode is an RL environment batch.
     """
 
     def __init__(
@@ -115,6 +117,17 @@ class Simulator:
         if self._state.get_state() is not SimulatorState.IDLE:
             raise RuntimeError(f"Simulator is busy with {self._state.get_state()}")
 
+    @contextmanager
+    def _state_scope(self, state: SimulatorState) -> Generator[None, None, None]:
+        """Own a lifecycle operation and return to idle without rolling back scene data."""
+        self._state.transition(state)
+        self._stop_requested = False
+        try:
+            yield
+        finally:
+            self._state.transition(SimulatorState.IDLE)
+            self._stop_requested = False
+
     def physics_step(self):
         """Evaluate control and advance one physics tick."""
         samples = {}
@@ -141,20 +154,17 @@ class Simulator:
 
         if steps < 0:
             raise ValueError("steps must be zero or greater")
-        self._state.transition(SimulatorState.RUNNING)
-        self._stop_requested = False
-        stats = {name: RunStats() for name in self.robots}
-        for _ in range(steps):
-            if self._stop_requested:
-                break
-            samples = self.physics_step()
-            for name, result in stats.items():
-                result.update(*samples.get(name, (False, None)))
-        if not np.isfinite(self.data.qpos).all() or not np.isfinite(self.data.qvel).all():
-            raise RuntimeError("Simulation diverged")
-        self._state.transition(SimulatorState.IDLE)
-        self._stop_requested = False
-        return stats
+        with self._state_scope(SimulatorState.RUNNING):
+            stats = {name: RunStats() for name in self.robots}
+            for _ in range(steps):
+                if self._stop_requested:
+                    break
+                samples = self.physics_step()
+                for name, result in stats.items():
+                    result.update(*samples.get(name, (False, None)))
+            if not np.isfinite(self.data.qpos).all() or not np.isfinite(self.data.qvel).all():
+                raise RuntimeError("Simulation diverged")
+            return stats
 
     def stop(self) -> None:
         """Request the active run or viewer to stop after its current physics step."""
@@ -164,21 +174,19 @@ class Simulator:
     def reset(self) -> None:
         """Restore the complete initial state and clear controller history, not gains."""
 
-        self._state.transition(SimulatorState.RESETTING)
-        self._stop_requested = False
-        mujoco.mj_resetData(self.model, self.data)
-        mujoco.mj_setState(
-            self.model,
-            self.data,
-            self._initial_state,
-            self._initial_state_spec,
-        )
-        mujoco.mj_forward(self.model, self.data)
-        for robot in self.robots.values():
-            if robot.controller is not None:
-                robot.controller.reset()
-            if robot.gripper is not None:
-                robot.gripper.reset()
-            robot.update_state()
-            robot.target = robot.initial_target()
-        self._state.transition(SimulatorState.IDLE)
+        with self._state_scope(SimulatorState.RESETTING):
+            mujoco.mj_resetData(self.model, self.data)
+            mujoco.mj_setState(
+                self.model,
+                self.data,
+                self._initial_state,
+                self._initial_state_spec,
+            )
+            mujoco.mj_forward(self.model, self.data)
+            for robot in self.robots.values():
+                if robot.controller is not None:
+                    robot.controller.reset()
+                if robot.gripper is not None:
+                    robot.gripper.reset()
+                robot.update_state()
+                robot.target = robot.initial_target()

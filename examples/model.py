@@ -26,14 +26,11 @@ def main() -> None:
     if config.steps < 0:
         logger.error("--steps must be zero or greater", exit_code=2)
 
-    try:
-        scene = mujoco.MjSpec.from_file(str(config.model.expanduser().resolve()))
-        simulator = Simulator(
-            scene,
-            dt=config.dt,
-        )
-    except ValueError as error:
-        logger.error(str(error), exit_code=2)
+    scene = mujoco.MjSpec.from_file(str(config.model.expanduser().resolve()))
+    simulator = Simulator(
+        scene,
+        dt=config.dt,
+    )
 
     if config.headless:
         simulator.run_steps(config.steps)
