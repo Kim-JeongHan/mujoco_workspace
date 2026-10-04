@@ -6,6 +6,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.planning import planner_from_config
 from mujoco_lab.tasks import (
     BaseCubeStackMotionGenerator,
@@ -17,7 +18,10 @@ from mujoco_lab.tasks import (
 
 
 def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "panda"):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec(robot_type, robot_type)])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec(robot_type, robot_type, config=load_robot_config(robot_type))],
+    )
     joint = simulator.model.joint("cube0/object_joint_0")
     qpos = int(joint.qposadr[0])
     simulator.data.qpos[qpos + 3 : qpos + 7] = Rotation.from_euler(

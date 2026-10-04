@@ -1,0 +1,70 @@
+controller:
+  name: pd
+  gravity_compensation: true
+  frame: grasp
+  pd_gains:
+    shoulder_yaw:
+      kp: 147.0
+      kd: 11.8
+    shoulder_pitch:
+      kp: 222.0
+      kd: 17.8
+    shoulder_roll:
+      kp: 47.0
+      kd: 3.8
+    elbow_pitch:
+      kp: 74.0
+      kd: 5.9
+    lower_arm_roll:
+      kp: 6.8
+      kd: 0.55
+    wrist_pitch:
+      kp: 7.2
+      kd: 0.57
+    wrist_roll:
+      kp: 3.2
+      kd: 0.25
+constraints:
+  joint_names:
+  - shoulder_yaw
+  - shoulder_pitch
+  - shoulder_roll
+  - elbow_pitch
+  - lower_arm_roll
+  - wrist_pitch
+  - wrist_roll
+  position_limit:
+  - - -0.174533138037
+    - 0.174532861963
+  - - -1.58087758096
+    - 1.56071241904
+  - - -2.74717438133
+    - 1.96521561867
+  - - -6.283185307179586
+    - 6.283185307179586
+  - - -6.283185307179586
+    - 6.283185307179586
+  - - -6.283185307179586
+    - 6.283185307179586
+  - - -6.283185307179586
+    - 6.283185307179586
+  velocity_limit:
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  acceleration_limit:
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+gripper:
+  actuator: gripper_motor
+  velocity_limit: 0.2
+  acceleration_limit: 1.0

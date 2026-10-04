@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 
 
 def test_custom_model_resolves_include_relative_to_its_file(tmp_path, monkeypatch):
@@ -31,8 +32,8 @@ def test_custom_model_resolves_include_relative_to_its_file(tmp_path, monkeypatc
 
 def test_scene_blueprint_can_be_reused_without_accumulating_robot_attachments():
     scene = create_environment("empty")
-    first = Simulator(scene, robots=[RobotSpec("arm", "forte")])
-    second = Simulator(scene, robots=[RobotSpec("arm", "forte")])
+    first = Simulator(scene, robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))])
+    second = Simulator(scene, robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))])
 
     assert scene.body("arm/base_link") is None
     assert first.model.nbody == second.model.nbody

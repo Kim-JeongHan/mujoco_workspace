@@ -3,10 +3,13 @@
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
-from mujoco_lab.control import ControlTarget, create_controller
+from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.robot.robot import ControllerConfig, GripperConfig, RobotConfig
+from mujoco_lab.control import ControlTarget
 from mujoco_lab.rendering.annotations import (
     NEGATIVE_TORQUE_RGBA,
     POSITIVE_TORQUE_RGBA,
@@ -57,14 +60,27 @@ def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
           <actuator>{actuators}</actuator>
         </mujoco>
     """)
+    (tmp_path / "robot.yaml").write_text("""controller:
+  name: pd
+  pd_gains:
+    beta:
+      kp: 20
+      kd: 0
+    alpha:
+      kp: 10
+      kd: 0
+""")
     monkeypatch.setitem(ROBOT_ASSETS, "mini", RobotAsset(path))
+    config = load_robot_config("mini")
+    if configure_gripper:
+        config.gripper = GripperConfig(actuator="grip_drive")
     sim = Simulator(
         create_environment("empty"),
         robots=[
             RobotSpec(
                 "custom",
                 "mini",
-                gripper_actuator="grip_drive" if configure_gripper else None,
+                config=config,
             )
         ],
     )
@@ -73,7 +89,7 @@ def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
 
 def test_pd_controls_shuffled_geared_motors_and_keeps_passive_joint(tmp_path, monkeypatch):
     sim, robot = small_robot(tmp_path, monkeypatch, "pd")
-    controller = create_controller("pd", robot, kp=[20, 10], kd=[0, 0], gravity_compensation=False)
+    controller = create_test_controller(robot, controller="pd", gravity_compensation=False)
     robot.change_controller(controller)
     assert robot.control_joint_names == ("beta", "alpha")
     assert robot.target.position.shape == (2,)
@@ -110,7 +126,7 @@ def test_pd_mixed_unconfigured_robot_preserves_native_servo_slot(tmp_path, monke
     assert robot.gripper is None
     sim.data.ctrl[robot.actuator_ids] = [0, 0.17, 0]
     robot.change_controller(
-        create_controller("pd", robot, kp=[20, 10], kd=[0, 0], gravity_compensation=False)
+        create_test_controller(robot, controller="pd", gravity_compensation=False)
     )
     assert robot.control_joint_names == ("beta", "alpha")
     robot.target = ControlTarget([0.2, -0.1])
@@ -132,7 +148,10 @@ def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, m
         </mujoco>
     """)
     monkeypatch.setitem(ROBOT_ASSETS, "tendon_robot", RobotAsset(path))
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("tendon", "tendon_robot")])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("tendon", "tendon_robot", config=RobotConfig(ControllerConfig("none")))],
+    )
     robot = sim.robots["tendon"]
     assert robot.control_joint_names == ()
     assert robot.controller is None
@@ -141,7 +160,7 @@ def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, m
     assert sim.run_steps(1)[robot.name].steps == 1
     assert sim.data.ctrl[robot.actuator_ids[0]] == pytest.approx(0.3)
     with pytest.raises(ValueError, match="direct joint transmissions"):
-        create_controller("pd", robot, kp=[1], kd=[1])
+        create_test_controller(robot, controller="pd")
 
 
 def test_uncontrolled_robot_without_actuators_remains_simulatable(tmp_path, monkeypatch):
@@ -154,18 +173,21 @@ def test_uncontrolled_robot_without_actuators_remains_simulatable(tmp_path, monk
         </mujoco>
     """)
     monkeypatch.setitem(ROBOT_ASSETS, "passive", RobotAsset(path))
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("passive", "passive")])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("passive", "passive", config=RobotConfig(ControllerConfig("none")))],
+    )
     robot = sim.robots["passive"]
     assert robot.control_joint_names == ()
     assert not robot.control()
     assert sim.run_steps(1)[robot.name].steps == 1
     with pytest.raises(ValueError, match="joint actuators"):
-        create_controller("pd", robot, kp=[1], kd=[1])
+        create_test_controller(robot, controller="pd")
 
 
 def test_position_commands_drive_shuffled_geared_servos(tmp_path, monkeypatch):
     sim, robot = small_robot(tmp_path, monkeypatch, "position")
-    controller = create_controller("position", robot, gravity_compensation=False)
+    controller = create_test_controller(robot, controller="position", gravity_compensation=False)
     robot.change_controller(controller)
     assert robot.control_joint_names == ("beta", "alpha")
     robot.target = ControlTarget([0.2, -0.1])
@@ -182,7 +204,7 @@ def test_position_commands_drive_shuffled_geared_servos(tmp_path, monkeypatch):
     sim.run_steps(50)
     assert sim.data.joint("custom/beta").qpos[0] > 0
     with pytest.raises(ValueError, match="torque/force actuators"):
-        create_controller("pd", robot, kp=[1, 1, 1], kd=[1, 1, 1])
+        create_test_controller(robot, controller="pd")
 
 
 def test_robot_selects_arm_order_without_cloning_robot_state(tmp_path, monkeypatch):
@@ -193,9 +215,7 @@ def test_robot_selects_arm_order_without_cloning_robot_state(tmp_path, monkeypat
 
     with monkeypatch.context() as context:
         context.setattr(RobotState, "__init__", unexpected_state_init)
-        controller = create_controller(
-            "pd", robot, kp=[20, 10], kd=[0, 0], gravity_compensation=False
-        )
+        controller = create_test_controller(robot, controller="pd", gravity_compensation=False)
     assert robot.controller is None and robot.target is None
     assert robot.control_joint_names == ()
     assert controller._owner is robot.state
@@ -223,7 +243,7 @@ def test_robot_selects_arm_order_without_cloning_robot_state(tmp_path, monkeypat
 
 def test_robot_control_uses_cached_selected_joint_snapshot(tmp_path, monkeypatch):
     sim, robot = small_robot(tmp_path, monkeypatch, "pd")
-    controller = create_controller("pd", robot, kp=[20, 10], kd=[0, 0], gravity_compensation=False)
+    controller = create_test_controller(robot, controller="pd", gravity_compensation=False)
     robot.change_controller(controller)
     target = ControlTarget([0.2, -0.1])
     robot.target = target

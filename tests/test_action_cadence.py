@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.datasets.replay import capture_frame
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import collect_episode
@@ -14,9 +15,12 @@ from mujoco_lab.tasks import CubeStackTask
 
 
 def make_env(repeat):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     robot = simulator.robots["forte"]
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
     task = CubeStackTask(simulator, 2)
     return CubeStackEnv(task, physics_steps_per_action=repeat, max_steps=2), robot
 

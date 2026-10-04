@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.randomization import sample_cube_positions
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
@@ -13,7 +14,10 @@ from mujoco_lab.tasks import CubeStackTask
 
 
 def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     env = CubeStackEnv(CubeStackTask(simulator, 2), cube_yaw_range_degrees=45)
     first_obs, first_info = env.reset(seed=11)
     first_qpos = simulator.data.qpos.copy()
@@ -28,15 +32,18 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
     assert not np.allclose(yaws, 0)
     extents = []
     for index, (adr, yaw) in enumerate(zip(env._cube_qpos, yaws, strict=True)):
-        expected = np.array([np.cos(np.deg2rad(yaw / 2)), 0, 0,
-                             np.sin(np.deg2rad(yaw / 2))])
+        expected = np.array([np.cos(np.deg2rad(yaw / 2)), 0, 0, np.sin(np.deg2rad(yaw / 2))])
         np.testing.assert_allclose(simulator.data.qpos[adr + 3 : adr + 7], expected, atol=1e-12)
         assert simulator.data.qpos[adr + 2] == pytest.approx(simulator.model.qpos0[adr + 2])
         matrix = simulator.data.body(f"cube{index}/object_0").xmat.reshape(3, 3)
-        np.testing.assert_allclose(matrix[:2, :2],
-                                   [[np.cos(np.deg2rad(yaw)), -np.sin(np.deg2rad(yaw))],
-                                    [np.sin(np.deg2rad(yaw)), np.cos(np.deg2rad(yaw))]],
-                                   atol=1e-12)
+        np.testing.assert_allclose(
+            matrix[:2, :2],
+            [
+                [np.cos(np.deg2rad(yaw)), -np.sin(np.deg2rad(yaw))],
+                [np.sin(np.deg2rad(yaw)), np.cos(np.deg2rad(yaw))],
+            ],
+            atol=1e-12,
+        )
         half = env._cube_half_sizes[index]
         extents.append(np.abs(matrix[:2, :2]) @ half)
     centers = np.array([simulator.data.qpos[adr : adr + 2] for adr in env._cube_qpos])
@@ -49,20 +56,36 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
     distance = sum(env._cube_half_sizes[:, 0]) + env.min_gap + 0.001
     env._home_xy[:] = [[0.0, 0.0], [distance, 0.0]]
     env.xy_range = 0.0
-    assert len(sample_cube_positions(
-        env._home_xy, env._cube_half_sizes, np.random.default_rng(11), 0.0,
-        env.min_gap, 100,
-    )) == 2
+    assert (
+        len(
+            sample_cube_positions(
+                env._home_xy,
+                env._cube_half_sizes,
+                np.random.default_rng(11),
+                0.0,
+                env.min_gap,
+                100,
+            )
+        )
+        == 2
+    )
     with pytest.raises(ValueError, match="without overlap"):
         env.reset(seed=11)
 
 
 def test_zero_yaw_keeps_legacy_xy_draws_and_home_quaternion():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     env = CubeStackEnv(CubeStackTask(simulator, 2))
     expected_xy = sample_cube_positions(
-        env._home_xy, env._cube_half_sizes, np.random.default_rng(11), env.xy_range,
-        env.min_gap, 100,
+        env._home_xy,
+        env._cube_half_sizes,
+        np.random.default_rng(11),
+        env.xy_range,
+        env.min_gap,
+        100,
     )
     obs, info = env.reset(seed=11)
     assert info["cube_yaws_degrees"] == [0.0, 0.0]
@@ -79,12 +102,17 @@ def test_evaluation_restores_recorded_yaw(monkeypatch):
         "mujoco_lab.learning.evaluate._verify_replay", lambda *_args, **_kwargs: None
     )
     metadata = {
-        "dataset_metadata": {"replay": {
-            "robot": "forte", "robot_name": "forte", "cubes": 2,
-            "environment": "table_shelf", "dt": 0.002,
-            "cube_yaw_range_degrees": 45.0,
-            "physics_steps_per_action": 1,
-        }}
+        "dataset_metadata": {
+            "replay": {
+                "robot": "forte",
+                "robot_name": "forte",
+                "cubes": 2,
+                "environment": "table_shelf",
+                "dt": 0.002,
+                "cube_yaw_range_degrees": 45.0,
+                "physics_steps_per_action": 1,
+            }
+        }
     }
     env, scene = create_evaluation_env(metadata, xy_range=0.02, min_gap=0.01, max_steps=1)
     assert env.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 45.0
@@ -92,7 +120,10 @@ def test_evaluation_restores_recorded_yaw(monkeypatch):
     del env
     gc.collect()
     overridden, scene = create_evaluation_env(
-        metadata, xy_range=0.02, min_gap=0.01, max_steps=1,
+        metadata,
+        xy_range=0.02,
+        min_gap=0.01,
+        max_steps=1,
         cube_yaw_range_degrees=0.0,
     )
     assert overridden.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 0.0

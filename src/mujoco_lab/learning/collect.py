@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -10,6 +10,7 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets import CubeCount, RobotName
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
@@ -73,7 +74,7 @@ def main() -> None:
     )
     simulator = Simulator(
         create_cube_stack(config.cubes),
-        robots=[RobotSpec(config.robot, config.robot)],
+        robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
     )
     replay_metadata = cube_stack_metadata(
         simulator,
@@ -84,9 +85,19 @@ def main() -> None:
     )
     robot = simulator.robots[config.robot]
     controller = (
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_controller(
+            robot,
+            replace(
+                load_robot_config(robot.robot_type).controller,
+                name="position",
+                gravity_compensation=True,
+                frame="grasp",
+            ),
+        )
         if config.robot == "panda"
-        else create_controller("pd", robot, frame="grasp")
+        else create_controller(
+            robot, replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp")
+        )
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)

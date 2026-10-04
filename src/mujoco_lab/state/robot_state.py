@@ -10,8 +10,13 @@ from numpy.typing import ArrayLike
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
+from mujoco_lab.assets.robot.robot import Constraints
 from mujoco_lab.state.joint_state import JointState
 from mujoco_lab.utils import Transform
+
+
+class IKError(ValueError):
+    """A well-formed target pose could not be reached by inverse kinematics."""
 
 
 def _descendants(model, root_id: int) -> set[int]:
@@ -29,6 +34,7 @@ class RobotState:
     fixed, while reads use the current shared data. Getters never refresh shared
     physics or advance time. IK evaluates kinematics on a private data copy.
     Dynamics retain MuJoCo's most recent evaluation phase.
+    Configured constraints retain their own joint_names ordering.
     """
 
     def __init__(
@@ -41,10 +47,12 @@ class RobotState:
         root_name: str,
         joint_names: tuple[str, ...],
         site_names: tuple[str, ...],
+        constraints: Constraints | None = None,
     ) -> None:
         self.model, self.data = model, data
         self.name, self.prefix = name, prefix
         self.joint_names = joint_names
+        self.constraints = constraints
         self.root_body_id = model.body(prefix + root_name).id
         bodies = _descendants(model, self.root_body_id)
         self.joint_ids = [model.joint(prefix + name).id for name in joint_names]
@@ -156,7 +164,8 @@ class RobotState:
         Rotation-vector errors have weight 0.18 in the least-squares residual,
         with acceptance at 8 mm position error and 0.06 weighted rotation error
         (1/3 rad). Raise ValueError if neither attempt meets these tolerances.
-        The result is not collision-checked.
+        The result is not collision-checked. An unreachable target raises
+        IKError, a ValueError subclass; configuration errors remain distinct.
         """
         site = self.site_id(frame)
         joints = [self.joint_ids[slot] for slot in self.get_frame_joint_slots(frame)]
@@ -193,4 +202,10 @@ class RobotState:
             error = residual(result.x)
             if np.linalg.norm(error[:3]) <= 0.008 and np.linalg.norm(error[3:]) <= 0.06:
                 return result.x
-        raise ValueError(f"Unreachable IK pose for {self.name}/{frame}: error {error}")
+        raise IKError(f"Unreachable IK pose for {self.name}/{frame}: error {error}")
+
+    def get_constraint(self, index: int) -> tuple[str, list[float], list[float], list[float]]:
+        """Return a configured constraint by index, in the order they were added."""
+        if self.constraints is None:
+            raise ValueError("Robot state has no configured constraints")
+        return self.constraints.get_info(index)

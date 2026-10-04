@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation.evaluator import evaluation_log_metrics, summarize
 from mujoco_lab.learning.evaluation.progress import CubeProgressTracker
@@ -131,7 +132,7 @@ def test_summary_aggregates_progress_only_when_present():
 def test_physical_placement_predicates_and_measurement_do_not_advance_task():
     simulator = Simulator(
         create_cube_stack(2, environment="table_shelf"),
-        robots=[RobotSpec("forte", "forte")],
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
         dt=0.002,
     )
     task = CubeStackTask(simulator, 2)

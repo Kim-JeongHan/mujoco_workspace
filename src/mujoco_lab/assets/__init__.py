@@ -12,14 +12,13 @@ CUBE_COUNTS: tuple[CubeCount, ...] = (1, 2, 3, 4)
 @dataclass(frozen=True)
 class RobotAsset:
     path: Path
-    gripper_actuator: str | None = None
 
 
 ASSET_PATH = Path(__file__).parent
 ROBOT_PATH = ASSET_PATH / "robot"
 ROBOT_ASSETS = {
-    "panda": RobotAsset(ROBOT_PATH / "panda" / "robot.xml", gripper_actuator="panda_finger_joint1"),
-    "forte": RobotAsset(ROBOT_PATH / "forte" / "robot.xml", gripper_actuator="gripper_motor"),
+    "panda": RobotAsset(ROBOT_PATH / "panda" / "robot.xml"),
+    "forte": RobotAsset(ROBOT_PATH / "forte" / "robot.xml"),
 }
 ROBOT_NAMES = tuple(ROBOT_ASSETS)
 

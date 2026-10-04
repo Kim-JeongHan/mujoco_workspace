@@ -6,10 +6,11 @@ from importlib.resources import files
 import numpy as np
 import pytest
 import yaml
+from controller_config import create_test_controller
 from pydantic import ValidationError
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.tasks import (
     CubeStackExpert,
     CubeStackMotionGenerator,
@@ -84,10 +85,13 @@ def test_recipe_rejects_nonfinite_nested_values_and_nonpositive_limits():
 
 
 def test_changed_recipe_controls_plan_and_motion_limits(monkeypatch):
-    baseline_simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    baseline_simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     baseline_robot = baseline_simulator.robots["panda"]
     baseline_robot.change_controller(
-        create_controller("position", baseline_robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(baseline_robot, "position", gravity_compensation=True, frame="grasp")
     )
     baseline_task = CubeStackTask(baseline_simulator, 2)
     baseline = CubeStackExpert(baseline_task, CubeStackMotionGenerator(baseline_task))
@@ -102,11 +106,14 @@ def test_changed_recipe_controls_plan_and_motion_limits(monkeypatch):
     changed = CubeStackRecipe.model_validate(data)
     monkeypatch.setattr(cube_stack_motion, "load_recipe", lambda robot_type: changed)
 
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["panda"]
     robot.change_controller(
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
     )
     expert = CubeStackExpert(task, CubeStackMotionGenerator(task))
     simulator.target_updater = expert.update

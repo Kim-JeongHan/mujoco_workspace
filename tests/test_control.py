@@ -7,9 +7,11 @@ import sys
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
-from mujoco_lab.control import ControlTarget, create_controller, demo_target_updater
+from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.control import ControlTarget, demo_target_updater
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
 from mujoco_lab.control.trajectory import HOME_QPOS, PD_WAYPOINTS, osc_circle_target
@@ -19,13 +21,39 @@ from mujoco_lab.utils import Transform
 
 
 def forte_simulator(environment="empty"):
-    return Simulator(create_environment(environment), robots=[RobotSpec("robot", "forte")])
+    return Simulator(
+        create_environment(environment),
+        robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
+    )
+
+
+@pytest.mark.parametrize("dt", [0.001, 0.002, 0.005])
+def test_pd_period_matches_simulator_and_survives_reset(dt):
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
+        dt=dt,
+    )
+    robot = sim.robots["robot"]
+    controller = create_test_controller(robot, controller="pd")
+    robot.change_controller(controller)
+    sim.step()
+    sim.reset()
+    assert controller.control_dt == dt
+
+
+@pytest.mark.parametrize("dt", [0, -0.001, float("nan"), float("inf")])
+def test_pd_rejects_invalid_control_period(dt):
+    with pytest.raises(ValueError, match="control_dt must be finite and positive"):
+        JointSpacePD(np.ones(7), np.ones(7), control_dt=dt)
 
 
 def test_seven_axis_controller_math_on_numpy_snapshots():
     state = JointState(0.0, HOME_QPOS.copy(), np.zeros(7), np.ones(7))
     np.testing.assert_array_equal(
-        JointSpacePD(np.ones(7), np.ones(7)).compute(state, ControlTarget(HOME_QPOS)),
+        JointSpacePD(np.ones(7), np.ones(7), control_dt=0.002).compute(
+            state, ControlTarget(HOME_QPOS)
+        ),
         np.ones(7),
     )
 
@@ -53,7 +81,7 @@ def test_seven_axis_controller_math_on_numpy_snapshots():
 def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     sim = forte_simulator()
     robot = sim.robots["robot"]
-    controller = create_controller(mode, robot)
+    controller = create_test_controller(robot, mode)
     robot.change_controller(controller)
     assert robot.state.nq == robot.state.nv == 9
     assert robot.num_actuators == 8
@@ -100,7 +128,7 @@ def test_pd_targets_respect_bounded_source_axes():
 def test_feedback_control_is_finite_in_each_environment(mode, environment):
     sim = forte_simulator(environment)
     robot = sim.robots["robot"]
-    robot.change_controller(create_controller(mode, robot))
+    robot.change_controller(create_test_controller(robot, mode))
     sim.target_updater = demo_target_updater(sim, {robot.name: mode})
     stats = sim.run_steps(400)[robot.name]
     assert stats.steps == 400
@@ -115,11 +143,18 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
     robot = sim.robots["robot"]
     moved_sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("robot", "forte", Transform.from_pose_mmdeg([100, -200, 800, 0, 0, 90]))],
+        robots=[
+            RobotSpec(
+                "robot",
+                "forte",
+                Transform.from_pose_mmdeg([100, -200, 800, 0, 0, 90]),
+                config=load_robot_config("forte"),
+            )
+        ],
     )
     moved_model, moved_data = moved_sim.model, moved_sim.data
     moved_robot = moved_sim.robots["robot"]
-    moved_robot.change_controller(create_controller("osc", moved_robot))
+    moved_robot.change_controller(create_test_controller(moved_robot, "osc"))
     moved_sim.target_updater = demo_target_updater(moved_sim, {"robot": "osc"})
     rotation = moved_data.body("robot/base_link").xmat.reshape(3, 3)
     translation = moved_data.body("robot/base_link").xpos
@@ -159,9 +194,12 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
 @pytest.mark.parametrize("robot", ["panda"])
 @pytest.mark.parametrize("mode", ["pd", "osc"])
 def test_torque_control_rejects_position_actuators(robot, mode):
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("robot", robot)])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("robot", robot, config=load_robot_config(robot))],
+    )
     with pytest.raises(ValueError, match="requires torque/force actuators"):
-        create_controller(mode, sim.robots["robot"])
+        create_test_controller(sim.robots["robot"], mode)
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])

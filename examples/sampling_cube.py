@@ -1,6 +1,6 @@
 """Stack cubes with a sampling planner: uv run python examples/sampling_cube.py --headless."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -8,6 +8,7 @@ import numpy as np
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import create_controller
 from mujoco_lab.planning import (
     PRM,
@@ -138,13 +139,23 @@ def main() -> None:
 
     simulator = Simulator(
         create_cube_stack(config.cubes, environment=config.environment),
-        robots=[RobotSpec(config.robot, config.robot)],
+        robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
     )
     robot = simulator.robots[config.robot]
     if config.robot == "forte":
-        controller = create_controller("pd", robot, frame="grasp")
+        controller = create_controller(
+            robot, replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp")
+        )
     else:
-        controller = create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        controller = create_controller(
+            robot,
+            replace(
+                load_robot_config(robot.robot_type).controller,
+                name="position",
+                gravity_compensation=True,
+                frame="grasp",
+            ),
+        )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
     planner = Planner(config.planner)

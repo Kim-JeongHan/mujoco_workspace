@@ -95,8 +95,15 @@ class Gripper:
         value = float(displacement) * self.gear
         lower, upper = self._model.actuator_ctrlrange[self.actuator_id]
         limited = self._model.actuator_ctrllimited[self.actuator_id]
-        if not np.isfinite(value) or (limited and not lower <= value <= upper):
+        if not np.isfinite(value):
             raise ValueError("gripper target is outside the actuator's control range")
+        if limited and not lower <= value <= upper:
+            # Trajectory interpolation can exceed an endpoint by floating-point roundoff.
+            bounded = float(np.clip(value, lower, upper))
+            tolerance = 8 * np.finfo(float).eps * max(abs(lower), abs(upper))
+            if abs(value - bounded) > tolerance:
+                raise ValueError("gripper target is outside the actuator's control range")
+            displacement = bounded / self.gear
         self._target = float(displacement)
         self._active = True
 

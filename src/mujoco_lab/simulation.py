@@ -66,9 +66,9 @@ class Simulator:
         scene = scene.copy()
         robot_info = []
         for robot_spec in robots:
-            asset, info = load_asset(robot_spec.robot_type)
-            if robot_spec.gripper_actuator is not None:
-                info = replace(info, gripper_actuator=robot_spec.gripper_actuator)
+            asset = load_asset(robot_spec.robot_type)
+            config = replace(robot_spec.config)
+            config.update_model_info(asset)
             prefix = robot_spec.name + "/"
             if robot_spec.pose is None:
                 mount = scene.site("robot_mount")
@@ -77,7 +77,7 @@ class Simulator:
                 pose = robot_spec.pose.as_xyzquat()
                 frame = scene.worldbody.add_frame(pos=pose[:3], quat=pose[3:])
                 scene.attach(asset, prefix=prefix, frame=frame)
-            robot_info.append((robot_spec.name, info, prefix, robot_spec.robot_type))
+            robot_info.append((robot_spec, prefix, config))
 
         model = scene.compile()
         dt = float(dt)
@@ -89,8 +89,8 @@ class Simulator:
         self.data = mujoco.MjData(model)
         self.robots = MappingProxyType(
             {
-                name: Robot(self, info, prefix, robot_type)
-                for name, info, prefix, robot_type in robot_info
+                spec.name: Robot(self, config, prefix, spec.robot_type)
+                for spec, prefix, config in robot_info
             }
         )
         self._state = StateMachine(SimulatorState.IDLE, STATE_TRANSITIONS)

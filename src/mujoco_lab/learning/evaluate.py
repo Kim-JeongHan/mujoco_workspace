@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ import torch
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.checkpoint import load_checkpoint
 from mujoco_lab.learning.config.config import EvalConfig
@@ -61,15 +62,25 @@ def create_evaluation_env(
     )
     simulator = Simulator(
         create_cube_stack(cubes, environment=replay["environment"]),
-        robots=[RobotSpec(robot_name, robot_type)],
+        robots=[RobotSpec(robot_name, robot_type, config=load_robot_config(robot_type))],
         dt=dt,
     )
     _verify_replay(simulator, replay, robot=robot_type, cubes=cubes)
     robot = simulator.robots[robot_name]
     controller = (
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_controller(
+            robot,
+            replace(
+                load_robot_config(robot.robot_type).controller,
+                name="position",
+                gravity_compensation=True,
+                frame="grasp",
+            ),
+        )
         if robot_type == "panda"
-        else create_controller("pd", robot, frame="grasp")
+        else create_controller(
+            robot, replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp")
+        )
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, cubes)

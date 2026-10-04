@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
@@ -118,7 +119,10 @@ def test_cube_count_selects_all_rotation_slices(cubes):
 
 @pytest.mark.parametrize("cubes", [1, 2])
 def test_rotation_layout_matches_single_robot_observation(cubes):
-    simulator = Simulator(create_cube_stack(cubes), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(cubes),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     env = CubeStackEnv(CubeStackTask(simulator, cubes))
     observation, _ = env.reset(seed=0)
     frame_dim, rotations = cube_stack_observation_layout(cubes)

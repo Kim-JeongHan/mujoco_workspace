@@ -4,21 +4,25 @@ import gc
 
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.tasks import CubeStackExpert, CubeStackMotionGenerator, CubeStackTask
 
 
 def make_forte_expert(task):
     robot = next(iter(task.simulator.robots.values()))
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
     return CubeStackExpert(task, CubeStackMotionGenerator(task))
 
 
 @pytest.mark.parametrize("cubes", [2, 3, 4])
 def test_forte_picks_and_releases_stable_stack(cubes):
-    simulator = Simulator(create_cube_stack(cubes), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(cubes),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, cubes)
     expert = make_forte_expert(task)
     simulator.target_updater = expert.update
@@ -86,7 +90,7 @@ def test_forte_picks_and_releases_stable_stack(cubes):
 def test_forte_pickup_accepts_custom_robot_instance_name():
     simulator = Simulator(
         create_environment("cube_stack_2"),
-        robots=[RobotSpec("arm", "forte")],
+        robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))],
     )
     task = CubeStackTask(simulator, 2)
     expert = make_forte_expert(task)

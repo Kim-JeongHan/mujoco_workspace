@@ -2,38 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import mujoco
 import numpy as np
 
 from mujoco_lab.assets import CUBE_COUNTS, ENVIRONMENT_SCENES, ROBOT_ASSETS
 from mujoco_lab.assets.randomization import sample_cube_positions
+from mujoco_lab.assets.robot.robot import RobotConfig
 
 
-@dataclass(frozen=True)
-class AssetInfo:
-    joint_names: tuple[str, ...]
-    actuator_names: tuple[str, ...]
-    site_names: tuple[str, ...]
-    root_name: str
-    gripper_actuator: str | None = None
-
-
-def asset_info(spec: mujoco.MjSpec, gripper_actuator: str | None = None) -> AssetInfo:
-    roots = spec.worldbody.bodies
-    if len(roots) != 1:
-        raise ValueError("Robot assets must have one fixed root body")
-    return AssetInfo(
-        tuple(joint.name for joint in spec.joints),
-        tuple(actuator.name for actuator in spec.actuators),
-        tuple(site.name for site in spec.sites if site.name and site.parent is not spec.worldbody),
-        roots[0].name,
-        gripper_actuator,
-    )
-
-
-def load_asset(name: str) -> tuple[mujoco.MjSpec, AssetInfo]:
+def load_asset(name: str) -> mujoco.MjSpec:
     asset = ROBOT_ASSETS[name]
 
     spec = mujoco.MjSpec.from_file(str(asset.path))
@@ -42,10 +19,14 @@ def load_asset(name: str) -> tuple[mujoco.MjSpec, AssetInfo]:
         for actuator in spec.actuators
     ) or any(body.mocap for body in spec.bodies):
         raise ValueError("Robot assets must have no activation or mocap state")
-    info = asset_info(spec, asset.gripper_actuator)
-    if any(not name for name in info.joint_names + info.actuator_names):
-        raise ValueError("Robot assets must name their joints and actuators")
-    return spec, info
+    return spec
+
+
+def load_robot_config(name: str) -> RobotConfig:
+    """Parse robot-local YAML into typed controller and joint gain settings."""
+    asset = ROBOT_ASSETS[name]
+    path = asset.path.with_name("robot.yaml")
+    return RobotConfig.load(path)
 
 
 def create_environment(name: str) -> mujoco.MjSpec:

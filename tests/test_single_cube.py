@@ -6,9 +6,10 @@ import mujoco
 import numpy as np
 import pytest
 import tyro
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.collect import Config as CollectConfig
 from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
@@ -36,12 +37,15 @@ def test_single_cube_scene_has_original_first_cube_and_table_goal(environment):
 
 @pytest.mark.parametrize("robot_name", ["panda", "forte"])
 def test_single_cube_env_recording_replays_with_39_observations(robot_name):
-    simulator = Simulator(create_cube_stack(1), robots=[RobotSpec(robot_name, robot_name)])
+    simulator = Simulator(
+        create_cube_stack(1),
+        robots=[RobotSpec(robot_name, robot_name, config=load_robot_config(robot_name))],
+    )
     robot = simulator.robots[robot_name]
     controller = (
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
         if robot_name == "panda"
-        else create_controller("pd", robot, frame="grasp")
+        else create_test_controller(robot, "pd", frame="grasp")
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, 1)
@@ -90,12 +94,15 @@ def test_collection_cli_accepts_all_bundled_cube_counts(cubes):
 
 @pytest.mark.parametrize(("robot_name", "cubes"), [("panda", 1), ("panda", 2), ("forte", 1)])
 def test_expert_releases_stably_at_five_physics_ticks_per_action(robot_name, cubes):
-    simulator = Simulator(create_cube_stack(cubes), robots=[RobotSpec(robot_name, robot_name)])
+    simulator = Simulator(
+        create_cube_stack(cubes),
+        robots=[RobotSpec(robot_name, robot_name, config=load_robot_config(robot_name))],
+    )
     robot = simulator.robots[robot_name]
     controller = (
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
         if robot_name == "panda"
-        else create_controller("pd", robot, frame="grasp")
+        else create_test_controller(robot, "pd", frame="grasp")
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, cubes)

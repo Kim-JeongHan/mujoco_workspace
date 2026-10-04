@@ -30,6 +30,49 @@ def min_jerk(fraction: float) -> tuple[float, float]:
     return blend, slope
 
 
+def min_jerk_target(
+    start: ControlTarget,
+    end: ControlTarget,
+    elapsed: float,
+    duration: float,
+) -> ControlTarget:
+    """Sample a minimum-jerk segment with position, velocity, and acceleration boundaries.
+
+    Times are in seconds; elapsed is clamped to the segment's endpoints. Missing
+    derivatives are zero. Replan from the previous segment's sampled target to
+    preserve position, velocity, and acceleration when a new goal arrives.
+    This interpolation does not impose velocity, acceleration, or joint limits.
+    """
+    if not np.isfinite(duration) or duration <= 0 or not np.isfinite(elapsed):
+        raise ValueError("duration must be finite and positive; elapsed must be finite")
+    if start.position.shape != end.position.shape:
+        raise ValueError("start and end must have matching position shapes")
+
+    def derivatives(target: ControlTarget) -> tuple[np.ndarray, np.ndarray]:
+        velocity = np.zeros_like(target.position) if target.velocity is None else target.velocity
+        acceleration = (
+            np.zeros_like(target.position) if target.acceleration is None else target.acceleration
+        )
+        return velocity, acceleration
+
+    start_velocity, start_acceleration = derivatives(start)
+    end_velocity, end_acceleration = derivatives(end)
+    u = float(np.clip(elapsed / duration, 0.0, 1.0))
+    p = start.position
+    v = start_velocity * duration
+    a = start_acceleration * duration**2 / 2
+    position_delta = end.position - p - v - a
+    velocity_delta = end_velocity * duration - v - 2 * a
+    acceleration_delta = end_acceleration * duration**2 - 2 * a
+    c3 = 10 * position_delta - 4 * velocity_delta + acceleration_delta / 2
+    c4 = -15 * position_delta + 7 * velocity_delta - acceleration_delta
+    c5 = 6 * position_delta - 3 * velocity_delta + acceleration_delta / 2
+    position = p + u * (v + u * (a + u * (c3 + u * (c4 + u * c5))))
+    velocity = (v + u * (2 * a + u * (3 * c3 + u * (4 * c4 + u * 5 * c5)))) / duration
+    acceleration = (2 * a + u * (6 * c3 + u * (12 * c4 + u * 20 * c5))) / duration**2
+    return ControlTarget(position, velocity, acceleration)
+
+
 class JointTrajectory:
     """Time a C1 joint curve, with an exact stop-at-waypoints polyline fallback.
 

@@ -3,11 +3,15 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.state import JointState, RobotState
 
 
 def test_jacobian_rows_match_world_position_and_rotation_derivatives():
-    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec("forte", "forte")])
+    sim = Simulator(
+        create_environment("warehouse"),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     model, data = sim.model, sim.data
     state = sim.robots["forte"].state
     jacobian = state.get_jacobian("ee_site").copy()
@@ -39,7 +43,10 @@ def test_jacobian_rows_match_world_position_and_rotation_derivatives():
 
 
 def test_getters_reuse_independent_buffers_and_allow_persistent_copies():
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("forte", "forte")])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     model, data = sim.model, sim.data
     state = sim.robots["forte"].state
     jacobian = state.get_jacobian("ee_site")
@@ -66,7 +73,10 @@ def test_getters_reuse_independent_buffers_and_allow_persistent_copies():
 
 
 def test_state_reads_never_advance_or_refresh_shared_physics(monkeypatch):
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("forte", "forte")])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     state = sim.robots["forte"].state
     assert isinstance(state, RobotState)
     previous = state.snapshot()

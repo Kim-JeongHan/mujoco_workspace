@@ -8,6 +8,7 @@ import pytest
 
 from mujoco_lab import ROBOT_NAMES, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ASSET_PATH
+from mujoco_lab.assets.loader import load_robot_config
 
 ASSETS = ASSET_PATH / "environment"
 
@@ -73,8 +74,13 @@ def test_furnished_layout_supports_mount_and_preserves_shelves(environment, coun
 
 @pytest.mark.parametrize("name", ROBOT_NAMES)
 def test_composition_preserves_robot_frames_controls_and_single_floor(name):
-    baseline = Simulator(create_environment("empty"), robots=[RobotSpec(name, name)])
-    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec(name, name)])
+    baseline = Simulator(
+        create_environment("empty"), robots=[RobotSpec(name, name, config=load_robot_config(name))]
+    )
+    sim = Simulator(
+        create_environment("warehouse"),
+        robots=[RobotSpec(name, name, config=load_robot_config(name))],
+    )
     original, original_data = baseline.model, baseline.data
     model, data = sim.model, sim.data
     assert np.count_nonzero(model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE) == 1
@@ -95,7 +101,10 @@ def test_composition_preserves_robot_frames_controls_and_single_floor(name):
 
 @pytest.mark.parametrize("name", ROBOT_NAMES)
 def test_furnished_table_supports_bundled_robot_base(name):
-    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec(name, name)])
+    sim = Simulator(
+        create_environment("warehouse"),
+        robots=[RobotSpec(name, name, config=load_robot_config(name))],
+    )
     model, data = sim.model, sim.data
     table = model.geom("table/box")
     center = data.geom("table/box").xpos

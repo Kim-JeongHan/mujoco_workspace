@@ -36,6 +36,7 @@ class OperationalSpaceControl(Controller):
         posture_kp: float = POSTURE_KP,
         posture_kd: float = POSTURE_KD,
         regularization: float = 1e-4,
+        gravity_compensation: bool = True,
     ) -> None:
         robot_state.get_frame_position(frame)
         self.robot_state = robot_state
@@ -46,6 +47,7 @@ class OperationalSpaceControl(Controller):
         self.posture_kp = posture_kp
         self.posture_kd = posture_kd
         self.regularization = regularization
+        self.gravity_compensation = gravity_compensation
         self.posture = np.array(posture, dtype=float, copy=True)
         self.tracking_error = 0.0
         self._force = np.zeros(3)
@@ -83,7 +85,10 @@ class OperationalSpaceControl(Controller):
         pseudo_inverse = mass_inverse @ jacobian.T @ task_inertia
         null_space = np.eye(mass.shape[0]) - jacobian.T @ pseudo_inverse.T
         posture = self.posture_kp * (self.posture - state.qpos) - self.posture_kd * state.qvel
-        return torque + null_space @ posture + state.bias_forces
+        torque = torque + null_space @ posture
+        if self.gravity_compensation:
+            torque = torque + state.bias_forces
+        return torque
 
     def reset(self) -> None:
         self.tracking_error = 0.0

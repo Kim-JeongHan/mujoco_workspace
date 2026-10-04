@@ -8,9 +8,10 @@ from unittest.mock import Mock
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.datasets.episode import Episode, load_episode, save_episode
 from mujoco_lab.learning.datasets.replay import (
@@ -26,10 +27,13 @@ from mujoco_lab.tasks import CubeStackTask, default_planning
 
 @pytest.fixture(scope="module")
 def recording():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     metadata = cube_stack_metadata(simulator, cubes=2, robot="forte")
     robot = simulator.robots["forte"]
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
     task = CubeStackTask(simulator, 2)
 
     class MovingGoalEnv(CubeStackEnv):

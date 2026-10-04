@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
-from mujoco_lab.assets.loader import randomize_cube_positions
+from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.tasks import CubeStackTask
 
 
@@ -31,7 +31,9 @@ def test_randomization_is_seeded_and_compiles_with_forte_task():
         np.testing.assert_array_equal(scene.body(f"cube{i}/object_0").quat, orientations[i])
         np.testing.assert_array_equal(scene.body(f"cube{i}/object_target_0").pos, targets[i])
 
-    simulator = Simulator(scene, robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        scene, robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))]
+    )
     task = CubeStackTask(simulator, 2)
     for i in range(2):
         world_start = simulator.data.body(f"cube{i}/object_0").xpos

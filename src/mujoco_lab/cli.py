@@ -1,6 +1,6 @@
 """Command-line entry point for physical cube stacking."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -8,6 +8,7 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets import CubeCount, RobotName
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import create_controller
 from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
 from mujoco_lab.rendering.camera import create_free_camera
@@ -57,15 +58,24 @@ def main() -> None:
     try:
         simulator = Simulator(
             create_cube_stack(config.cubes, environment=config.environment),
-            robots=[RobotSpec(config.robot, config.robot)],
+            robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
         )
         robot = simulator.robots[config.robot]
         if config.robot == "panda":
             controller = create_controller(
-                "position", robot, gravity_compensation=True, frame="grasp"
+                robot,
+                replace(
+                    load_robot_config(robot.robot_type).controller,
+                    name="position",
+                    gravity_compensation=True,
+                    frame="grasp",
+                ),
             )
         else:
-            controller = create_controller("pd", robot, frame="grasp")
+            controller = create_controller(
+                robot,
+                replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp"),
+            )
         robot.change_controller(controller)
         task = CubeStackTask(simulator, config.cubes)
         if config.method == "sampling":

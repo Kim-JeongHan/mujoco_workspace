@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.state import RobotState
 from mujoco_lab.utils import Transform
 
@@ -146,7 +147,7 @@ def test_ik_uses_world_pose_and_ancestor_joints_on_private_data(state, monkeypat
     solution = state.solve_ik(target, frame="tool", seed=[0, 0, 2.5])
     assert solution.shape == (3,)  # The descendant finger is not optimized.
     np.testing.assert_allclose(solution, [0.15, -0.2, 2.6], atol=1e-6)
-    for previous, current in zip(before, shared_fields(state)):
+    for previous, current in zip(before, shared_fields(state), strict=True):
         np.testing.assert_array_equal(previous, current)
     assert evaluations
     assert_pose(pose_for(state, solution), target)
@@ -168,7 +169,7 @@ def test_failed_ik_leaves_shared_state_intact_and_allows_another_query(state):
     before = shared_fields(state)
     with pytest.raises(ValueError, match="Unreachable IK pose"):
         state.solve_ik(Transform(translation=[100, 100, 100]), frame="tool")
-    for previous, current in zip(before, shared_fields(state)):
+    for previous, current in zip(before, shared_fields(state), strict=True):
         np.testing.assert_array_equal(previous, current)
 
     state.data.qpos[state.qpos_indices[-1]] = 0.035
@@ -191,7 +192,10 @@ def test_ik_requires_an_owned_site_with_a_movable_chain(state, frame, message):
 
 
 def test_forte_ik_returns_seven_arm_angles_and_keeps_the_gripper_unchanged():
-    simulator = Simulator(create_environment("empty"), robots=[RobotSpec("arm", "forte")])
+    simulator = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))],
+    )
     state = simulator.robots["arm"].state
     state.data.qpos[state.qpos_indices[-2:]] = -0.012
     mujoco.mj_forward(state.model, state.data)
@@ -200,5 +204,5 @@ def test_forte_ik_returns_seven_arm_angles_and_keeps_the_gripper_unchanged():
     solution = state.solve_ik(target, frame="ee_site")
     assert solution.shape == (7,)
     assert_pose(pose_for(state, solution, "ee_site"), target)
-    for previous, current in zip(before, shared_fields(state)):
+    for previous, current in zip(before, shared_fields(state), strict=True):
         np.testing.assert_array_equal(previous, current)

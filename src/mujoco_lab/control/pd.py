@@ -18,7 +18,13 @@ class JointSpacePD(Controller):
         kd: ArrayLike,
         gravity_compensation: bool = True,
         frame: str = "ee_site",
+        *,
+        control_dt: float,
     ) -> None:
+        """Configure the PD evaluation period in seconds, separate from target cadence."""
+        self.control_dt = float(control_dt)
+        if not np.isfinite(self.control_dt) or self.control_dt <= 0:
+            raise ValueError("control_dt must be finite and positive")
         self.kp = np.array(kp, dtype=float, copy=True)
         self.kd = np.array(kd, dtype=float, copy=True)
         self.gravity_compensation = gravity_compensation
@@ -42,4 +48,4 @@ class JointSpacePD(Controller):
         self._desired = None
 
     def summary(self) -> str:
-        return f"kp {self.kp}, kd {self.kd}"
+        return f"kp {self.kp}, kd {self.kd}, control_dt {self.control_dt:g}s"

@@ -5,10 +5,12 @@ from itertools import pairwise
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.control import ControlTarget, create_controller
+from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.control import ControlTarget
 from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import Expert, collect_episode
@@ -22,19 +24,25 @@ from mujoco_lab.tasks import (
 
 
 def _forte_expert(method="heuristic"):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
     planner = planner_from_config(default_planning()) if method == "sampling" else None
     return simulator, task, CubeStackExpert(task, CubeStackMotionGenerator(task, planner=planner))
 
 
 def test_constructor_and_reset_keep_caller_controller_and_targets():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    controller = create_controller("pd", robot, kp=[19] * 7, kd=[3] * 7, frame="grasp")
+    controller = create_test_controller(robot, "pd", kp=[19] * 7, kd=[3] * 7, frame="grasp")
     robot.change_controller(controller)
     robot.target = ControlTarget(robot.target.position + 0.001)
     robot.gripper.set_target(-0.001)
@@ -54,12 +62,15 @@ def test_constructor_and_reset_keep_caller_controller_and_targets():
 
 
 def test_constructor_requires_joint_target_controller():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
     with pytest.raises(ValueError, match="configured seven-joint target controller"):
         CubeStackExpert(task, CubeStackMotionGenerator(task))
-    robot.change_controller(create_controller("osc", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "osc", frame="grasp"))
     with pytest.raises(ValueError, match="configured seven-joint target controller"):
         CubeStackExpert(task, CubeStackMotionGenerator(task))
 
@@ -160,10 +171,13 @@ def test_direct_callback_applies_same_first_action_as_manual_consumer(method, mo
 
 
 def test_factory_accepts_both_methods_without_attaching_callback():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    controller = create_controller("pd", robot, frame="grasp")
+    controller = create_test_controller(robot, "pd", frame="grasp")
     robot.change_controller(controller)
     for method in ("heuristic", "sampling"):
         expert = create_expert(task, method=method, planning=default_planning())
@@ -225,11 +239,14 @@ def test_collector_accepts_another_expert_and_stops_after_its_failure():
 
 
 def test_heuristic_first_approach_avoids_the_home_orientation_detour():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("forte", "forte")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
     task = CubeStackTask(simulator, 2)
     env = CubeStackEnv(task)
     robot = simulator.robots["forte"]
-    robot.change_controller(create_controller("pd", robot, frame="grasp"))
+    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
     expert = CubeStackExpert(task, CubeStackMotionGenerator(task))
     obs, info = env.reset(seed=42)
     expert.reset(obs, info)

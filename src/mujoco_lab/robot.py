@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import mujoco
 import numpy as np
 
-from mujoco_lab.assets.loader import AssetInfo
+from mujoco_lab.assets.robot.robot import RobotConfig
 from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.gripper import Gripper
 from mujoco_lab.state import JointState, RobotState
@@ -21,12 +21,15 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RobotSpec:
-    """Place a named asset in world coordinates; a singleton may use the mount."""
+    """Place a named asset with explicit robot settings.
+
+    A singleton may use the scene's robot mounting site instead of an explicit pose.
+    """
 
     name: str
     robot_type: str
     pose: Transform | None = None
-    gripper_actuator: str | None = None
+    config: RobotConfig = field(kw_only=True)
 
 
 class Robot:
@@ -38,7 +41,7 @@ class Robot:
     def __init__(
         self,
         simulator: Simulator,
-        info: AssetInfo,
+        config: RobotConfig,
         prefix: str,
         robot_type: str,
     ) -> None:
@@ -48,6 +51,8 @@ class Robot:
         self.name = prefix.removesuffix("/")
         self.robot_type = robot_type
         self.prefix = prefix
+        self.config = config
+        info = config.model_info
 
         # Robot state access.
         self.state = RobotState(
@@ -58,15 +63,14 @@ class Robot:
             root_name=info.root_name,
             joint_names=info.joint_names,
             site_names=info.site_names,
+            constraints=config.constraints,
         )
 
         # Actuator and gripper access.
         self.actuator_names = info.actuator_names
         self.actuator_ids = [self.model.actuator(prefix + name).id for name in info.actuator_names]
         self.num_actuators = len(self.actuator_ids)
-        self.gripper = (
-            Gripper(self, info.gripper_actuator) if info.gripper_actuator is not None else None
-        )
+        self.gripper = Gripper(self, config.gripper.actuator) if config.gripper else None
 
         # Arm actuator mapping and properties.
         self._arm_actuator_slots = np.asarray(

@@ -1,6 +1,6 @@
 """Select a manipulator: uv run python examples/manipulator.py --robot panda."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import tyro
@@ -13,9 +13,10 @@ from mujoco_lab import (
     SimulatorManager,
     create_environment,
 )
-from mujoco_lab.control import CONTROLLER_NAMES, create_controller, demo_target_updater
+from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.control import create_controller, demo_target_updater
 
-CONTROLLER_CHOICES = ("auto", *CONTROLLER_NAMES)
+CONTROLLER_CHOICES = ("auto", "none", "position", "pd", "osc")
 
 
 @dataclass
@@ -40,7 +41,7 @@ def main() -> None:
     try:
         simulator = Simulator(
             create_environment(config.environment),
-            robots=[RobotSpec(config.robot, config.robot)],
+            robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
             dt=config.dt,
         )
         robot = simulator.robots[config.robot]
@@ -48,7 +49,11 @@ def main() -> None:
             controller_name = "pd" if config.robot == "forte" else "none"
         else:
             controller_name = config.controller
-        robot.change_controller(create_controller(controller_name, robot))
+        robot.change_controller(
+            create_controller(
+                robot, replace(load_robot_config(robot.robot_type).controller, name=controller_name)
+            )
+        )
         if config.robot == "forte" and config.controller in ("pd", "osc"):
             simulator.target_updater = demo_target_updater(
                 simulator, {robot.name: config.controller}

@@ -5,6 +5,7 @@ description = "MuJoCo workspace"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "dacite>=1.9.2",
     "matplotlib>=3.10",
     "mujoco==3.13.0",
     "mujoco-warp==3.13.0",

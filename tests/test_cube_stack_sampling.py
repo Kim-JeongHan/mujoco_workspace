@@ -3,9 +3,10 @@
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control.trajectory import JointTrajectory
 from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
 from mujoco_lab.planning.sampling.sampler import GoalBiasedSampler
@@ -22,7 +23,7 @@ from mujoco_lab.tasks import (
 def make_sampling_expert(task, planning):
     robot = next(iter(task.simulator.robots.values()))
     robot.change_controller(
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
     )
     return CubeStackExpert(
         task, CubeStackMotionGenerator(task, planner=planner_from_config(planning))
@@ -45,7 +46,10 @@ def make_sampling_expert(task, planning):
     ],
 )
 def test_sampling_planners_complete_released_two_cube_stack(planning):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, planning)
     simulator.target_updater = expert.update
@@ -61,7 +65,10 @@ def test_sampling_planners_complete_released_two_cube_stack(planning):
 
 
 def test_sampling_uses_pick_and_place_task_targets():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     expert = make_sampling_expert(CubeStackTask(simulator, 2), default_planning())
     assert [stage.recipe.name for stage in expert._plan] == [
         "pick",
@@ -73,14 +80,20 @@ def test_sampling_uses_pick_and_place_task_targets():
 
 
 def test_factory_without_planner_uses_heuristic_generator():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
 
     assert isinstance(CubeStackMotionGenerator(task), HeuristicCubeStackMotionGenerator)
 
 
 def test_sampling_accepts_injected_planner_and_advances_stage_seed():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
 
     class DirectPlanner:
@@ -99,7 +112,7 @@ def test_sampling_accepts_injected_planner_and_advances_stage_seed():
     assert isinstance(generator, SamplingCubeStackMotionGenerator)
     robot = simulator.robots["panda"]
     robot.change_controller(
-        create_controller("position", robot, gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
     )
     expert = CubeStackExpert(task, generator)
     assert generator.planner is planner
@@ -117,7 +130,10 @@ def test_sampling_accepts_injected_planner_and_advances_stage_seed():
 
 
 def test_sampling_no_route_stops_cleanly_and_reset_replans(monkeypatch):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
     simulator.target_updater = expert.update
@@ -148,7 +164,10 @@ def test_sampling_no_route_stops_cleanly_and_reset_replans(monkeypatch):
 
 
 def test_sampling_targets_pass_checked_waypoints_in_order(monkeypatch):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
     simulator.target_updater = expert.update
@@ -178,7 +197,10 @@ def test_sampling_targets_pass_checked_waypoints_in_order(monkeypatch):
 
 
 def test_sampling_rejects_cube_moved_from_precomputed_pick_pose():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
     simulator.target_updater = expert.update
@@ -192,7 +214,10 @@ def test_sampling_rejects_cube_moved_from_precomputed_pick_pose():
 
 
 def test_sampling_missing_physical_grasp_returns_expected_failure(monkeypatch):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
     stage = next(stage for stage in expert._plan if stage.recipe.name == "place")
@@ -205,7 +230,10 @@ def test_sampling_missing_physical_grasp_returns_expected_failure(monkeypatch):
 
 
 def test_sampling_unreachable_departure_reports_expected_failure(monkeypatch):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     expert = make_sampling_expert(CubeStackTask(simulator, 2), default_planning())
     stage = next(stage for stage in expert._plan if stage.recipe.name == "place")
     monkeypatch.setattr("mujoco_lab.tasks.cube_stack_motion.has_physical_grasp", lambda *_: True)
@@ -222,7 +250,10 @@ def test_sampling_unreachable_departure_reports_expected_failure(monkeypatch):
 
 
 def test_sampling_reports_insufficient_lift_at_completed_place():
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
     expert.stage = next(i for i, stage in enumerate(expert._plan) if stage.recipe.name == "place")
@@ -237,7 +268,10 @@ def test_sampling_reports_insufficient_lift_at_completed_place():
 
 
 def test_sampling_unexpected_planner_error_propagates(monkeypatch):
-    simulator = Simulator(create_cube_stack(2), robots=[RobotSpec("panda", "panda")])
+    simulator = Simulator(
+        create_cube_stack(2),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     task = CubeStackTask(simulator, 2)
     expert = make_sampling_expert(task, default_planning())
 

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import (
     RobotSpec,
@@ -14,7 +15,8 @@ from mujoco_lab import (
     SimulatorManager,
     create_environment,
 )
-from mujoco_lab.control import Controller, ControlTarget, create_controller
+from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.control import Controller, ControlTarget
 from mujoco_lab.utils import Transform
 
 
@@ -22,8 +24,15 @@ def make_pair(right="forte", *, environment="empty", scene=None):
     return Simulator(
         create_environment(environment) if scene is None else scene,
         robots=[
-            RobotSpec("left", "forte", Transform(translation=[-0.8, 0, 0])),
-            RobotSpec("right", right, Transform(translation=[0.8, 0, 0])),
+            RobotSpec(
+                "left",
+                "forte",
+                Transform(translation=[-0.8, 0, 0]),
+                config=load_robot_config("forte"),
+            ),
+            RobotSpec(
+                "right", right, Transform(translation=[0.8, 0, 0]), config=load_robot_config(right)
+            ),
         ],
     )
 
@@ -83,13 +92,17 @@ def test_composed_scene_has_distinct_bindings_and_simultaneous_homes(right, dime
 
 
 def test_canonical_mount_fallback_and_explicit_world_poses():
-    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec("arm", "forte")])
+    sim = Simulator(
+        create_environment("warehouse"),
+        robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))],
+    )
     robot = sim.robots["arm"]
     np.testing.assert_allclose(sim.data.body(robot.state.root_body_id).xpos, [0, 0, 0.858])
     pose = Transform.from_pose_mmdeg([100, 200, 300, 20, -15, 35])
     for environment in ["empty", "warehouse"]:
         explicit = Simulator(
-            create_environment(environment), robots=[RobotSpec("arm", "forte", pose)]
+            create_environment(environment),
+            robots=[RobotSpec("arm", "forte", pose, config=load_robot_config("forte"))],
         )
         base = explicit.data.body(explicit.robots["arm"].state.root_body_id)
         np.testing.assert_allclose(
@@ -106,7 +119,7 @@ def test_missing_canonical_mount_is_rejected_by_native_attachment():
     scene = mujoco.MjSpec.from_string("<mujoco><worldbody/></mujoco>")
 
     with pytest.raises(ValueError, match="One of frame or site must be specified"):
-        Simulator(scene, robots=[RobotSpec("arm", "forte")])
+        Simulator(scene, robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))])
 
     assert scene.body("arm/base_link") is None
 
@@ -114,10 +127,16 @@ def test_missing_canonical_mount_is_rejected_by_native_attachment():
 def test_instance_names_and_missing_multi_robot_poses_are_rejected():
     pose = Transform.identity()
     for robots in [
-        [RobotSpec("", "forte")],
-        [RobotSpec("a/b", "forte")],
-        [RobotSpec("same", "forte", pose), RobotSpec("same", "panda", pose)],
-        [RobotSpec("a", "forte"), RobotSpec("b", "forte", pose)],
+        [RobotSpec("", "forte", config=load_robot_config("forte"))],
+        [RobotSpec("a/b", "forte", config=load_robot_config("forte"))],
+        [
+            RobotSpec("same", "forte", pose, config=load_robot_config("forte")),
+            RobotSpec("same", "panda", pose, config=load_robot_config("panda")),
+        ],
+        [
+            RobotSpec("a", "forte", config=load_robot_config("forte")),
+            RobotSpec("b", "forte", pose, config=load_robot_config("forte")),
+        ],
     ]:
         with pytest.raises(ValueError):
             Simulator(create_environment("empty"), robots=robots)
@@ -246,7 +265,10 @@ def test_robot_control_uses_cached_state_and_applies_only_its_inputs():
 
 @pytest.mark.parametrize("asset", ["panda"])
 def test_robot_accepts_custom_controllers_without_forte_specific_checks(asset):
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("arm", asset)])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("arm", asset, config=load_robot_config(asset))],
+    )
     robot = sim.robots["arm"]
     command = sim.data.ctrl[robot.actuator_ids[:7]].copy()
     command[0] += 0.01
@@ -311,7 +333,7 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
     initial_qpos = sim.data.qpos.copy()
     initial_ctrl = sim.data.ctrl.copy()
     left, right = sim.robots.values()
-    left.change_controller(create_controller("pd", left))
+    left.change_controller(create_test_controller(left, "pd"))
     active_controller = left.controller
     active_target = left.target
     active_mapping = (
@@ -319,7 +341,7 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
         left.control_qpos_indices,
         left.control_joint_slots,
     )
-    replacement = create_controller("pd", left)
+    replacement = create_test_controller(left, "pd")
     assert replacement._owner is left.state
     assert left.controller is active_controller and left.target is active_target
     assert active_mapping == (
@@ -328,12 +350,12 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
         left.control_joint_slots,
     )
     np.testing.assert_array_equal(sim.data.ctrl, initial_ctrl)
-    another = create_controller("pd", right)
+    another = create_test_controller(right, "pd")
     old_gain = another.kp.copy()
     left.controller.kp[0] += 5
     left.target = ControlTarget(left.target.position + 0.02)
     np.testing.assert_array_equal(another.kp, old_gain)
-    right.change_controller(create_controller("osc", right))
+    right.change_controller(create_test_controller(right, "osc"))
     right.controller.task_kp = 850
     stats = sim.run_steps(50)
     assert right.controller._target is not None
@@ -388,7 +410,7 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     assert sim.model.body("left/helper").id not in sim.model.jnt_bodyid[left.state.joint_ids]
     with pytest.raises(ValueError, match="no site"):
         left.state.get_frame_position("helper_site")
-    left.change_controller(create_controller("osc", left))
+    left.change_controller(create_test_controller(left, "osc"))
     sim.step()
     assert left.state.get_jacobian("ee_site").shape == (6, 9)
 
@@ -469,7 +491,7 @@ def test_pd_annotations_share_scratch_and_preserve_scene_state():
     sim = make_pair()
     left, right = sim.robots.values()
     for robot, offset in [(left, 0.15), (right, -0.25)]:
-        controller = create_controller("pd", robot)
+        controller = create_test_controller(robot, "pd")
         robot.change_controller(controller)
         target = robot.target.position.copy()
         target[0] += offset
@@ -593,14 +615,14 @@ def test_change_controller_preserves_binding_and_resets_replacement_history():
     sim = make_pair()
     manager = manager_with(sim)
     left, right = sim.robots.values()
-    previous = create_controller("pd", right)
+    previous = create_test_controller(right, "pd")
     right.change_controller(previous)
-    osc = create_controller("osc", left)
+    osc = create_test_controller(left, "osc")
     assert osc.robot_state is left.state
     with pytest.raises(ValueError, match="only one Robot"):
         right.change_controller(osc)
     assert right.controller is previous
-    pd = create_controller("pd", left)
+    pd = create_test_controller(left, "pd")
     with pytest.raises(ValueError, match="only one Robot"):
         right.change_controller(pd)
     assert right.controller is previous
@@ -649,7 +671,7 @@ def test_native_reset_keeps_controller_history_until_programmatic_reset():
     initial_qpos = sim.data.qpos.copy()
     manager = manager_with(sim)
     robot = sim.robots["left"]
-    robot.change_controller(create_controller("osc", robot))
+    robot.change_controller(create_test_controller(robot, "osc"))
     sim.step()
     target = robot.target.position.copy()
     cached_target = robot.controller._target.copy()
@@ -672,7 +694,10 @@ def test_native_reset_keeps_controller_history_until_programmatic_reset():
 def test_contact_solver_still_sees_both_robots():
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec(name, "forte", Transform.identity()) for name in ["left", "right"]],
+        robots=[
+            RobotSpec(name, "forte", Transform.identity(), config=load_robot_config("forte"))
+            for name in ["left", "right"]
+        ],
     )
     left, right = sim.robots.values()
     contacts = [

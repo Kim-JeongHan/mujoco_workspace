@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.cli import Config
 from mujoco_lab.control import Controller
 from mujoco_lab.utils import Transform
@@ -32,7 +33,7 @@ class RecordingController(Controller):
 def make_simulator():
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("arm", "forte")],
+        robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))],
         dt=0.001,
     )
     controller = RecordingController()
@@ -198,8 +199,18 @@ def test_multiple_robots_share_one_clock_and_uncontrolled_inputs_survive():
     sim = Simulator(
         create_environment("empty"),
         robots=[
-            RobotSpec("left", "forte", Transform(translation=[-0.8, 0, 0])),
-            RobotSpec("right", "panda", Transform(translation=[0.8, 0, 0])),
+            RobotSpec(
+                "left",
+                "forte",
+                Transform(translation=[-0.8, 0, 0]),
+                config=load_robot_config("forte"),
+            ),
+            RobotSpec(
+                "right",
+                "panda",
+                Transform(translation=[0.8, 0, 0]),
+                config=load_robot_config("panda"),
+            ),
         ],
         dt=0.001,
     )

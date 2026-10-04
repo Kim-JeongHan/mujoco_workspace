@@ -7,14 +7,15 @@ import pytest
 
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ASSET_PATH, ROBOT_ASSETS, ROBOT_NAMES, RobotAsset
-from mujoco_lab.assets.loader import load_asset
+from mujoco_lab.assets.loader import load_asset, load_robot_config
+from mujoco_lab.assets.robot.robot import ControllerConfig, RobotConfig
 
 ASSETS = ASSET_PATH / "robot"
 
 
 @pytest.mark.parametrize("name", ROBOT_NAMES)
 def test_bundled_robot_home_times_are_zero(name):
-    spec, _ = load_asset(name)
+    spec = load_asset(name)
     assert spec.key("home").time == 0
 
 
@@ -41,7 +42,10 @@ def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypa
         return compile_spec(spec)
 
     monkeypatch.setattr(mujoco.MjSpec, "compile", compile_once)
-    sim = Simulator(create_environment("empty"), robots=[RobotSpec("arm", "test")])
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("arm", "test", config=RobotConfig(ControllerConfig("none")))],
+    )
     assert len(compilations) == 1
     robot = sim.robots["arm"]
     assert robot.state.site_id("tip") == sim.model.site("arm/tip").id
@@ -58,7 +62,10 @@ def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypa
 @pytest.mark.parametrize("name,nv,nu", [("panda", 9, 8)])
 @pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
 def test_robot_home_pose_and_position_servos(name, nv, nu, environment):
-    sim = Simulator(create_environment(environment), robots=[RobotSpec(name, name)])
+    sim = Simulator(
+        create_environment(environment),
+        robots=[RobotSpec(name, name, config=load_robot_config(name))],
+    )
     model, data = sim.model, sim.data
     robot = sim.robots[name]
     assert robot.state.nv == nv
@@ -152,7 +159,10 @@ def test_forward_kinematics_matches_urdf(name):
 
 
 def test_panda_fingers_remain_coupled_when_commanded():
-    sim = Simulator(create_environment("warehouse"), robots=[RobotSpec("panda", "panda")])
+    sim = Simulator(
+        create_environment("warehouse"),
+        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
+    )
     model, data = sim.model, sim.data
     assert [model.actuator(i).name for i in range(model.nu)] == [
         *(f"panda/panda_joint{i}" for i in range(1, 8)),

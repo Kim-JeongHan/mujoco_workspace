@@ -7,9 +7,10 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
+from controller_config import create_test_controller
 
 from mujoco_lab import ENVIRONMENT_NAMES, ControlTarget, RobotSpec, Simulator, create_environment
-from mujoco_lab.control import create_controller
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control.trajectory import PD_WAYPOINTS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +29,10 @@ ARM_JOINTS = (
 
 
 def forte_sim(environment="empty"):
-    return Simulator(create_environment(environment), robots=[RobotSpec("forte", "forte")])
+    return Simulator(
+        create_environment(environment),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
 
 
 def test_cad_source_snapshot_matches_manifest():
@@ -126,7 +130,7 @@ def test_cad_mass_and_home_pose_tool_frame():
 def test_gripper_closes_and_reopens_under_native_physics():
     sim = forte_sim()
     robot = sim.robots["forte"]
-    controller = create_controller("pd", robot)
+    controller = create_test_controller(robot, "pd")
     robot.change_controller(controller)
     robot.gripper.set_target(-0.02)
     sim.run_steps(500)
@@ -205,7 +209,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
         mass=0.07936,
         friction=[1, 0.02, 0.001],
     )
-    sim = Simulator(scene, robots=[RobotSpec("forte", "forte")])
+    sim = Simulator(scene, robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))])
     model, data = sim.model, sim.data
     robot = sim.robots["forte"]
 
@@ -229,7 +233,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
     )
     data.qpos[robot.state.qpos_indices[-2:]] = -0.01771
     mujoco.mj_forward(model, data)
-    controller = create_controller("pd", robot)
+    controller = create_test_controller(robot, "pd")
     robot.change_controller(controller)
     robot.gripper.set_target(-0.02)
     pads = {"forte/gripper_left_pad", "forte/gripper_right_pad"}

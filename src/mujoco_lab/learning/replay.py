@@ -10,6 +10,7 @@ import numpy as np
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.datasets.episode import Episode, load_episode
 from mujoco_lab.learning.datasets.replay import (
     replay_action_repeat,
@@ -51,7 +52,13 @@ class EpisodeReplay:
             raise ValueError("Unsupported replay scene; expected a bundled cube-stack mount")
         self.simulator = Simulator(
             create_cube_stack(metadata["cubes"]),
-            robots=[RobotSpec(metadata["robot_name"], metadata["robot"])],
+            robots=[
+                RobotSpec(
+                    metadata["robot_name"],
+                    metadata["robot"],
+                    config=load_robot_config(metadata["robot"]),
+                )
+            ],
             dt=metadata["dt"],
         )
         model = self.simulator.model

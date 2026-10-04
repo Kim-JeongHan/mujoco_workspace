@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.planning import MuJoCoCollisionChecker
 from mujoco_lab.state import RobotState
 
@@ -130,7 +131,10 @@ def test_input_and_hardware_bounds_are_checked():
 
 @pytest.mark.parametrize("robot_type", ["panda", "forte"])
 def test_bundled_arm_home_and_nearby_goal(robot_type):
-    simulator = Simulator(create_environment("empty"), robots=[RobotSpec(robot_type, robot_type)])
+    simulator = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec(robot_type, robot_type, config=load_robot_config(robot_type))],
+    )
     robot = simulator.robots[robot_type]
     arm_ids = robot.state.joint_ids[:7]
     current = simulator.data.qpos[robot.model.jnt_qposadr[arm_ids]].copy()
