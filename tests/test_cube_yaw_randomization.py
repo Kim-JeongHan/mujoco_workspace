@@ -8,9 +8,9 @@ import pytest
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.randomization import sample_cube_positions
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
-from mujoco_lab.tasks import CubeStackTask
 
 
 def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
@@ -98,9 +98,6 @@ def test_zero_yaw_keeps_legacy_xy_draws_and_home_quaternion():
 
 
 def test_evaluation_restores_recorded_yaw(monkeypatch):
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluate._verify_replay", lambda *_args, **_kwargs: None
-    )
     metadata = {
         "dataset_metadata": {
             "replay": {

@@ -1,4 +1,4 @@
-"""Stage-specific collision checks for physical cube stacking."""
+"""Stage-specific collision checks for free rigid object manipulation."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import numpy as np
 from .mujoco import MuJoCoCollisionChecker
 
 
-class CubeStackCollisionChecker(MuJoCoCollisionChecker):
+class ManipulationCollisionChecker(MuJoCoCollisionChecker):
     """Check an arm path with narrow grasp and support contact allowances.
 
     Construct carry stages only after observing a physical two-finger grasp.
-    The active cube follows that measured grasp-to-cube pose only in private
+    The active object follows its measured grasp-to-object pose only in private
     MuJoCo data. Place paths may allow shallow support contact near the measured
     departure and intended destination, but not between them. Call ``refresh``
     at a new stage boundary to capture the scene and current relative pose.
@@ -42,6 +42,8 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         grasp_penetration: float = 0.012,
         support_penetration: float = 0.004,
         support_xy_tolerance: float = 0.01,
+        object_body: str | None = None,
+        target_site: str | None = None,
     ) -> None:
         if not np.isfinite(grasp_penetration) or grasp_penetration < 0:
             raise ValueError("grasp_penetration must be finite and nonnegative")
@@ -55,6 +57,8 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         self._support_name = support_geom
         self._departure_support_name = departure_support_geom
         self._grasp_names = grasp_geoms
+        self._object_name = object_body
+        self._target_site_name = target_site
         self._configured = False
 
         if bounds is None:
@@ -78,21 +82,25 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         cube, separator, phase = stage_name.partition(":")
         if (
             not separator
-            or not cube.startswith("cube")
-            or not cube[4:].isdigit()
+            or (
+                cube != self._object_name
+                if self._object_name is not None
+                else not cube.startswith("cube") or not cube[4:].isdigit()
+            )
             or phase not in self._STAGES
         ):
-            raise ValueError(f"Invalid cube stack stage: {stage_name!r}")
+            raise ValueError(f"Invalid manipulation stage: {stage_name!r}")
         model = self.model
-        cube_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{cube}/object_0")
+        body_name = self._object_name or f"{cube}/object_0"
+        cube_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if cube_body < 0:
-            raise ValueError(f"Missing cube body for {stage_name!r}")
+            raise ValueError(f"Missing object body for {stage_name!r}")
         joint_start = int(model.body_jntadr[cube_body])
         if (
             model.body_jntnum[cube_body] != 1
             or model.jnt_type[joint_start] != mujoco.mjtJoint.mjJNT_FREE
         ):
-            raise ValueError("Active cube must have one free joint")
+            raise ValueError("Active object must have one free joint")
         self.stage_name = stage_name
         self._phase = phase
         self._cube_body = cube_body
@@ -124,11 +132,21 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         ):
             raise ValueError("departure_support_geom must belong to the surroundings")
         self._target_body = None
+        self._target_site = None
         if phase == "place" and self._support_geom_id is not None:
-            target = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{cube}/object_target_0")
-            if target < 0:
-                raise ValueError(f"Missing cube target body for {stage_name!r}")
-            self._target_body = target
+            if self._target_site_name is not None:
+                self._target_site = mujoco.mj_name2id(
+                    model, mujoco.mjtObj.mjOBJ_SITE, self._target_site_name
+                )
+                if self._target_site < 0:
+                    raise ValueError(f"Missing target site for {stage_name!r}")
+            else:
+                target = mujoco.mj_name2id(
+                    model, mujoco.mjtObj.mjOBJ_BODY, f"{cube}/object_target_0"
+                )
+                if target < 0:
+                    raise ValueError(f"Missing cube target body for {stage_name!r}")
+                self._target_body = target
 
     def _geom_id(self, value: str | int) -> int:
         if isinstance(value, str):
@@ -168,7 +186,7 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         return ids
 
     def refresh(self, stage_name: str | None = None) -> None:
-        """Capture live positions and the current grasp-to-cube pose."""
+        """Capture live positions and the current grasp-to-object pose."""
         super().refresh()
         if not self._configured:
             return
@@ -183,6 +201,8 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
             self._departure_support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
             if self._target_body is not None:
                 self._support_xy = self._snapshot.xpos[self._target_body, :2].copy()
+            elif self._target_site is not None:
+                self._support_xy = self._snapshot.site_xpos[self._target_site, :2].copy()
         site_pos = self._snapshot.site_xpos[self._site_id]
         site_quat = np.empty(4)
         mujoco.mju_mat2Quat(site_quat, self._snapshot.site_xmat[self._site_id])
@@ -199,7 +219,7 @@ class CubeStackCollisionChecker(MuJoCoCollisionChecker):
         )
 
     def is_collision_free(self, state: np.ndarray) -> bool:
-        """Check the arm and, during carry, a virtual attached cube."""
+        """Check the arm and, during carry, a virtual attached object."""
         q = self._state(state)
         if np.any(q < self.bounds[:, 0] - self._BOUND_EPS) or np.any(
             q > self.bounds[:, 1] + self._BOUND_EPS

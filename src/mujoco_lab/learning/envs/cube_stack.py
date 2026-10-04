@@ -11,8 +11,8 @@ import numpy as np
 from gymnasium import spaces
 
 from mujoco_lab.assets.randomization import sample_cube_positions
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.control import ControlTarget
-from mujoco_lab.tasks import CubeStackTask
 
 
 def cube_stack_observation_layout(cubes: int) -> tuple[int, list[int]]:

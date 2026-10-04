@@ -7,14 +7,10 @@ from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.planning import planner_from_config
-from mujoco_lab.tasks import (
-    BaseCubeStackMotionGenerator,
-    CubeStackTask,
-    HeuristicCubeStackMotionGenerator,
-    SamplingCubeStackMotionGenerator,
-    default_planning,
-)
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
+from mujoco_lab.control import create_controller
+from mujoco_lab.planning import default_planning, planner_from_config
 
 
 def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "panda"):
@@ -29,49 +25,49 @@ def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "p
     ).as_quat(scalar_first=True)
     mujoco.mj_forward(simulator.model, simulator.data)
     task = CubeStackTask(simulator, 2)
-    generator = (
-        SamplingCubeStackMotionGenerator(task, planner=planner_from_config(default_planning()))
-        if method == "sampling"
-        else HeuristicCubeStackMotionGenerator(task)
+    robot = simulator.robots[robot_type]
+    robot.change_controller(
+        create_controller(robot, load_robot_config(robot.robot_type).controller)
+    )
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method=method,
+        planner=planner_from_config(default_planning()) if method == "sampling" else None,
     )
     starts = np.array([simulator.data.body(f"cube{i}/object_0").xpos for i in range(2)])
     goals = np.array([simulator.data.body(f"cube{i}/object_target_0").xpos for i in range(2)])
-    stages = {
-        stage.name: stage
-        for stage in BaseCubeStackMotionGenerator.generate(generator, starts, goals)
-    }
-    return simulator, generator, starts, goals, stages
+    stages = {stage.name: stage for stage in expert.build_stages(starts, goals)}
+    return simulator, expert, starts, goals, stages
 
 
-def _grasp_pose(simulator, generator, stage):
+def _grasp_pose(simulator, expert, stage):
     data = mujoco.MjData(simulator.model)
     data.qpos[:] = simulator.data.qpos
-    data.qpos[generator.robot.state.qpos_indices[:7]] = stage.command[:7]
+    data.qpos[expert.robot.state.qpos_indices[:7]] = stage.waypoints[-1]
     mujoco.mj_forward(simulator.model, data)
-    site = generator.robot.state.site_id(generator.recipe.frame)
+    site = expert.robot.state.site_id(expert.recipe.frame)
     return data.site_xpos[site].copy(), Rotation.from_matrix(data.site_xmat[site].reshape(3, 3))
 
 
 @pytest.mark.parametrize("degrees", [-15.0, 15.0, -45.0, 45.0])
 @pytest.mark.parametrize("method", ["heuristic", "sampling"])
 def test_pick_tracks_cube_yaw_and_place_returns_to_recipe(degrees, method):
-    simulator, generator, starts, goals, stages = _plan_at_yaw(degrees, method)
+    simulator, expert, starts, goals, stages = _plan_at_yaw(degrees, method)
     yaw = (np.deg2rad(degrees) + np.pi / 4) % (np.pi / 2) - np.pi / 4
     yaw_rotation = Rotation.from_euler("z", yaw)
-    if generator.recipe.euler_xyz_degrees is None:
-        site = generator.robot.state.site_id(generator.recipe.frame)
+    if expert.recipe.euler_xyz_degrees is None:
+        site = expert.robot.state.site_id(expert.recipe.frame)
         recipe_rotation = Rotation.from_matrix(simulator.data.site_xmat[site].reshape(3, 3))
     else:
-        recipe_rotation = Rotation.from_euler(
-            "xyz", generator.recipe.euler_xyz_degrees, degrees=True
-        )
+        recipe_rotation = Rotation.from_euler("xyz", expert.recipe.euler_xyz_degrees, degrees=True)
 
     pick_names = (
         ("above_pick", "pick", "close", "lift") if method == "heuristic" else ("pick", "close")
     )
     for name in pick_names:
         stage = stages[f"cube0:{name}"]
-        position, orientation = _grasp_pose(simulator, generator, stage)
+        position, orientation = _grasp_pose(simulator, expert, stage)
         target = starts[0] + yaw_rotation.apply(stage.recipe.offset_xyz_m)
         assert np.linalg.norm(position - target) < 0.009
         assert (yaw_rotation * recipe_rotation * orientation.inv()).magnitude() < 0.34
@@ -83,7 +79,7 @@ def test_pick_tracks_cube_yaw_and_place_returns_to_recipe(degrees, method):
     )
     for name in place_names:
         stage = stages[f"cube0:{name}"]
-        position, orientation = _grasp_pose(simulator, generator, stage)
+        position, orientation = _grasp_pose(simulator, expert, stage)
         target = goals[0] + stage.recipe.offset_xyz_m
         assert np.linalg.norm(position - target) < 0.009
         assert (recipe_rotation * orientation.inv()).magnitude() < 0.34
@@ -95,7 +91,7 @@ def test_quarter_turns_use_the_same_targets_as_zero_yaw(degrees, method):
     _, _, _, _, baseline = _plan_at_yaw(0, method)
     _, _, _, _, rotated = _plan_at_yaw(degrees, method)
     for name, stage in baseline.items():
-        np.testing.assert_allclose(rotated[name].command, stage.command, atol=1e-9)
+        np.testing.assert_allclose(rotated[name].waypoints[-1], stage.waypoints[-1], atol=1e-9)
 
 
 @pytest.mark.parametrize("method", ["heuristic", "sampling"])
@@ -103,16 +99,16 @@ def test_positive_45_degree_tie_uses_negative_45_degree_grasp(method):
     _, _, _, _, positive = _plan_at_yaw(45, method)
     _, _, _, _, negative = _plan_at_yaw(-45, method)
     for name, stage in positive.items():
-        np.testing.assert_allclose(negative[name].command, stage.command, atol=1e-9)
+        np.testing.assert_allclose(negative[name].waypoints[-1], stage.waypoints[-1], atol=1e-9)
 
 
 def test_forte_sampling_pick_target_tracks_rotated_cube():
-    simulator, generator, starts, goals, stages = _plan_at_yaw(15, "sampling", "forte")
+    simulator, expert, starts, goals, stages = _plan_at_yaw(15, "sampling", "forte")
     pick = stages["cube0:pick"]
     place = stages["cube0:place"]
-    pick_position, pick_orientation = _grasp_pose(simulator, generator, pick)
-    place_position, place_orientation = _grasp_pose(simulator, generator, place)
-    nominal = Rotation.from_euler("xyz", generator.recipe.euler_xyz_degrees, degrees=True)
+    pick_position, pick_orientation = _grasp_pose(simulator, expert, pick)
+    place_position, place_orientation = _grasp_pose(simulator, expert, place)
+    nominal = Rotation.from_euler("xyz", expert.recipe.euler_xyz_degrees, degrees=True)
     yaw = Rotation.from_euler("z", 15, degrees=True)
     assert np.linalg.norm(pick_position - (starts[0] + yaw.apply(pick.recipe.offset_xyz_m))) < 0.009
     assert (yaw * nominal * pick_orientation.inv()).magnitude() < 0.34

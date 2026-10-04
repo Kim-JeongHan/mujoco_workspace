@@ -10,15 +10,15 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.learning.collect import Config as CollectConfig
-from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
 from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
 from mujoco_lab.learning.replay import EpisodeReplay
 from mujoco_lab.learning.rollout import collect_episode
-from mujoco_lab.tasks import CubeStackTask, default_planning
 
 
 @pytest.mark.parametrize("environment", ["table_shelf", "warehouse"])
@@ -43,9 +43,9 @@ def test_single_cube_env_recording_replays_with_39_observations(robot_name):
     )
     robot = simulator.robots[robot_name]
     controller = (
-        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, controller="position", frame="grasp")
         if robot_name == "panda"
-        else create_test_controller(robot, "pd", frame="grasp")
+        else create_test_controller(robot, controller="pd", frame="grasp")
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, 1)
@@ -53,7 +53,11 @@ def test_single_cube_env_recording_replays_with_39_observations(robot_name):
     initial_42, _ = env.reset(seed=42)
     initial_43, _ = env.reset(seed=43)
     np.testing.assert_array_equal(initial_42, initial_43)
-    expert = create_expert(task, planning=default_planning())
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
     metadata = cube_stack_metadata(simulator, cubes=1, robot=robot_name, physics_steps_per_action=5)
     evaluation, scene = create_evaluation_env(
         {"dataset_metadata": {"replay": metadata}},
@@ -100,9 +104,9 @@ def test_expert_releases_stably_at_five_physics_ticks_per_action(robot_name, cub
     )
     robot = simulator.robots[robot_name]
     controller = (
-        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
+        create_test_controller(robot, controller="position", frame="grasp")
         if robot_name == "panda"
-        else create_test_controller(robot, "pd", frame="grasp")
+        else create_test_controller(robot, controller="pd", frame="grasp")
     )
     robot.change_controller(controller)
     task = CubeStackTask(simulator, cubes)
@@ -113,7 +117,11 @@ def test_expert_releases_stably_at_five_physics_ticks_per_action(robot_name, cub
         physics_steps_per_action=5,
         max_steps=6000,
     )
-    expert = create_expert(task, planning=default_planning())
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
     episode = collect_episode(env, expert, seed=42, max_steps=6000)
     assert episode.metadata["success"] is True
     assert episode.terminated[-1]

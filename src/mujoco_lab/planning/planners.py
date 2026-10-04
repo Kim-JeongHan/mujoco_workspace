@@ -12,6 +12,11 @@ from .graph import Node
 from .sampling import PRM, RRT, PRMConfig, RRTConfig, RRTConnect, RRTConnectConfig
 
 
+def default_planning() -> RRTConnectConfig:
+    """Return the default manipulation RRT-Connect configuration."""
+    return RRTConnectConfig(max_iterations=500, step_size=0.2, goal_tolerance=0.04, seed=7)
+
+
 class PathPlanner(Protocol):
     """Plan independent joint-space queries against a supplied scene."""
 

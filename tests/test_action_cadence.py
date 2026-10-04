@@ -8,10 +8,10 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.datasets.replay import capture_frame
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import collect_episode
-from mujoco_lab.tasks import CubeStackTask
 
 
 def make_env(repeat):

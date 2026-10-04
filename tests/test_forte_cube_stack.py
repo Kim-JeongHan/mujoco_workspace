@@ -8,13 +8,19 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.tasks import CubeStackExpert, CubeStackMotionGenerator, CubeStackTask
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack import has_physical_grasp
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 
 
 def make_forte_expert(task):
     robot = next(iter(task.simulator.robots.values()))
-    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
-    return CubeStackExpert(task, CubeStackMotionGenerator(task))
+    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
+    return CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
 
 
 @pytest.mark.parametrize("cubes", [2, 3, 4])
@@ -99,6 +105,7 @@ def test_forte_pickup_accepts_custom_robot_instance_name():
         simulator.run_steps(100)
         if task.max_lift[0] > task.starts[0, 2] + 0.04:
             break
-    assert expert.stage >= 3
+    assert not expert.failed
+    assert has_physical_grasp(expert.robot, 0)
     assert task.max_lift[0] > task.starts[0, 2] + 0.04
     assert not simulator.data.warning.number.any()

@@ -1,6 +1,6 @@
 """Command-line entry point for physical cube stacking."""
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -9,17 +9,21 @@ import tyro
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets import CubeCount, RobotName
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import create_controller
-from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
-from mujoco_lab.rendering.camera import create_free_camera
-from mujoco_lab.simulator_manager import SimulatorManager
-from mujoco_lab.tasks import (
+from mujoco_lab.behaviors import (
     CubeStackExpert,
     CubeStackTask,
-    HeuristicCubeStackMotionGenerator,
-    SamplingCubeStackMotionGenerator,
-    default_planning,
 )
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
+from mujoco_lab.control import create_controller
+from mujoco_lab.planning import (
+    PRMConfig,
+    RRTConfig,
+    RRTConnectConfig,
+    default_planning,
+    planner_from_config,
+)
+from mujoco_lab.rendering.camera import create_free_camera
+from mujoco_lab.simulator_manager import SimulatorManager
 
 
 @dataclass
@@ -55,40 +59,33 @@ def main() -> None:
             steps = 30000 if config.robot == "forte" else 22000
     if steps < 0:
         logger.error("--steps must be zero or greater", exit_code=2)
-    try:
-        simulator = Simulator(
-            create_cube_stack(config.cubes, environment=config.environment),
-            robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
+    robot_config = load_robot_config(config.robot)
+    simulator = Simulator(
+        create_cube_stack(config.cubes, environment=config.environment),
+        robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
+    )
+    robot = simulator.robots[config.robot]
+    controller = create_controller(robot, robot_config.controller)
+    robot.change_controller(controller)
+    task = CubeStackTask(simulator, config.cubes)
+    recipe = load_cube_recipe(config.robot)
+    if config.method == "sampling":
+        planner = planner_from_config(config.planning)
+        expert = CubeStackExpert(
+            task,
+            recipe=recipe,
+            method="sampling",
+            planner=planner,
         )
-        robot = simulator.robots[config.robot]
-        if config.robot == "panda":
-            controller = create_controller(
-                robot,
-                replace(
-                    load_robot_config(robot.robot_type).controller,
-                    name="position",
-                    gravity_compensation=True,
-                    frame="grasp",
-                ),
-            )
-        else:
-            controller = create_controller(
-                robot,
-                replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp"),
-            )
-        robot.change_controller(controller)
-        task = CubeStackTask(simulator, config.cubes)
-        if config.method == "sampling":
-            planner = planner_from_config(config.planning)
-            generator = SamplingCubeStackMotionGenerator(task, planner=planner)
-            planner_label = planner.name
-        else:
-            generator = HeuristicCubeStackMotionGenerator(task)
-            planner_label = "none"
-        expert = CubeStackExpert(task, generator)
-        simulator.target_updater = expert.update
-    except ValueError as error:
-        logger.error(str(error), exit_code=2)
+        planner_label = planner.name
+    else:
+        planner_label = "none"
+        expert = CubeStackExpert(
+            task,
+            recipe=recipe,
+            method="heuristic",
+        )
+    simulator.target_updater = expert.update
 
     name = "cube_stack"
     manager.add_simulator(name, simulator)

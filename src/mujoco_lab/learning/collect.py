@@ -11,17 +11,21 @@ import tyro
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets import CubeCount, RobotName
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import (
+    CubeStackExpert,
+    CubeStackTask,
+)
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout.collector import iter_episodes
-from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
-from mujoco_lab.tasks import (
-    CubeStackExpert,
-    CubeStackTask,
-    HeuristicCubeStackMotionGenerator,
-    SamplingCubeStackMotionGenerator,
+from mujoco_lab.planning import (
+    PRMConfig,
+    RRTConfig,
+    RRTConnectConfig,
     default_planning,
+    planner_from_config,
 )
 from mujoco_lab.utils import Logger
 
@@ -58,11 +62,13 @@ def create_expert(
     """Build an action-producing expert bound to the environment's simulator."""
     if method not in ("heuristic", "sampling"):
         raise ValueError("method must be heuristic or sampling")
-    if method == "sampling":
-        generator = SamplingCubeStackMotionGenerator(task, planner=planner_from_config(planning))
-    else:
-        generator = HeuristicCubeStackMotionGenerator(task)
-    return CubeStackExpert(task, generator)
+    robot = next(iter(task.simulator.robots.values()))
+    return CubeStackExpert(
+        task,
+        recipe=load_recipe(robot.robot_type),
+        method=method,
+        planner=planner_from_config(planning) if method == "sampling" else None,
+    )
 
 
 def main() -> None:

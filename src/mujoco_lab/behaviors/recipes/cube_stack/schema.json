@@ -1,6 +1,54 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "MotionLimits": {
+      "additionalProperties": false,
+      "description": "Optional velocity and acceleration limits in the controlled joints' units.\n\nScalars apply to every joint; lists follow the resolved joint order.\nAn omitted value inherits the corresponding robot or recipe limit.",
+      "properties": {
+        "velocity_limit": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "items": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Velocity Limit"
+        },
+        "acceleration_limit": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "items": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acceleration Limit"
+        }
+      },
+      "title": "MotionLimits",
+      "type": "object"
+    },
     "StageRecipe": {
       "additionalProperties": false,
       "description": "One named pose and its execution limits, applied once per cube.",
@@ -30,36 +78,11 @@
           "title": "Gripper Target M",
           "type": "number"
         },
-        "min_duration_s": {
-          "exclusiveMinimum": 0,
-          "title": "Min Duration S",
-          "type": "number"
+        "arm": {
+          "$ref": "#/$defs/MotionLimits"
         },
-        "arm_max_velocity": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Arm Max Velocity"
-        },
-        "arm_max_acceleration": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Arm Max Acceleration"
+        "gripper": {
+          "$ref": "#/$defs/MotionLimits"
         },
         "require_grasp": {
           "default": false,
@@ -83,8 +106,7 @@
       "required": [
         "name",
         "offset_xyz_m",
-        "gripper_target_m",
-        "min_duration_s"
+        "gripper_target_m"
       ],
       "title": "StageRecipe",
       "type": "object"
@@ -123,25 +145,11 @@
       "title": "Frame",
       "type": "string"
     },
-    "arm_max_velocity": {
-      "exclusiveMinimum": 0,
-      "title": "Arm Max Velocity",
-      "type": "number"
+    "arm": {
+      "$ref": "#/$defs/MotionLimits"
     },
-    "arm_max_acceleration": {
-      "exclusiveMinimum": 0,
-      "title": "Arm Max Acceleration",
-      "type": "number"
-    },
-    "gripper_max_velocity": {
-      "exclusiveMinimum": 0,
-      "title": "Gripper Max Velocity",
-      "type": "number"
-    },
-    "gripper_max_acceleration": {
-      "exclusiveMinimum": 0,
-      "title": "Gripper Max Acceleration",
-      "type": "number"
+    "gripper": {
+      "$ref": "#/$defs/MotionLimits"
     },
     "arm_tolerance": {
       "exclusiveMinimum": 0,
@@ -163,10 +171,6 @@
   },
   "required": [
     "frame",
-    "arm_max_velocity",
-    "arm_max_acceleration",
-    "gripper_max_velocity",
-    "gripper_max_acceleration",
     "arm_tolerance",
     "gripper_tolerance",
     "stages"

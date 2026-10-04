@@ -12,8 +12,8 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from mujoco_lab.behaviors import Expert
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
-from mujoco_lab.tasks import Expert
 
 
 def collect_episode(

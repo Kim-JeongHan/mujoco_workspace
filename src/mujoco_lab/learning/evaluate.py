@@ -14,6 +14,7 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.checkpoint import load_checkpoint
 from mujoco_lab.learning.config.config import EvalConfig
@@ -24,7 +25,6 @@ from mujoco_lab.learning.evaluation import (
     evaluation_log_metrics,
 )
 from mujoco_lab.learning.logging import Logger
-from mujoco_lab.tasks import CubeStackTask
 from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 

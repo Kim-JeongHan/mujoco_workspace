@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from mujoco_lab.tasks.cube_stack import CubeStackTask
-from mujoco_lab.tasks.cube_stack_motion import has_physical_grasp
+from mujoco_lab.behaviors.cube_stack import CubeStackTask, has_physical_grasp
 
 
 class CubeProgressTracker:

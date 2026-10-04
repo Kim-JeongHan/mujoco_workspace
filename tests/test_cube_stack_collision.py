@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import mujoco
 import numpy as np
 
-from mujoco_lab.planning import CubeStackCollisionChecker, MuJoCoCollisionChecker
+from mujoco_lab.assets.robot.robot import Constraints
+from mujoco_lab.planning import ManipulationCollisionChecker, MuJoCoCollisionChecker
 from mujoco_lab.state import RobotState
 
 
@@ -73,14 +74,21 @@ def _robot(
     """)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
+    joint_names = ("arm_joint", "left_joint", "right_joint")
     state = RobotState(
         model,
         data,
         name="arm",
         prefix="",
         root_name="arm_root",
-        joint_names=("arm_joint", "left_joint", "right_joint"),
+        joint_names=joint_names,
         site_names=("grasp",),
+        constraints=Constraints(
+            joint_names=list(joint_names),
+            position_limit=[model.joint(name).range.tolist() for name in joint_names],
+            velocity_limit=[1.0] * len(joint_names),
+            acceleration_limit=[1.0] * len(joint_names),
+        ),
     )
     return SimpleNamespace(
         model=model, data=data, state=state, name="arm", prefix="", robot_type="fixture"
@@ -88,7 +96,7 @@ def _robot(
 
 
 def _checker(robot, stage, **kwargs):
-    return CubeStackCollisionChecker(
+    return ManipulationCollisionChecker(
         robot,
         stage,
         grasp_geoms=("left_pad", "right_pad"),

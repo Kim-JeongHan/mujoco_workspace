@@ -8,8 +8,10 @@ from controller_config import create_test_controller
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.robot.robot import ControllerConfig, RobotConfig
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.rendering.annotations import draw_joint_torques
-from mujoco_lab.tasks import CubeStackExpert, CubeStackMotionGenerator, CubeStackTask
 
 STARTS = {
     2: ((0.425, -0.2, 0.82), (0.425, 0.2, 0.82)),
@@ -26,10 +28,12 @@ COLORS = ((0.96, 0.26, 0.33), (0.35, 0.55, 0.91), (1.0, 0.69, 0.21), (0.06, 0.74
 
 def make_panda_expert(task):
     robot = task.simulator.robots["panda"]
-    robot.change_controller(
-        create_test_controller(robot, "position", gravity_compensation=True, frame="grasp")
+    robot.change_controller(create_test_controller(robot, controller="position", frame="grasp"))
+    return CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
     )
-    return CubeStackExpert(task, CubeStackMotionGenerator(task))
 
 
 def place_cubes_at_goals(simulator, task):
@@ -90,7 +94,7 @@ def test_task_rejects_robot_contact_even_after_stable_hold(tmp_path, monkeypatch
     monkeypatch.setitem(ROBOT_ASSETS, "blocker", RobotAsset(path))
     simulator = Simulator(
         create_cube_stack(2),
-        robots=[RobotSpec("blocker", "blocker", config=load_robot_config("blocker"))],
+        robots=[RobotSpec("blocker", "blocker", config=RobotConfig(ControllerConfig("none")))],
     )
     task = CubeStackTask(simulator, 2)
     place_cubes_at_goals(simulator, task)

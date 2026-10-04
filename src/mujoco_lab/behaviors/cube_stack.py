@@ -39,11 +39,54 @@ class CubeMeasurements:
     stable_placement: np.ndarray
 
 
+def has_physical_grasp(robot, cube_index: int) -> bool:
+    """Return whether both physical finger pads touch the active cube."""
+    model, data = robot.model, robot.data
+    cube_geom = model.geom(f"cube{cube_index}/object_0").id
+    sides = set()
+    for contact in data.contact:
+        if contact.geom1 == cube_geom:
+            other = int(contact.geom2)
+        elif contact.geom2 == cube_geom:
+            other = int(contact.geom1)
+        else:
+            continue
+        if robot.robot_type == "forte":
+            for side in ("left", "right"):
+                if model.geom(other).name == f"{robot.name}/gripper_{side}_pad":
+                    sides.add(side)
+        else:
+            body = model.body(int(model.geom_bodyid[other])).name
+            for side in ("left", "right"):
+                if body == f"{robot.name}/panda_{side}finger":
+                    sides.add(side)
+    return sides == {"left", "right"}
+
+
+def cube_touches_robot(robot, cube_index: int) -> bool:
+    """Return whether the active cube contacts any geom owned by this robot."""
+    model, data = robot.model, robot.data
+    cube_geom = model.geom(f"cube{cube_index}/object_0").id
+    for contact in data.contact:
+        if contact.geom1 == cube_geom:
+            other = int(contact.geom2)
+        elif contact.geom2 == cube_geom:
+            other = int(contact.geom1)
+        else:
+            continue
+        if model.geom(other).name.startswith(robot.prefix):
+            return True
+    return False
+
+
 class CubeStackTask:
     """Track cube goals and physical success independently of a controller."""
 
+    place_hold_seconds = 0.5
+
     def __init__(self, simulator: Simulator, cubes: int = 2):
         self.simulator = simulator
+        self.robot = next(iter(simulator.robots.values()), None)
         self.cubes = cubes
         model = simulator.model
         if (
@@ -68,7 +111,16 @@ class CubeStackTask:
             ]
             self._supports.append("table/box" if not below else f"cube{below[0]}/object_0")
         self.max_lift = self.starts[:, 2].copy()
-        self._stable_since = None
+        self._stable_since: list[float | None] = [None] * cubes
+        self._placed = np.zeros(cubes, dtype=bool)
+
+    def has_grasp(self, cube_index: int) -> bool:
+        """Measure two-pad contact for the task's robot and active cube."""
+        return has_physical_grasp(self.robot, cube_index)
+
+    def touches_robot(self, cube_index: int) -> bool:
+        """Measure contact between the active cube and the task's robot."""
+        return cube_touches_robot(self.robot, cube_index)
 
     def measurements(self) -> CubeMeasurements:
         """Measure cube placement without changing task history or simulation state."""
@@ -125,22 +177,36 @@ class CubeStackTask:
         data = self.simulator.data
         sample = self.measurements()
         self.max_lift = np.maximum(self.max_lift, sample.centers[:, 2])
-        stable = bool(np.all(sample.stable_placement))
-        if stable:
-            if self._stable_since is None:
-                self._stable_since = data.time
-        else:
-            self._stable_since = None
+        held = np.zeros(self.cubes, dtype=bool)
+        for index, stable in enumerate(sample.stable_placement):
+            if stable:
+                if self._stable_since[index] is None:
+                    self._stable_since[index] = float(data.time)
+            else:
+                self._stable_since[index] = None
+            since = self._stable_since[index]
+            held[index] = since is not None and data.time - since >= self.place_hold_seconds
+        self._placed |= held
         return StackStatus(
             sample.goal_distances,
             bool(np.all(sample.goal_distances <= 0.04)),
-            self._stable_since is not None and data.time - self._stable_since >= 0.5,
+            bool(np.all(held)),
             bool(np.all(sample.supported)),
             sample.centers[:, 2].copy(),
         )
+
+    def completed_placements(self) -> np.ndarray:
+        """Return cubes that completed a stable hold since reset, without advancing timers.
+
+        ``status()`` updates this history at the physics cadence. Completion stays
+        recorded after a cube moves, while stack success requires all cubes to be
+        currently stable for the full hold interval.
+        """
+        return self._placed.copy()
 
     def reset(self) -> None:
         """Reset physics and measurements; expert.reset() then replans its script."""
         self.simulator.reset()
         self.max_lift[:] = self.starts[:, 2]
-        self._stable_since = None
+        self._stable_since = [None] * self.cubes
+        self._placed.fill(False)

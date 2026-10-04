@@ -5,7 +5,7 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
 from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
-from mujoco_lab.tasks import CubeStackTask
+from mujoco_lab.behaviors import CubeStackTask
 
 
 def _cube_positions(scene):

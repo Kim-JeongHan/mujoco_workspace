@@ -3,8 +3,8 @@
 from .collision import (
     BoundedCollisionChecker,
     CollisionChecker,
-    CubeStackCollisionChecker,
     EmptyCollisionChecker,
+    ManipulationCollisionChecker,
     MuJoCoCollisionChecker,
 )
 from .graph import Edge, Graph, Node
@@ -13,6 +13,7 @@ from .planners import (
     PRMPlanner,
     RRTConnectPlanner,
     RRTPlanner,
+    default_planning,
     planner_from_config,
 )
 from .sampling import (
@@ -43,7 +44,6 @@ __all__ = [
     "AStar",
     "BoundedCollisionChecker",
     "CollisionChecker",
-    "CubeStackCollisionChecker",
     "Edge",
     "EdgePath",
     "EmptyCollisionChecker",
@@ -53,6 +53,7 @@ __all__ = [
     "InformedRRTStar",
     "InformedSampler",
     "MuJoCoCollisionChecker",
+    "ManipulationCollisionChecker",
     "Node",
     "PRM",
     "PRMConfig",
@@ -74,4 +75,5 @@ __all__ = [
     "Sampler",
     "UniformSampler",
     "planner_from_config",
+    "default_planning",
 ]

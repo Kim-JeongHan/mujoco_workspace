@@ -1,6 +1,6 @@
 """Select a manipulator: uv run python examples/manipulator.py --robot panda."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 import tyro
@@ -14,9 +14,12 @@ from mujoco_lab import (
     create_environment,
 )
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import create_controller, demo_target_updater
-
-CONTROLLER_CHOICES = ("auto", "none", "position", "pd", "osc")
+from mujoco_lab.control import (
+    JointSpacePD,
+    OperationalSpaceControl,
+    create_controller,
+    demo_target_updater,
+)
 
 
 @dataclass
@@ -25,7 +28,6 @@ class Config:
 
     robot: Literal[ROBOT_NAMES]
     environment: Literal[ENVIRONMENT_NAMES] = "empty"
-    controller: Literal[CONTROLLER_CHOICES] = "auto"
     headless: bool = False
     steps: int = 1000
     dt: float = 0.002
@@ -38,28 +40,18 @@ def main() -> None:
     if config.steps < 0:
         logger.error("--steps must be zero or greater", exit_code=2)
 
-    try:
-        simulator = Simulator(
-            create_environment(config.environment),
-            robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
-            dt=config.dt,
-        )
-        robot = simulator.robots[config.robot]
-        if config.controller == "auto":
-            controller_name = "pd" if config.robot == "forte" else "none"
-        else:
-            controller_name = config.controller
-        robot.change_controller(
-            create_controller(
-                robot, replace(load_robot_config(robot.robot_type).controller, name=controller_name)
-            )
-        )
-        if config.robot == "forte" and config.controller in ("pd", "osc"):
-            simulator.target_updater = demo_target_updater(
-                simulator, {robot.name: config.controller}
-            )
-    except ValueError as error:
-        logger.error(str(error), exit_code=2)
+    robot_config = load_robot_config(config.robot)
+    simulator = Simulator(
+        create_environment(config.environment),
+        robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
+        dt=config.dt,
+    )
+    robot = simulator.robots[config.robot]
+    controller = create_controller(robot, robot_config.controller)
+    robot.change_controller(controller)
+    if isinstance(controller, (JointSpacePD, OperationalSpaceControl)):
+        controller_name = "pd" if isinstance(controller, JointSpacePD) else "osc"
+        simulator.target_updater = demo_target_updater(simulator, {robot.name: controller_name})
     data = simulator.data
     if config.headless:
         stats = simulator.run_steps(config.steps)[robot.name]
@@ -68,7 +60,7 @@ def main() -> None:
             f"environment = {config.environment}; qpos = {data.qpos}"
         )
         if robot.controller is not None:
-            unit = {"pd": "joint units", "position": "joint units", "osc": "m"}[controller_name]
+            unit = "m" if isinstance(robot.controller, OperationalSpaceControl) else "joint units"
             logger.info(stats.describe("tracking error", unit))
         return
 

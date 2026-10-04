@@ -12,6 +12,7 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.datasets.episode import Episode, load_episode, save_episode
 from mujoco_lab.learning.datasets.replay import (
@@ -22,7 +23,7 @@ from mujoco_lab.learning.datasets.replay import (
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.replay import EpisodeReplay
 from mujoco_lab.learning.rollout import collect_episode, collect_episodes
-from mujoco_lab.tasks import CubeStackTask, default_planning
+from mujoco_lab.planning import default_planning
 
 
 @pytest.fixture(scope="module")

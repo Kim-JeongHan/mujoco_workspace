@@ -1,6 +1,6 @@
 """View randomized cube placements: uv run python examples/randomized_cubes.py."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import tyro
 
@@ -29,26 +29,18 @@ def main() -> None:
     if config.steps < 0:
         logger.error("--steps must be zero or greater", exit_code=2)
 
-    try:
-        scene = create_cube_stack(config.cubes)
-        randomize_cube_positions(
-            scene,
-            xy_range=config.xy_range,
-            min_gap=config.min_gap,
-            seed=config.seed,
-        )
-        simulator = Simulator(
-            scene, robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))]
-        )
-        robot = simulator.robots["forte"]
-        robot.change_controller(
-            create_controller(
-                robot, replace(load_robot_config(robot.robot_type).controller, name="pd")
-            )
-        )
-        robot.gripper.set_target(0.0)
-    except ValueError as error:
-        logger.error(str(error), exit_code=2)
+    scene = create_cube_stack(config.cubes)
+    randomize_cube_positions(
+        scene,
+        xy_range=config.xy_range,
+        min_gap=config.min_gap,
+        seed=config.seed,
+    )
+    robot_config = load_robot_config("forte")
+    simulator = Simulator(scene, robots=[RobotSpec("forte", "forte", config=robot_config)])
+    robot = simulator.robots["forte"]
+    robot.change_controller(create_controller(robot, robot_config.controller))
+    robot.gripper.set_target(0.0)
 
     name = "randomized_cubes"
     if config.headless:

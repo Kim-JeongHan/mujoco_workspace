@@ -5,13 +5,13 @@ from .collision_checker import (
     CollisionChecker,
     EmptyCollisionChecker,
 )
-from .manipulation import CubeStackCollisionChecker
+from .manipulation import ManipulationCollisionChecker
 from .mujoco import MuJoCoCollisionChecker
 
 __all__ = [
     "BoundedCollisionChecker",
     "CollisionChecker",
-    "CubeStackCollisionChecker",
+    "ManipulationCollisionChecker",
     "EmptyCollisionChecker",
     "MuJoCoCollisionChecker",
 ]

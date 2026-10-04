@@ -8,11 +8,11 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackTask
+from mujoco_lab.behaviors.cube_stack import has_physical_grasp
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation.evaluator import evaluation_log_metrics, summarize
 from mujoco_lab.learning.evaluation.progress import CubeProgressTracker
-from mujoco_lab.tasks import CubeStackTask
-from mujoco_lab.tasks.cube_stack_motion import has_physical_grasp
 
 
 class FakeTask:

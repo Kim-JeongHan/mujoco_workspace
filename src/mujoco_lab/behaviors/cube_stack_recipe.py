@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mujoco_lab.assets import RobotName
+from mujoco_lab.assets.robot.robot import MotionLimits
 
 STAGE_ORDER = ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
 
@@ -21,9 +22,8 @@ class StageRecipe(BaseModel):
     name: str
     offset_xyz_m: tuple[float, float, float]
     gripper_target_m: float
-    min_duration_s: float = Field(gt=0)
-    arm_max_velocity: float | None = Field(default=None, gt=0)
-    arm_max_acceleration: float | None = Field(default=None, gt=0)
+    arm: MotionLimits = Field(default_factory=MotionLimits)
+    gripper: MotionLimits = Field(default_factory=MotionLimits)
     require_grasp: bool = False
     min_lift_height_m: float | None = Field(default=None, gt=0)
 
@@ -43,10 +43,8 @@ class CubeStackRecipe(BaseModel):
 
     euler_xyz_degrees: tuple[float, float, float] | None = None
     frame: Literal["grasp"]
-    arm_max_velocity: float = Field(gt=0)
-    arm_max_acceleration: float = Field(gt=0)
-    gripper_max_velocity: float = Field(gt=0)
-    gripper_max_acceleration: float = Field(gt=0)
+    arm: MotionLimits = Field(default_factory=MotionLimits)
+    gripper: MotionLimits = Field(default_factory=MotionLimits)
     arm_tolerance: float = Field(gt=0)
     gripper_tolerance: float = Field(gt=0)
     stages: tuple[StageRecipe, ...]
@@ -60,5 +58,5 @@ class CubeStackRecipe(BaseModel):
 
 def load_recipe(robot_type: RobotName) -> CubeStackRecipe:
     """Read and validate the bundled recipe for one supported robot."""
-    path = files("mujoco_lab.tasks").joinpath("recipes", "cube_stack", f"{robot_type}.yaml")
+    path = files("mujoco_lab.behaviors").joinpath("recipes", "cube_stack", f"{robot_type}.yaml")
     return CubeStackRecipe.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))

@@ -6,6 +6,7 @@ import torch
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
@@ -13,7 +14,6 @@ from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv, cube_stack_observation_layout
 from mujoco_lab.learning.trainers.train_bc import run_training
-from mujoco_lab.tasks import CubeStackTask
 
 
 def _rotation_indices(cubes: int) -> list[int]:

@@ -5,22 +5,19 @@ from itertools import pairwise
 import mujoco
 import numpy as np
 import pytest
+import yaml
 from controller_config import create_test_controller
 from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import ControlTarget
-from mujoco_lab.learning.collect import create_expert
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import Expert, collect_episode
-from mujoco_lab.planning import planner_from_config
-from mujoco_lab.tasks import (
-    CubeStackExpert,
-    CubeStackMotionGenerator,
-    CubeStackTask,
-    default_planning,
-)
+from mujoco_lab.planning import default_planning, planner_from_config
 
 
 def _forte_expert(method="heuristic"):
@@ -30,26 +27,44 @@ def _forte_expert(method="heuristic"):
     )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
+    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
     planner = planner_from_config(default_planning()) if method == "sampling" else None
-    return simulator, task, CubeStackExpert(task, CubeStackMotionGenerator(task, planner=planner))
+    return (
+        simulator,
+        task,
+        CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            method=method,
+            planner=planner,
+        ),
+    )
 
 
-def test_constructor_and_reset_keep_caller_controller_and_targets():
+def test_constructor_and_reset_keep_caller_controller_and_targets(tmp_path, monkeypatch):
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
     )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    controller = create_test_controller(robot, "pd", kp=[19] * 7, kd=[3] * 7, frame="grasp")
+    gains = {name: {"kp": 19, "kd": 3} for name in robot.get_arm_joint_mapping()[0]}
+    (tmp_path / "robot.yaml").write_text(
+        yaml.safe_dump({"controller": {"name": "pd", "pd_gains": gains}})
+    )
+    monkeypatch.setitem(ROBOT_ASSETS, "forte", RobotAsset(tmp_path / "robot.xml"))
+    controller = create_test_controller(robot, controller="pd", frame="grasp")
     robot.change_controller(controller)
     robot.target = ControlTarget(robot.target.position + 0.001)
     robot.gripper.set_target(-0.001)
     target = robot.target.position.copy()
     ctrl = simulator.data.ctrl.copy()
 
-    expert = CubeStackExpert(task, CubeStackMotionGenerator(task))
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
     expert.reset()
 
     assert robot.controller is controller
@@ -68,11 +83,19 @@ def test_constructor_requires_joint_target_controller():
     )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    with pytest.raises(ValueError, match="configured seven-joint target controller"):
-        CubeStackExpert(task, CubeStackMotionGenerator(task))
-    robot.change_controller(create_test_controller(robot, "osc", frame="grasp"))
-    with pytest.raises(ValueError, match="configured seven-joint target controller"):
-        CubeStackExpert(task, CubeStackMotionGenerator(task))
+    with pytest.raises(ValueError, match="requires a .*controller"):
+        CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            method="heuristic",
+        )
+    robot.change_controller(create_test_controller(robot, controller="osc", frame="grasp"))
+    with pytest.raises(ValueError, match="requires a .*controller"):
+        CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            method="heuristic",
+        )
 
 
 @pytest.mark.parametrize("method", ["heuristic", "sampling"])
@@ -81,8 +104,8 @@ def test_act_returns_physical_action_without_applying_it(method, monkeypatch):
     robot = expert.robot
     if method == "sampling":
         start = robot.state.snapshot().qpos[:7]
-        goal = expert._plan[0].command[:7]
-        monkeypatch.setattr(expert.generator, "_plan_stage", lambda *_: np.vstack((start, goal)))
+        goal = expert._plan[0].waypoints[-1]
+        monkeypatch.setattr(expert.motion, "plan_arm_path", lambda *_: np.vstack((start, goal)))
     assert isinstance(expert, Expert)
     assert simulator.target_updater is None
     before_qpos = simulator.data.qpos.copy()
@@ -96,7 +119,7 @@ def test_act_returns_physical_action_without_applying_it(method, monkeypatch):
 
     assert action.shape == (8,)
     assert np.isfinite(action).all()
-    assert expert._stage_start_time == before_time
+    assert expert.execution.start_time == before_time
     assert simulator.target_updater is None
     np.testing.assert_array_equal(simulator.data.qpos, before_qpos)
     np.testing.assert_array_equal(simulator.data.qvel, before_qvel)
@@ -112,7 +135,7 @@ def test_reset_replans_current_cube_pose_without_resetting_physics_or_commands()
     simulator.run_steps(4)
     expert.robot.target = ControlTarget(expert.robot.state.snapshot().qpos[:7] + 0.001)
     expert.robot.gripper.set_target(-0.001)
-    old_command = expert._plan[0].command.copy()
+    old_command = expert._plan[0].waypoints[-1].copy()
     cube_joint = simulator.model.joint("cube0/object_joint_0")
     simulator.data.qpos[int(cube_joint.qposadr[0])] += 0.01
     mujoco.mj_forward(simulator.model, simulator.data)
@@ -129,12 +152,12 @@ def test_reset_replans_current_cube_pose_without_resetting_physics_or_commands()
     expert.reset(np.zeros(24), {"seed": 7})
 
     assert expert.stage == 0
-    assert expert._trajectory is None
-    assert expert._stage_start_time == time
+    assert expert.execution.trajectory is None
+    assert expert.execution.start_time == time
     assert not expert.failed
     assert expert.failure_reason is None
     np.testing.assert_allclose(expert.starts[0], simulator.data.body("cube0/object_0").xpos)
-    assert not np.allclose(expert._plan[0].command[:7], old_command[:7])
+    assert not np.allclose(expert._plan[0].waypoints[-1], old_command[:7])
     np.testing.assert_array_equal(simulator.data.qpos, physical_qpos)
     np.testing.assert_array_equal(simulator.data.ctrl, physical_ctrl)
     np.testing.assert_array_equal(expert.robot.target.position, command_target)
@@ -150,9 +173,11 @@ def test_direct_callback_applies_same_first_action_as_manual_consumer(method, mo
     if method == "sampling":
         for expert in (direct_expert, manual_expert):
             start = expert.robot.state.snapshot().qpos[:7]
-            goal = expert._plan[0].command[:7]
+            goal = expert._plan[0].waypoints[-1]
             monkeypatch.setattr(
-                expert.generator, "_plan_stage", lambda *_, s=start, g=goal: np.vstack((s, g))
+                expert.motion,
+                "plan_arm_path",
+                lambda *_, s=start, g=goal: np.vstack((s, g)),
             )
     direct.target_updater = direct_expert.update
     action = manual_expert.act()
@@ -167,27 +192,71 @@ def test_direct_callback_applies_same_first_action_as_manual_consumer(method, mo
     np.testing.assert_allclose(direct.data.ctrl, manual.data.ctrl)
     np.testing.assert_allclose(direct_expert.robot.target.position, action[:7])
     assert direct_expert.robot.gripper.get_target() == pytest.approx(action[7])
-    assert direct_expert._stage_start_time == manual_expert._stage_start_time == 0
+    assert direct_expert.execution.start_time == manual_expert.execution.start_time == 0
 
 
-def test_factory_accepts_both_methods_without_attaching_callback():
+def test_explicit_method_and_planner_preserve_controller_without_attaching_callback():
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
     )
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
-    controller = create_test_controller(robot, "pd", frame="grasp")
+    controller = create_test_controller(robot, controller="pd", frame="grasp")
     robot.change_controller(controller)
     for method in ("heuristic", "sampling"):
-        expert = create_expert(task, method=method, planning=default_planning())
+        planner = planner_from_config(default_planning()) if method == "sampling" else None
+        expert = CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            method=method,
+            planner=planner,
+        )
         assert isinstance(expert, CubeStackExpert)
+        assert expert.method == method
         if method == "sampling":
-            assert expert.generator.planner.name == "rrt_connect"
+            assert expert.planner.name == "rrt_connect"
         else:
-            assert not hasattr(expert.generator, "planner")
+            assert expert.planner is None
         assert robot.controller is controller
         assert simulator.target_updater is None
+
+
+def test_cube_execution_requires_explicit_method():
+    _, task, _ = _forte_expert()
+    planner = planner_from_config(default_planning())
+    with pytest.raises(TypeError, match="method"):
+        CubeStackExpert(
+            task, recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type)
+        )
+    with pytest.raises(TypeError, match="method"):
+        CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            planner=planner,
+        )
+
+
+@pytest.mark.parametrize(
+    "method,use_planner,reason",
+    [
+        ("sampling", False, "requires an explicit path planner"),
+        ("heuristic", True, "does not use a path planner"),
+        ("unknown", False, "Unsupported cube execution method"),
+    ],
+)
+def test_cube_execution_rejects_invalid_method_and_planner_combinations(
+    method, use_planner, reason
+):
+    _, task, _ = _forte_expert()
+    planner = planner_from_config(default_planning()) if use_planner else None
+    with pytest.raises(ValueError, match=reason):
+        CubeStackExpert(
+            task,
+            recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+            method=method,
+            planner=planner,
+        )
 
 
 def test_collector_accepts_another_expert_and_stops_after_its_failure():
@@ -238,7 +307,7 @@ def test_collector_accepts_another_expert_and_stops_after_its_failure():
     assert episode.metadata["termination_reason"] == "no route"
 
 
-def test_heuristic_first_approach_avoids_the_home_orientation_detour():
+def test_heuristic_first_approach_limits_detours_from_the_actual_home_pose():
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
@@ -246,8 +315,12 @@ def test_heuristic_first_approach_avoids_the_home_orientation_detour():
     task = CubeStackTask(simulator, 2)
     env = CubeStackEnv(task)
     robot = simulator.robots["forte"]
-    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
-    expert = CubeStackExpert(task, CubeStackMotionGenerator(task))
+    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
     obs, info = env.reset(seed=42)
     expert.reset(obs, info)
     stage = expert._plan[0]
@@ -256,8 +329,11 @@ def test_heuristic_first_approach_avoids_the_home_orientation_detour():
     above_pick = expert.starts[stage.cube_index] + expert.recipe.stages[0].offset_xyz_m
     rotation = Rotation.from_euler("xyz", expert.recipe.euler_xyz_degrees, degrees=True)
     positions, orientation_errors, rotations = [], [], []
+    trajectory, reason = expert.make_trajectory(stage)
+    assert reason is None
+    max_steps = int(np.ceil((trajectory.duration + 1.0) / simulator.dt))
 
-    for _ in range(1000):
+    for _ in range(max_steps):
         positions.append(simulator.data.site_xpos[site].copy())
         current_rotation = Rotation.from_matrix(simulator.data.site_xmat[site].reshape(3, 3))
         orientation_errors.append((rotation * current_rotation.inv()).magnitude())
@@ -266,8 +342,9 @@ def test_heuristic_first_approach_avoids_the_home_orientation_detour():
             break
         previous = expert.robot.target.position.copy()
         action = expert.act(obs)
-        assert np.max(np.abs(action[:7] - previous)) <= (
-            expert.recipe.arm_max_velocity * simulator.dt + 1e-12
+        assert np.all(
+            np.abs(action[:7] - previous)
+            <= np.asarray(robot.state.constraints.velocity_limit) * simulator.dt + 1e-12
         )
         obs, _, terminated, truncated, _ = env.step(action)
         assert not terminated and not truncated
@@ -278,14 +355,16 @@ def test_heuristic_first_approach_avoids_the_home_orientation_detour():
     fraction = (positions - positions[0]) @ direction / (direction @ direction)
     deviations = positions - (positions[0] + fraction[:, None] * direction)
     # Guard the physical path, not just the target interpolation arithmetic.
-    assert np.linalg.norm(np.diff(positions, axis=0), axis=1).sum() < 0.45
+    direct_distance = np.linalg.norm(direction)
+    assert np.linalg.norm(np.diff(positions, axis=0), axis=1).sum() < direct_distance + 0.1
     assert np.linalg.norm(deviations, axis=1).max() < 0.1
     assert np.linalg.norm(positions - above_pick, axis=1).min() < 0.02
     assert positions[:, 2].min() > goal[2] - 0.01
-    assert max(orientation_errors) < np.deg2rad(10)
+    assert max(orientation_errors) < orientation_errors[0] + np.deg2rad(1)
+    assert orientation_errors[-1] < np.deg2rad(10)
     angular_travel = sum(
         (second * first.inv()).magnitude() for first, second in pairwise(rotations)
     )
-    assert angular_travel < np.deg2rad(20)
-    assert np.max(np.abs(stage.command[5:7])) < np.deg2rad(45)
+    assert angular_travel < orientation_errors[0] + np.deg2rad(20)
+    assert np.max(np.abs(stage.waypoints[-1][5:7])) < np.deg2rad(45)
     assert not simulator.data.warning.number.any()

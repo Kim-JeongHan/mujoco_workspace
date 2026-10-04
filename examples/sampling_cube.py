@@ -1,6 +1,6 @@
 """Stack cubes with a sampling planner: uv run python examples/sampling_cube.py --headless."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -9,6 +9,8 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
 from mujoco_lab.planning import (
     PRM,
@@ -26,7 +28,6 @@ from mujoco_lab.planning import (
     RRTStarConfig,
 )
 from mujoco_lab.rendering.camera import create_free_camera
-from mujoco_lab.tasks import CubeStackExpert, CubeStackTask, SamplingCubeStackMotionGenerator
 
 
 @dataclass
@@ -55,11 +56,12 @@ class Planner:
         self.name = name.replace("-", "_")
         self.seed = 7
 
-    def plan(self, start, goal, bounds, collision_checker, *, seed):
         choices = {
             "rrt-connect": (
                 RRTConnect,
-                RRTConnectConfig(max_iterations=500, step_size=0.2, goal_tolerance=0.04, seed=seed),
+                RRTConnectConfig(
+                    max_iterations=500, step_size=0.2, goal_tolerance=0.04, seed=self.seed
+                ),
             ),
             "rrt": (
                 RRT,
@@ -68,7 +70,7 @@ class Planner:
                     step_size=0.2,
                     goal_tolerance=0.04,
                     goal_bias=0.8,
-                    seed=seed,
+                    seed=self.seed,
                 ),
             ),
             "prm": (
@@ -79,7 +81,7 @@ class Planner:
                     radius=2.0,
                     sampler=GoalBiasedSampler,
                     goal_bias=0.3,
-                    seed=seed,
+                    seed=self.seed,
                 ),
             ),
             "rrt-star": (
@@ -91,7 +93,7 @@ class Planner:
                     goal_bias=0.1,
                     radius_gain=1.0,
                     return_first_solution=True,
-                    seed=seed,
+                    seed=self.seed,
                 ),
             ),
             "prm-star": (
@@ -103,7 +105,7 @@ class Planner:
                     goal_tolerance=0.15,
                     goal_bias=0.05,
                     radius_gain=5.0,
-                    seed=seed,
+                    seed=self.seed,
                 ),
             ),
             "rrg": (
@@ -114,12 +116,15 @@ class Planner:
                     step_size=0.15,
                     goal_tolerance=0.005,
                     goal_bias=0.1,
-                    seed=seed,
+                    seed=self.seed,
                 ),
             ),
         }
-        planner_type, planner_config = choices[self.name.replace("_", "-")]
-        nodes = planner_type(start, goal, bounds, collision_checker, planner_config).plan()
+        self.planner_type, self.config = choices[self.name.replace("_", "-")]
+
+    def plan(self, start, goal, bounds, collision_checker, *, seed):
+        config = self.config.model_copy(update={"seed": seed})
+        nodes = self.planner_type(start, goal, bounds, collision_checker, config).plan()
         if nodes is None:
             return None
         path = np.asarray([node.state for node in nodes], dtype=float)
@@ -133,85 +138,75 @@ class Planner:
 
 def main() -> None:
     config = tyro.cli(Config, description="Stack cubes with a sampling planner")
-    manager = SimulatorManager.get_instance()
+    manager = SimulatorManager()
     if config.steps < 0:
         manager.logger.error("--steps must be zero or greater", exit_code=2)
 
+    robot_config = load_robot_config(config.robot)
     simulator = Simulator(
         create_cube_stack(config.cubes, environment=config.environment),
-        robots=[RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot))],
+        robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
     )
     robot = simulator.robots[config.robot]
-    if config.robot == "forte":
-        controller = create_controller(
-            robot, replace(load_robot_config(robot.robot_type).controller, name="pd", frame="grasp")
-        )
-    else:
-        controller = create_controller(
-            robot,
-            replace(
-                load_robot_config(robot.robot_type).controller,
-                name="position",
-                gravity_compensation=True,
-                frame="grasp",
-            ),
-        )
+    controller = create_controller(robot, robot_config.controller)
     robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
     planner = Planner(config.planner)
-    expert = CubeStackExpert(task, SamplingCubeStackMotionGenerator(task, planner=planner))
+    recipe = load_cube_recipe(config.robot)
+    expert = CubeStackExpert(
+        task,
+        recipe=recipe,
+        method="sampling",
+        planner=planner,
+    )
     simulator.target_updater = expert.update
 
     name = "sampling_cube"
     manager.add_simulator(name, simulator)
-    try:
-        if not config.headless or config.video is not None:
-            center = (task.starts.mean(axis=0) + task.goals.mean(axis=0)) / 2
-            center[2] += 0.12
-            camera = create_free_camera(
-                lookat=center,
-                azimuth=config.camera_azimuth,
-                elevation=config.camera_elevation,
-                distance=config.camera_distance,
-            )
-        if config.headless:
-            if config.video is None:
-                simulator.run_steps(config.steps)
-            else:
-                manager.save_video(
-                    name,
-                    config.steps,
-                    config.video,
-                    camera=camera,
-                    fps=config.fps,
-                    width=config.video_width,
-                    height=config.video_height,
-                )
-        elif config.video is None:
+    if config.headless and config.video is None:
+        simulator.run_steps(config.steps)
+    else:
+        center = (task.starts.mean(axis=0) + task.goals.mean(axis=0)) / 2
+        center[2] += 0.12
+        camera = create_free_camera(
+            lookat=center,
+            azimuth=config.camera_azimuth,
+            elevation=config.camera_elevation,
+            distance=config.camera_distance,
+        )
+        if config.video is None:
             manager.show(name, camera=camera)
+        elif config.headless:
+            manager.save_video(
+                name,
+                config.steps,
+                config.video,
+                camera=camera,
+                fps=config.fps,
+                width=config.video_width,
+                height=config.video_height,
+            )
         else:
             manager.show(
                 name,
                 camera=camera,
                 video=config.video,
+                steps=config.steps,
                 fps=config.fps,
                 width=config.video_width,
                 height=config.video_height,
-                steps=config.steps,
             )
 
-        status = task.status()
-        manager.logger.info(
-            f"planner={planner.name} robot={config.robot} simulated={simulator.data.time:.3f}s "
-            f"released_stable_stack={status.released_stable_stack} "
-            f"support_contacts={status.support_contacts} "
-            f"goal_distances_m={status.goal_distances.round(4).tolist()} "
-            f"stage={expert.get_stage_name()} failure={expert.failure_reason}"
-        )
-        if config.headless and not status.released_stable_stack:
-            raise SystemExit(1)
-    finally:
-        manager.remove_simulator(name)
+    status = task.status()
+    manager.logger.info(
+        f"planner={planner.name} robot={config.robot} simulated={simulator.data.time:.3f}s "
+        f"released_stable_stack={status.released_stable_stack} "
+        f"support_contacts={status.support_contacts} "
+        f"goal_distances_m={status.goal_distances.round(4).tolist()} "
+        f"stage={expert.get_stage_name()} failure={expert.failure_reason}"
+    )
+    if config.headless and not status.released_stable_stack:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

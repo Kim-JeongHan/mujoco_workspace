@@ -11,13 +11,13 @@ from typing import Any
 import numpy as np
 import torch
 
+from mujoco_lab.behaviors.cube_stack import CubeStackTask
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation.progress import CubeProgressTracker
 from mujoco_lab.learning.policies.base import BasePolicy
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
-from mujoco_lab.tasks.cube_stack import CubeStackTask
 
 
 def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
