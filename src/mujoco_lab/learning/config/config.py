@@ -85,7 +85,7 @@ class TrainConfig:
 
     @property
     def physics_steps_per_action(self) -> int:
-        return int(self.simulation_hz / self.action_execution_hz)
+        return round(self.simulation_hz / self.action_execution_hz)
 
     def validate(self) -> None:
         """Check training and enabled evaluation settings before loading data."""

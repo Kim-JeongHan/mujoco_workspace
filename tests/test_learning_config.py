@@ -50,6 +50,13 @@ def test_disabled_training_evaluation_ignores_unused_settings():
     ).validate()
 
 
+@pytest.mark.parametrize("simulation_hz", [500.0, 499.99999999, 500.00000001])
+def test_training_cadence_rounds_accepted_float_ratios(simulation_hz):
+    config = TrainConfig(simulation_hz=simulation_hz)
+    config.validate()
+    assert config.physics_steps_per_action == 5
+
+
 @pytest.mark.parametrize(
     "ratios",
     [(-0.1, 0), (float("nan"), 0), (0.6, 0.4)],
