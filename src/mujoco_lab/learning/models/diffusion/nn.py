@@ -338,8 +338,8 @@ class TemporalValueNet(nn.Module):
             x = F.pad(x, (0, pad))
         return x, pad
 
-    def forward(self, x: torch.Tensor, condition: object = None) -> torch.Tensor:
-        # x: [batch, horizon, dim]; condition accepted but ignored (use inpainting instead).
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [batch, horizon, dim].
         batch = x.shape[0]
         x = x.permute(0, 2, 1)  # [batch, dim, horizon]
 

@@ -30,8 +30,6 @@ class ValueModel(nn.Module):
         horizon: Planning horizon (number of timesteps per trajectory).
         dim: Base hidden-channel dimension (default 32).
         dim_mults: Channel multipliers at each U-Net level.
-        **_: Accepts and silently ignores legacy keyword arguments
-            (``n_hidden``, ``n_layers``, ``condition_dim``) to ease migration.
     """
 
     def __init__(
@@ -39,9 +37,8 @@ class ValueModel(nn.Module):
         *,
         state_dim: int,
         horizon: int,
-        dim: int = (1, 2, 4, 8),
-        dim_mults: tuple[int, ...] = 32,
-        **_: object,
+        dim: int = 32,
+        dim_mults: tuple[int, ...] = (1, 2, 4, 8),
     ) -> None:
         super().__init__()
         self.state_dim = int(state_dim)
@@ -66,13 +63,11 @@ class ValueModel(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        condition: object = None,  # accepted but ignored
     ) -> torch.Tensor:
         """Estimate the value of a trajectory.
 
         Args:
             x: Trajectory tensor ``[B, H, state_dim]``.
-            condition: Accepted for API compatibility; ignored.
 
         Returns:
             Scalar value per trajectory ``[B, 1]``.

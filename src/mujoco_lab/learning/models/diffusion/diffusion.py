@@ -25,9 +25,6 @@ class DiffusionModel(nn.Module):
         n_diffusion_steps: Total number of denoising steps.
         dim: Base hidden-channel dimension for the U-Net (default 32).
         dim_mults: Channel multipliers at each U-Net level (default (1, 2, 4, 8)).
-        **_: Accepts and silently ignores legacy keyword arguments
-            (``n_hidden``, ``n_layers``, ``condition_dim``, ``backbone``) to
-            ease migration from the old MLP-based API.
     """
 
     def __init__(
@@ -38,7 +35,6 @@ class DiffusionModel(nn.Module):
         n_diffusion_steps: int = 100,
         dim: int = 32,
         dim_mults: tuple[int, ...] = (1, 2, 4, 8),
-        **_: object,
     ) -> None:
         super().__init__()
         self.state_dim = int(state_dim)
@@ -66,16 +62,12 @@ class DiffusionModel(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
-        condition: object = None,  # accepted but ignored; use inpainting instead
     ) -> torch.Tensor:
         """Predict noise ε for a noisy trajectory at diffusion step t.
 
         Args:
             x: Noisy trajectory ``[B, H, state_dim]``.
             t: Diffusion timesteps ``[B]`` (integer).
-            condition: Accepted for API compatibility; ignored.
-                       Use inpainting in the sampling loop to condition on
-                       observed states.
 
         Returns:
             Predicted noise ``[B, H, state_dim]``.
