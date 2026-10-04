@@ -24,6 +24,10 @@ mujoco-lab = "mujoco_lab.cli:main"
 
 [project.optional-dependencies]
 learning = ["gymnasium", "torch==2.14.0", "wandb[media]"]
+viewer = [
+    "trimesh>=4,<6",
+    "viser>=1.0,<2",
+]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu130", extra = "learning" }]

@@ -9,7 +9,14 @@ from dacite.exceptions import DaciteError
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.assets.robot.robot import ControllerConfig, FortePDGain, GripperConfig, RobotConfig
+from mujoco_lab.assets.robot.forte_coordinates import ZERO_LEGACY_RADIANS
+from mujoco_lab.assets.robot.robot import (
+    ControllerConfig,
+    FortePDGain,
+    GripperConfig,
+    PoseConfig,
+    RobotConfig,
+)
 from mujoco_lab.behaviors.book import create_book_controller
 from mujoco_lab.control import JointSpacePD, PositionController, create_controller
 
@@ -45,9 +52,10 @@ def test_default_controller_matches_robot_actuators(robot_type, kind):
     bounded = np.isfinite(model_limits).all(axis=1)
     np.testing.assert_allclose(configured_limits[bounded], model_limits[bounded], atol=1e-12)
     if not bounded.all():
-        np.testing.assert_allclose(
-            configured_limits[~bounded], np.tile([-2 * np.pi, 2 * np.pi], ((~bounded).sum(), 1))
-        )
+        expected = np.tile([-2 * np.pi, 2 * np.pi], ((~bounded).sum(), 1))
+        if robot_type == "forte":
+            expected -= ZERO_LEGACY_RADIANS[~bounded, None]
+        np.testing.assert_allclose(configured_limits[~bounded], expected)
     assert isinstance(config.gripper, GripperConfig)
     assert robot.gripper.actuator_id == sim.model.actuator("arm/" + config.gripper.actuator).id
     assert config.gripper.velocity_limit == 0.2
@@ -120,6 +128,34 @@ def test_yaml_schema_errors_propagate_from_classmethod(tmp_path, config):
         RobotConfig.load(path)
 
 
+def test_yaml_position_limits_use_degrees_without_changing_motion_limits(tmp_path):
+    path = tmp_path / "robot.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "controller": {"name": "none"},
+                "constraints": {
+                    "joint_names": ["joint1", "joint2"],
+                    "position_limit": [[-180, 90], [-45, 0]],
+                    "velocity_limit": [1.0, 2.0],
+                    "acceleration_limit": [3.0, 4.0],
+                },
+            }
+        )
+    )
+    for _ in range(2):
+        config = RobotConfig.load(path)
+        np.testing.assert_allclose(
+            config.constraints.position_limit, [[-np.pi, np.pi / 2], [-np.pi / 4, 0]]
+        )
+        assert config.constraints.velocity_limit == [1.0, 2.0]
+        assert config.constraints.acceleration_limit == [3.0, 4.0]
+    assert yaml.safe_load(path.read_text())["constraints"]["position_limit"] == [
+        [-180, 90],
+        [-45, 0],
+    ]
+
+
 def test_update_replaces_asset_names_without_changing_settings():
     config = load_robot_config("forte")
     controller, constraints, gripper = config.controller, config.constraints, config.gripper
@@ -150,6 +186,24 @@ def test_update_replaces_asset_names_without_changing_settings():
     assert config.controller is controller
     assert config.constraints is constraints
     assert config.gripper is gripper
+
+
+@pytest.mark.parametrize("with_gripper", [False, True])
+def test_yaml_pose_preserves_gripper_position_and_converts_arm_angles(tmp_path, with_gripper):
+    default = [-90, 90]
+    settings = {"controller": {"name": "none"}, "pose": {"default": default}}
+    if with_gripper:
+        default.append(-0.02)
+        settings["gripper"] = {"actuator": "grip_drive"}
+    path = tmp_path / "robot.yaml"
+    path.write_text(yaml.safe_dump(settings))
+    config = RobotConfig.load(path)
+    assert isinstance(config.pose, PoseConfig)
+    expected = [-np.pi / 2, np.pi / 2]
+    if with_gripper:
+        expected.append(-0.02)
+    np.testing.assert_allclose(config.pose.default, expected)
+    assert yaml.safe_load(path.read_text())["pose"]["default"] == default
 
 
 def test_shared_config_gets_independent_asset_metadata(tmp_path, monkeypatch):

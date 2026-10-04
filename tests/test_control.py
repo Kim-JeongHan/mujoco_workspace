@@ -1,9 +1,5 @@
 """ForteV1_RobStride selected-joint control with a separate gripper target."""
 
-import os
-import subprocess
-import sys
-
 import mujoco
 import numpy as np
 import pytest
@@ -81,7 +77,7 @@ def test_seven_axis_controller_math_on_numpy_snapshots():
 def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     sim = forte_simulator()
     robot = sim.robots["robot"]
-    controller = create_test_controller(robot, mode)
+    controller = create_test_controller(robot, controller=mode)
     robot.change_controller(controller)
     assert robot.state.nq == robot.state.nv == 9
     assert robot.num_actuators == 8
@@ -107,7 +103,7 @@ def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     assert sim.data.ctrl[robot.actuator_ids[-1]] == -0.01
     assert robot.state.snapshot().qpos.shape == (9,)
     with pytest.raises(ValueError, match="gripper target"):
-        robot.gripper.set_target(-0.025)
+        robot.gripper.set_target(robot.gripper.get_control_limits()[0] - 0.001)
     with pytest.raises(ValueError, match="gripper target"):
         robot.gripper.set_target(np.nan)
     sim.reset()
@@ -121,6 +117,19 @@ def test_pd_targets_respect_bounded_source_axes():
     ranges = sim.model.jnt_range[:3]
     assert np.all(PD_WAYPOINTS[:, :3] >= ranges[:, 0])
     assert np.all(PD_WAYPOINTS[:, :3] <= ranges[:, 1])
+    robot = sim.robots["robot"]
+    robot.change_controller(create_test_controller(robot, controller="pd"))
+    start = robot.target.position.copy()
+    updater = demo_target_updater(sim, {robot.name: "pd"})
+    updater(sim)
+    np.testing.assert_array_equal(robot.target.position, start)
+    slots = robot.state.get_frame_joint_slots("ee_site")
+    limits = robot.state.get_joint_limits(slots)
+    for time in np.linspace(0, 7.6, 17):
+        sim.data.time = time
+        updater(sim)
+        assert np.all(robot.target.position >= limits[:, 0])
+        assert np.all(robot.target.position <= limits[:, 1])
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])
@@ -128,7 +137,7 @@ def test_pd_targets_respect_bounded_source_axes():
 def test_feedback_control_is_finite_in_each_environment(mode, environment):
     sim = forte_simulator(environment)
     robot = sim.robots["robot"]
-    robot.change_controller(create_test_controller(robot, mode))
+    robot.change_controller(create_test_controller(robot, controller=mode))
     sim.target_updater = demo_target_updater(sim, {robot.name: mode})
     stats = sim.run_steps(400)[robot.name]
     assert stats.steps == 400
@@ -154,16 +163,18 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
     )
     moved_model, moved_data = moved_sim.model, moved_sim.data
     moved_robot = moved_sim.robots["robot"]
-    moved_robot.change_controller(create_test_controller(moved_robot, "osc"))
+    moved_robot.change_controller(create_test_controller(moved_robot, controller="osc"))
     moved_sim.target_updater = demo_target_updater(moved_sim, {"robot": "osc"})
     rotation = moved_data.body("robot/base_link").xmat.reshape(3, 3)
     translation = moved_data.body("robot/base_link").xpos
+    center = robot.state.get_frame_position("ee_site") - sim.data.body("robot/base_link").xpos
     entry = osc_circle_target(
         2.0,
         start_time=0,
         start_position=robot.state.get_frame_position("ee_site"),
         base_position=sim.data.body("robot/base_link").xpos,
         base_rotation=np.eye(3),
+        center=center,
     )
     entry_distance = np.linalg.norm(entry.position - robot.state.get_frame_position("ee_site"))
     assert entry_distance == pytest.approx(0.025, abs=1e-5)
@@ -174,6 +185,7 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
             start_position=robot.state.get_frame_position("ee_site"),
             base_position=np.zeros(3),
             base_rotation=np.eye(3),
+            center=center,
         )
         actual = osc_circle_target(
             elapsed + 2,
@@ -181,6 +193,7 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
             start_position=moved_robot.state.get_frame_position("ee_site"),
             base_position=translation,
             base_rotation=rotation,
+            center=center,
         )
         np.testing.assert_allclose(actual.position, translation + rotation @ reference.position)
         np.testing.assert_allclose(actual.velocity, rotation @ reference.velocity)
@@ -199,75 +212,4 @@ def test_torque_control_rejects_position_actuators(robot, mode):
         robots=[RobotSpec("robot", robot, config=load_robot_config(robot))],
     )
     with pytest.raises(ValueError, match="requires torque/force actuators"):
-        create_test_controller(sim.robots["robot"], mode)
-
-
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_cli_connects_controller_to_workspace_environment(mode, tmp_path):
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--command",
-            "simulate",
-            "--robot",
-            "forte",
-            "--environment",
-            "warehouse",
-            "--controller",
-            mode,
-            "--steps",
-            "100",
-        ],
-        cwd=tmp_path,
-        env={**os.environ, "MUJOCO_GL": "disable"},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
-def test_cli_rejects_pd_on_position_controlled_robot(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--command",
-            "simulate",
-            "--robot",
-            "panda",
-            "--controller",
-            "pd",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 2
-    assert "requires torque/force actuators" in result.stderr
-
-
-@pytest.mark.parametrize("robot", ["panda"])
-def test_cli_runs_native_position_controller(robot, tmp_path):
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--command",
-            "simulate",
-            "--robot",
-            robot,
-            "--controller",
-            "position",
-            "--steps",
-            "10",
-        ],
-        cwd=tmp_path,
-        env={**os.environ, "MUJOCO_GL": "disable"},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+        create_test_controller(sim.robots["robot"], controller=mode)

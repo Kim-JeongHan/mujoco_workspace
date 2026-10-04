@@ -92,7 +92,7 @@ def test_robot_home_pose_and_position_servos(name, nv, nu, environment):
 
 @pytest.mark.parametrize("name", ["panda"])
 def test_mjcf_joint_limits_and_link_masses_match_urdf(name):
-    model = Simulator(mujoco.MjSpec.from_file(str(ASSETS / name / "scene.xml"))).model
+    model = Simulator(load_asset(name)).model
     urdf = ET.parse(ASSETS / name / "robot.urdf").getroot()
     for link in urdf.findall("link"):
         mass = link.find("inertial/mass")
@@ -115,7 +115,7 @@ def rotation(axis, angle):
 
 @pytest.mark.parametrize("name", ["panda"])
 def test_forward_kinematics_matches_urdf(name):
-    simulator = Simulator(mujoco.MjSpec.from_file(str(ASSETS / name / "scene.xml")))
+    simulator = Simulator(load_asset(name))
     data = simulator.data
     urdf = ET.parse(ASSETS / name / "robot.urdf").getroot()
     joints = urdf.findall("joint")
@@ -180,11 +180,10 @@ def test_panda_fingers_remain_coupled_when_commanded():
 @pytest.mark.parametrize("name", ["panda", "forte"])
 def test_robot_files_resolve_inside_the_asset_directory(name):
     directory = ASSETS / name
-    for filename in ["scene.xml", "robot.xml"]:
-        for element in ET.parse(directory / filename).iter():
-            reference = element.get("file")
-            if reference:
-                assert not Path(reference).is_absolute()
-                target = (directory / reference).resolve()
-                assert target.is_relative_to(directory.resolve())
-                assert target.is_file()
+    for element in ET.parse(directory / "robot.xml").iter():
+        reference = element.get("file")
+        if reference:
+            assert not Path(reference).is_absolute()
+            target = (directory / reference).resolve()
+            assert target.is_relative_to(directory.resolve())
+            assert target.is_file()

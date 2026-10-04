@@ -1,0 +1,93 @@
+{
+  "policy": "Retain structural collision mesh visuals and named exterior parts only.",
+  "source_visual_count": 830,
+  "retained_visual_count": 73,
+  "source_mesh_count": 270,
+  "retained_mesh_count": 58,
+  "visual_meshes_by_body": {
+    "base_link": [
+      "A1_adapter",
+      "EL05_merged",
+      "act_drum",
+      "bottom_base"
+    ],
+    "main_drum": [
+      "Cover_3DPrinting",
+      "LeftColumn",
+      "Part_41",
+      "Part_42",
+      "RS60_merged",
+      "RightColumn",
+      "ShoulderCable",
+      "ShoulderCable1",
+      "ShoulderCable3",
+      "ShoulderCable4",
+      "bottomcable_cover",
+      "main_drum",
+      "turntable_cap"
+    ],
+    "lefthinge": [
+      "Belt1",
+      "HingeCover",
+      "LeftHinge",
+      "Part_30_1",
+      "Part_46",
+      "RS60_merged",
+      "ShoulderPitchActDrum",
+      "ShoulderRoll",
+      "ShoulderRollActAdapter"
+    ],
+    "upperarmright": [
+      "ElbowPCB_cover",
+      "Part_63",
+      "Part_64",
+      "Part_65",
+      "Part_66",
+      "Part_67",
+      "RS60_merged",
+      "UpperArmLeft",
+      "UpperArmRight"
+    ],
+    "elbowlink": [
+      "EL05_merged",
+      "ElbowLink",
+      "Part_56",
+      "Spur_gear__20_teeth_"
+    ],
+    "spur_gear__40_teeth_": [
+      "Part_57",
+      "Part_58",
+      "Part_59",
+      "Spur_gear__40_teeth_",
+      "Spur_gear__40_teeth__2",
+      "grommet"
+    ],
+    "spiral_gear_2": [
+      "EL05_merged",
+      "Part_61",
+      "Part_62",
+      "Spiral_Gear_2"
+    ],
+    "part_8_2": [
+      "EL05_merged_1",
+      "Part_2_4",
+      "Part_2_5",
+      "Part_3_2",
+      "Part_4_2",
+      "Part_5_2",
+      "Part_6_2",
+      "Part_6_3",
+      "Part_7_3",
+      "Part_8_2",
+      "Part_8_3"
+    ],
+    "part_1_35": [
+      "Part_1_9",
+      "Part_7_2"
+    ],
+    "part_1_40": [
+      "Part_1_9",
+      "Part_7_2"
+    ]
+  }
+}

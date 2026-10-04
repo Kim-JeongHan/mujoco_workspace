@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import radians
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 
@@ -89,6 +90,17 @@ class Constraints:
 
 
 @dataclass
+class PoseConfig:
+    """Default arm joint positions in radians, followed by a gripper position in meters.
+
+    Robots without a configured gripper contain only arm joint positions.
+    RobotConfig.load converts YAML arm angles from degrees to radians.
+    """
+
+    default: list[float]
+
+
+@dataclass
 class GripperConfig:
     actuator: str
     velocity_limit: float = field(default=0.2, kw_only=True)  # Gripper joint speed in m/s.
@@ -116,13 +128,25 @@ class RobotConfig:
     controller: ControllerConfig
     constraints: Constraints | None = None
     gripper: GripperConfig | None = None
+    pose: PoseConfig | None = field(default=None, kw_only=True)
     model_info: RobotModelInfo = RobotModelInfo()
 
     @classmethod
     def load(cls, path: str | Path) -> Self:
-        """Load YAML fields into this dataclass and its nested configuration dataclasses."""
+        """Load YAML settings, converting arm poses and angular bounds to radians."""
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return from_dict(data_class=cls, data=data)
+        config = from_dict(data_class=cls, data=data)
+        if config.constraints is not None:
+            config.constraints.position_limit = [
+                [radians(value) for value in bounds] for bounds in config.constraints.position_limit
+            ]
+        if config.pose is not None:
+            arm_count = len(config.pose.default) - int(config.gripper is not None)
+            config.pose.default = [
+                *[radians(value) for value in config.pose.default[:arm_count]],
+                *config.pose.default[arm_count:],
+            ]
+        return config
 
     def update_model_info(self, spec: mujoco.MjSpec) -> None:
         """Refresh local asset names before the spec is attached to a scene."""

@@ -1,0 +1,118 @@
+[
+  {
+    "body": "upperarmright",
+    "name": "upper_arm_capsule",
+    "fromto": [
+      0.06439246738264981,
+      0.0015943234289626206,
+      -4.9539051738860945e-05,
+      0.3195356023821838,
+      0.0015943234289626206,
+      -4.9539051738860945e-05
+    ],
+    "radius": 0.075,
+    "source_meshes": [
+      "UpperArmRight",
+      "UpperArmLeft",
+      "ElbowPCB_cover",
+      "RS60_merged",
+      "Part_65",
+      "Part_66",
+      "Part_64",
+      "Part_63",
+      "Part_67"
+    ],
+    "radial_margin": 0.003
+  },
+  {
+    "body": "elbowlink",
+    "name": "elbow_capsule",
+    "fromto": [
+      0.011824668842742282,
+      0.028500000286579643,
+      0.019981295787208586,
+      0.054931924317096405,
+      0.028500000286579643,
+      0.019981295787208586
+    ],
+    "radius": 0.075,
+    "source_meshes": [
+      "ElbowLink",
+      "EL05_merged",
+      "EL05_merged",
+      "Part_56"
+    ],
+    "radial_margin": 0.003
+  },
+  {
+    "body": "spur_gear__40_teeth_",
+    "name": "forearm_end_capsule",
+    "fromto": [
+      1.5017633703175853e-06,
+      -2.800511895283825e-07,
+      -0.32402903418286516,
+      1.5017633703175853e-06,
+      -2.800511895283825e-07,
+      -0.30756019131574924
+    ],
+    "radius": 0.04,
+    "source_meshes": [
+      "Part_58"
+    ],
+    "radial_margin": 0.003
+  },
+  {
+    "body": "spiral_gear_2",
+    "name": "wrist_link_capsule",
+    "fromto": [
+      0.025043318893033253,
+      0.022500047738894607,
+      -0.027366880660891553,
+      0.025043318893033253,
+      0.022500047738894607,
+      -0.012562653880253617
+    ],
+    "radius": 0.06,
+    "source_meshes": [
+      "Spiral_Gear_2",
+      "Part_61",
+      "Part_62"
+    ],
+    "radial_margin": 0.003
+  },
+  {
+    "body": "spiral_gear_2",
+    "name": "wrist_motor_capsule",
+    "fromto": [
+      0.03754939281213246,
+      0.022639330381938615,
+      -0.05634922191951907,
+      0.03754939281213246,
+      0.022639330381938615,
+      -0.05534922191951907
+    ],
+    "radius": 0.045,
+    "source_meshes": [
+      "EL05_merged"
+    ],
+    "radial_margin": 0.003
+  },
+  {
+    "body": "spur_gear__40_teeth_",
+    "name": "forearm_tube_capsule",
+    "fromto": [
+      0.0,
+      0.0,
+      0.03,
+      0.0,
+      0.0,
+      -0.2665
+    ],
+    "radius": 0.025,
+    "source_meshes": [
+      "Spur_gear__40_teeth_",
+      "Spur_gear__40_teeth__2"
+    ],
+    "source_geom": "forearm_collision"
+  }
+]

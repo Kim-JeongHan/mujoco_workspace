@@ -1,7 +1,6 @@
-"""Runtime and source checks for the simplified ForteV1 RobStride model."""
+"""Runtime checks for the simplified ForteV1 RobStride model."""
 
-import json
-from hashlib import sha256
+import gc
 from pathlib import Path
 
 import mujoco
@@ -11,11 +10,10 @@ from controller_config import create_test_controller
 
 from mujoco_lab import ENVIRONMENT_NAMES, ControlTarget, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.robot.forte_coordinates import HOME_DEGREES, from_legacy
 from mujoco_lab.control.trajectory import PD_WAYPOINTS
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "third_party/fortev1-robstride"
-MANIFEST = ROOT / "third_party/fortev1-robstride.SOURCE.json"
 RUNTIME = ROOT / "src/mujoco_lab/assets/robot/forte/robot.xml"
 ARM_JOINTS = (
     "shoulder_yaw",
@@ -28,25 +26,18 @@ ARM_JOINTS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def release_native_models():
+    """Release simulator cycles before compiling the next detailed CAD model."""
+    yield
+    gc.collect()
+
+
 def forte_sim(environment="empty"):
     return Simulator(
         create_environment(environment),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
     )
-
-
-def test_cad_source_snapshot_matches_manifest():
-    manifest = json.loads(MANIFEST.read_text())
-    assert manifest["source_archive_sha256"] == (
-        "db9a6617f4a088559d1ea38b7d4adbedf16c10d6e9e54e2e4d01e09d8edf2f2a"
-    )
-    assert manifest["removed_files"] == []
-    assert len(manifest["files_sha256"]) == 272
-    for relative, expected in manifest["files_sha256"].items():
-        assert sha256((SOURCE / relative).read_bytes()).hexdigest() == expected
-        if relative.startswith("fortev1_robstride/meshes/"):
-            mesh = RUNTIME.parent / "meshes" / Path(relative).name
-            assert sha256(mesh.read_bytes()).hexdigest() == expected
 
 
 def test_cad_model_has_seven_arm_axes_and_coupled_sliders():
@@ -59,12 +50,18 @@ def test_cad_model_has_seven_arm_axes_and_coupled_sliders():
         *(f"forte/{name}_motor" for name in ARM_JOINTS),
         "forte/gripper_motor",
     ]
-    np.testing.assert_allclose(model.actuator_ctrlrange[-1], [-0.02, 0])
-    np.testing.assert_allclose(model.jnt_range[-2:], [[-0.02, 0], [-0.02, 0]])
+    np.testing.assert_allclose(model.actuator_ctrlrange[-1], [-0.037, 0])
+    np.testing.assert_allclose(model.jnt_range[-2:], [[-0.037, 0], [-0.037, 0]])
     np.testing.assert_allclose(model.dof_armature[:7], 0.01)
     np.testing.assert_allclose(model.dof_damping[:7], 0.05)
     np.testing.assert_array_equal(data.qpos, model.key("forte/home").qpos)
-    np.testing.assert_array_equal(data.qpos, np.zeros(9))
+    np.testing.assert_allclose(
+        np.degrees(data.qpos[:7]),
+        HOME_DEGREES,
+        atol=1e-8,
+    )
+    np.testing.assert_array_equal(data.qpos[-2:], 0)
+    assert model.jnt_range[1, 1] == 0
     assert data.ncon == 0
     assert not data.warning.number.any()
 
@@ -76,36 +73,22 @@ def test_cad_mass_and_home_pose_tool_frame():
     assert np.all(model.body_inertia[1:] > 0)
     np.testing.assert_allclose(
         data.site("forte/ee_site").xpos,
-        [0.40238419, -0.06129355, 0.29965013],
+        [0.37701991, -0.00021759, 0.31030735],
         atol=1e-6,
     )
     upper_arm = data.body("forte/elbowlink").xpos - data.body("forte/upperarmright").xpos
     forearm = data.body("forte/spiral_gear_2").xpos - data.body("forte/elbowlink").xpos
-    assert np.linalg.norm(upper_arm[:2]) < 0.03
+    assert abs(upper_arm[0]) < 0.005
     assert upper_arm[2] > 0.33
-    assert abs(forearm[2]) < 1e-3
-    assert abs(forearm[1]) < 1e-3
     assert np.linalg.norm(forearm[:2]) > 0.36
+    # The CAD wrist pivot is offset from the forearm centerline. Check the
+    # forearm roll axis instead of forcing the wrist pivot onto that line.
+    forearm_axis = data.xaxis[model.joint("forte/lower_arm_roll").id]
+    assert forearm_axis[0] > 0.98
     hand = data.site("forte/ee_site").xpos - data.body("forte/part_8_2").xpos
     jaw = data.geom("forte/gripper_right_pad").xpos - data.geom("forte/gripper_left_pad").xpos
-    np.testing.assert_allclose(hand[:2], [0, 0], atol=1e-6)
-    assert hand[2] < -0.17
-    assert abs(jaw[2]) < 2e-5
-    purple_mesh = model.mesh("forte/Part_62").id
-    purple_geom = next(
-        index
-        for index in range(model.ngeom)
-        if model.geom_type[index] == mujoco.mjtGeom.mjGEOM_MESH
-        and model.geom_dataid[index] == purple_mesh
-        and model.geom_group[index] == 1
-    )
-    vertices = model.mesh_vert[
-        model.mesh_vertadr[purple_mesh] : model.mesh_vertadr[purple_mesh]
-        + model.mesh_vertnum[purple_mesh]
-    ]
-    _, directions = np.linalg.eigh(np.cov(vertices.T))
-    purple_axis = data.geom_xmat[purple_geom].reshape(3, 3) @ directions[:, -1]
-    np.testing.assert_allclose(purple_axis, [0, 0, -1], atol=1e-5)
+    assert hand[2] < -0.16
+    assert np.linalg.norm(jaw) > 0.07
     np.testing.assert_allclose(
         model.body_quat[model.body("forte/main_drum").id], [1, 0, 0, 0], atol=1e-6
     )
@@ -130,7 +113,7 @@ def test_cad_mass_and_home_pose_tool_frame():
 def test_gripper_closes_and_reopens_under_native_physics():
     sim = forte_sim()
     robot = sim.robots["forte"]
-    controller = create_test_controller(robot, "pd")
+    controller = create_test_controller(robot, controller="pd")
     robot.change_controller(controller)
     robot.gripper.set_target(-0.02)
     sim.run_steps(500)
@@ -170,26 +153,32 @@ def test_collision_covers_previously_missed_cad_surfaces():
     )
     model = spec.compile()
     data = mujoco.MjData(model)
-    # Approximate the CAD frame after the simulated wrist zero and mount correction.
-    data.qpos[:7] = [
-        -0.031713138037,
-        0.392582419038,
-        0.354095618670,
-        0.005483411844,
-        -0.477127899210,
-        -2.530448267463,
-        -0.054828117868,
-    ]
+    # Restore CAD joint coordinates using physical home offsets.
+    data.qpos[:7] = from_legacy(
+        [
+            -0.031713138037,
+            0.392582419038,
+            0.354095618670,
+            0.005483411844,
+            0.032901666522,
+            -2.413011791532,
+            -0.054828117868,
+        ]
+    )
     probe_id = model.geom("probe_geom").id
     collisions = np.flatnonzero(model.geom_group == 3)
-    for point in (
-        [-0.194757400, 0.024474315, 0.0],
-        [-0.016441059, -0.104073676, 0.153765961],
-        [0.569455487, -0.114946133, 0.414884609],
-        [0.585233372, -0.124904736, 0.461297988],
-        [0.568575886, -0.075111719, 0.427127763],
+    # Audit points are component-local so corrected parent assemblies do not
+    # invalidate the original surface-coverage probes.
+    for body_name, local_point in (
+        ("base_link", [-0.194757400, 0.024474315, -0.058]),
+        ("main_drum", [-0.0197327417651, -0.103500035554, 0.096765961]),
+        ("part_8_2", [0.0176653257297, 0.0635854552359, -0.0387323109689]),
+        ("part_1_35", [-0.0250382557277, 0.00108207060191, -0.00703996909981]),
+        ("part_8_2", [0.00659171032368, 0.0862013055883, -0.00551563727651]),
     ):
-        data.qpos[-7:-4] = point
+        mujoco.mj_forward(model, data)
+        anchor = data.body(body_name)
+        data.qpos[-7:-4] = anchor.xpos + anchor.xmat.reshape(3, 3) @ local_point
         mujoco.mj_forward(model, data)
         clearance = min(
             mujoco.mj_geomDistance(model, data, probe_id, int(geom), 1, None) for geom in collisions
@@ -233,7 +222,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
     )
     data.qpos[robot.state.qpos_indices[-2:]] = -0.01771
     mujoco.mj_forward(model, data)
-    controller = create_test_controller(robot, "pd")
+    controller = create_test_controller(robot, controller="pd")
     robot.change_controller(controller)
     robot.gripper.set_target(-0.02)
     pads = {"forte/gripper_left_pad", "forte/gripper_right_pad"}

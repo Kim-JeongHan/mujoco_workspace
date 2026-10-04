@@ -3,18 +3,20 @@
 import numpy as np
 from scipy.interpolate import CubicHermiteSpline
 
+from mujoco_lab.assets.robot.forte_coordinates import HOME_RADIANS
 from mujoco_lab.control.target import ControlTarget
 
-# The CAD zero pose is inside all three source-defined bounded arm joints.
-HOME_QPOS = np.zeros(7)
-PD_WAYPOINTS = np.array(
+# Relative demo displacements work for any robot; Forte starts at its home pose.
+HOME_QPOS = HOME_RADIANS.copy()
+PD_WAYPOINT_OFFSETS = np.array(
     [
-        HOME_QPOS,
+        np.zeros(7),
         [0.05, -0.15, 0.05, 0.15, 0.0, 0.0, 0.0],
         [-0.05, -0.10, -0.05, 0.20, 0.10, -0.10, 0.10],
         [0.0, 0.05, 0.05, 0.05, -0.10, 0.10, -0.10],
     ]
 )
+PD_WAYPOINTS = HOME_QPOS + PD_WAYPOINT_OFFSETS
 # Base-relative zero-pose ee_site position; the root's 0.058 m lift is added later.
 CIRCLE_CENTER = np.array([0.6349, -0.04638, 0.40459])
 CIRCLE_RADIUS = 0.025
@@ -256,7 +258,7 @@ def osc_circle_target(
 def demo_target_updater(simulator, modes: dict[str, str]):
     """Build one explicit-time reference updater for bundled PD/OSC demos.
 
-    The start epoch and OSC start pose are captured now. Simulator.reset restores
+    The start epoch and controlled poses are captured now. Simulator.reset restores
     the same initial time and pose, so this updater replays from the beginning.
     """
     from functools import partial
@@ -266,15 +268,23 @@ def demo_target_updater(simulator, modes: dict[str, str]):
     for name, mode in modes.items():
         robot = simulator.robots[name]
         if mode == "pd":
-            trajectories[name] = partial(pd_waypoint_target, start_time=epoch)
+            start = robot.get_control_state().qpos.copy()
+            slots = robot.state.get_frame_joint_slots("ee_site")
+            limits = robot.state.get_joint_limits(slots)
+            waypoints = np.clip(start + PD_WAYPOINT_OFFSETS, limits[:, 0], limits[:, 1])
+            trajectories[name] = partial(pd_waypoint_target, start_time=epoch, waypoints=waypoints)
         elif mode == "osc":
             base = simulator.data.body(robot.state.root_body_id)
+            start = robot.state.get_frame_position("ee_site").copy()
+            rotation = base.xmat.reshape(3, 3).copy()
+            center = rotation.T @ (start - base.xpos)
             trajectories[name] = partial(
                 osc_circle_target,
                 start_time=epoch,
-                start_position=robot.state.get_frame_position("ee_site").copy(),
+                start_position=start,
                 base_position=base.xpos.copy(),
-                base_rotation=base.xmat.reshape(3, 3).copy(),
+                base_rotation=rotation,
+                center=center,
             )
         else:
             raise ValueError(f"Unknown demo controller {mode!r}")
