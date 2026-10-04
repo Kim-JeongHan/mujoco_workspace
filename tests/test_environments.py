@@ -1,7 +1,3 @@
-import os
-import subprocess
-import sys
-
 import mujoco
 import numpy as np
 import pytest
@@ -143,26 +139,6 @@ def test_shelf_opening_is_free_but_shelf_board_collides():
     contacted = {model.geom(int(index)).name for contact in data.contact for index in contact.geom}
     assert "probe" in contacted
     assert "large_shelf/shelf_1" in contacted
-
-
-@pytest.mark.parametrize("robot", [None, "panda"])
-def test_environment_cli_runs_outside_project_directory(robot, tmp_path):
-    command = [
-        sys.executable,
-        "-m",
-        "mujoco_lab",
-        "--command",
-        "simulate",
-        "--environment",
-        "warehouse",
-        "--steps",
-        "100",
-    ]
-    if robot is not None:
-        command += ["--robot", robot]
-    env = {**os.environ, "MUJOCO_GL": "disable"}
-    env.pop("DISPLAY", None)
-    subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
 
 
 def test_unknown_environment_is_rejected():

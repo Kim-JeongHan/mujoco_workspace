@@ -7,10 +7,11 @@ import numpy as np
 import pytest
 import torch
 
+from mujoco_lab.learning.config.config import RolloutConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
-from mujoco_lab.learning.evaluation import evaluate_policy
+from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.factory import build_policy
 
 
@@ -79,18 +80,11 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
         "dataset_metadata": {"replay": {"physics_steps_per_action": 5}},
     }
     env = CadenceEnv()
-    rows, _ = evaluate_policy(
+    rows, _ = PolicyEvaluator(
         cast(CubeStackEnv, env),
-        model,
-        _stats(),
-        metadata,
-        num_episodes=1,
-        seed=1,
-        policy_seed=2,
-        max_steps=30,
-        device=torch.device("cpu"),
-        flow_num_steps=1,
-    )
+        RolloutConfig(num_episodes=1, seed=1, max_steps=30, video_episodes=0),
+        torch.device("cpu"),
+    ).evaluate(model, _stats(), metadata, flow_num_steps=1)
     handle.remove()
     assert len(seen) == 2
     np.testing.assert_array_equal(seen[0], [[0.0, 0.0]])

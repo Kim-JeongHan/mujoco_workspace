@@ -190,3 +190,30 @@ def cube_stack_metadata(
         "model_sha256": model_signature(simulator.model),
         "visual_sha256": visual_signature(simulator.model),
     }
+
+
+def book_metadata(
+    simulator: Simulator,
+    *,
+    book: str,
+    robot: str,
+    physics_steps_per_action: int = 1,
+    book_yaw_range_degrees: float = 0.0,
+    xy_range: float = 0.02,
+) -> dict[str, Any]:
+    """Describe a bundled book scene and its collection randomization."""
+    repeat = replay_action_repeat({"physics_steps_per_action": physics_steps_per_action})
+    return {
+        "scene": "book_insertion",
+        "environment": "book_shelf",
+        "book": book,
+        "robot": robot,
+        "robot_name": next(iter(simulator.robots)),
+        "dt": simulator.dt,
+        "physics_steps_per_action": repeat,
+        "book_yaw_range_degrees": book_yaw_range_degrees,
+        "xy_range": xy_range,
+        "mujoco_version": mujoco.__version__,
+        "model_sha256": model_signature(simulator.model),
+        "visual_sha256": visual_signature(simulator.model),
+    }

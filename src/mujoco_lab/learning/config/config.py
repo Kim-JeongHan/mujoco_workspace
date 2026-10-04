@@ -13,12 +13,12 @@ class RolloutConfig:
     """Settings shared by periodic and standalone policy evaluation."""
 
     num_episodes: int = 3
-    env_seed: int = 5_000
-    policy_seed: int = 42
+    seed: int = 5_000
     max_steps: int = 1_500
-    xy_range: float = 0.02
+    xy_range: float | None = None
     min_gap: float = 0.01
     cube_yaw_range_degrees: float = 45.0
+    book_yaw_range_degrees: float | None = None
     video_episodes: int = 3
     video_fps: int = 20
     video_width: int = 640
@@ -26,6 +26,8 @@ class RolloutConfig:
 
     def validate(self) -> None:
         """Check counts required for an evaluation rollout."""
+        if self.seed < 0:
+            raise ValueError("seed must be nonnegative")
         if self.num_episodes <= 0:
             raise ValueError("num_episodes must be positive")
         if self.max_steps <= 0:
@@ -48,8 +50,9 @@ class TrainConfig:
     policy_type: Literal["mse", "flow"] = "flow"
     obs_horizon: int = 2  # Observation frames per policy input.
     chunk_size: int = 16  # Actions predicted per policy output.
-    execution_horizon: int = 4  # Actions executed before the next prediction.
-    physics_steps_per_action: int = 5  # Physics steps per executed action.
+    execution_horizon: int = 4  # Actions before replanning; 100 Hz / 4 = 25 Hz inference.
+    simulation_hz: float = 500.0  # Physics and PD evaluations per simulated second.
+    action_execution_hz: float = 100.0  # 500 Hz / 100 Hz = 5 physics steps/action.
     flow_num_steps: int = 20  # Euler inference steps for the flow policy.
     flow_time_embed_dim: int | None = 256  # Time feature width; None uses scalar time.
 
@@ -57,7 +60,7 @@ class TrainConfig:
     batch_size: int = 128
     lr: float = 3e-4
     weight_decay: float = 1e-6
-    ema_decay: float = 0.999  # if do not use ema_decay, you should use 1
+    ema_decay: float | None = 0.999  # None disables parameter averaging.
     hidden_dims: tuple[int, ...] = (512, 512, 512)
     num_epochs: int = 400
     num_workers: int = 0
@@ -76,17 +79,26 @@ class TrainConfig:
     seed: int = 42
     exp_name: str | None = "forte-mse-cube1"
 
+    @property
+    def simulation_dt(self) -> float:
+        return 1.0 / self.simulation_hz
+
+    @property
+    def physics_steps_per_action(self) -> int:
+        return int(self.simulation_hz / self.action_execution_hz)
+
     def validate(self) -> None:
         """Check training and enabled evaluation settings before loading data."""
-        for name in (
-            "obs_horizon",
-            "chunk_size",
-            "physics_steps_per_action",
-            "num_epochs",
-            "log_interval",
-        ):
+        for name in ("obs_horizon", "chunk_size", "num_epochs", "log_interval"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        for name in ("simulation_hz", "action_execution_hz"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+        action_repeat = self.simulation_hz / self.action_execution_hz
+        if action_repeat < 1 or not math.isclose(action_repeat, round(action_repeat)):
+            raise ValueError("simulation_hz must be an integer multiple of action_execution_hz")
         if (
             not math.isfinite(self.validation_ratio)
             or not math.isfinite(self.test_ratio)
@@ -107,7 +119,7 @@ class TrainConfig:
 
 @dataclass
 class EvalConfig:
-    """Evaluate one saved BC policy in the physical cube stacking environment."""
+    """Evaluate one saved BC policy in the recorded physical task environment."""
 
     checkpoint: Path
     rollout: RolloutConfig = field(default_factory=RolloutConfig)

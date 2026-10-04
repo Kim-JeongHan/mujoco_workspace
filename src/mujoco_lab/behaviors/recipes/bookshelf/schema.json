@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "MotionLimits": {
+      "additionalProperties": false,
+      "description": "Optional velocity and acceleration limits in the controlled joints' units.\n\nScalars apply to every joint; lists follow the resolved joint order.\nAn omitted value inherits the corresponding robot or recipe limit.",
+      "properties": {
+        "velocity_limit": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "items": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Velocity Limit"
+        },
+        "acceleration_limit": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "items": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acceleration Limit"
+        }
+      },
+      "title": "MotionLimits",
+      "type": "object"
+    },
+    "StageRecipe": {
+      "additionalProperties": false,
+      "description": "One named book stage with optional motion limit overrides.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "arm": {
+          "$ref": "#/$defs/MotionLimits"
+        },
+        "gripper": {
+          "$ref": "#/$defs/MotionLimits"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "StageRecipe",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Fixed nine-stage workflow and robot-specific insertion parameters.",
+  "properties": {
+    "arm": {
+      "$ref": "#/$defs/MotionLimits"
+    },
+    "gripper": {
+      "$ref": "#/$defs/MotionLimits"
+    },
+    "waypoint_tolerance": {
+      "exclusiveMinimum": 0,
+      "title": "Waypoint Tolerance",
+      "type": "number"
+    },
+    "arm_tolerance": {
+      "exclusiveMinimum": 0,
+      "title": "Arm Tolerance",
+      "type": "number"
+    },
+    "stage_dwell_s": {
+      "minimum": 0,
+      "title": "Stage Dwell S",
+      "type": "number"
+    },
+    "stage_timeout_s": {
+      "exclusiveMinimum": 0,
+      "title": "Stage Timeout S",
+      "type": "number"
+    },
+    "lost_grasp_grace_s": {
+      "minimum": 0,
+      "title": "Lost Grasp Grace S",
+      "type": "number"
+    },
+    "approach_distance_m": {
+      "exclusiveMinimum": 0,
+      "title": "Approach Distance M",
+      "type": "number"
+    },
+    "lift_height_m": {
+      "exclusiveMinimum": 0,
+      "title": "Lift Height M",
+      "type": "number"
+    },
+    "min_lift_height_m": {
+      "exclusiveMinimum": 0,
+      "title": "Min Lift Height M",
+      "type": "number"
+    },
+    "insertion_clearance_m": {
+      "exclusiveMinimum": 0,
+      "title": "Insertion Clearance M",
+      "type": "number"
+    },
+    "shelf_front_y_m": {
+      "title": "Shelf Front Y M",
+      "type": "number"
+    },
+    "preinsert_clearance_m": {
+      "exclusiveMinimum": 0,
+      "title": "Preinsert Clearance M",
+      "type": "number"
+    },
+    "retract_distance_m": {
+      "exclusiveMinimum": 0,
+      "title": "Retract Distance M",
+      "type": "number"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/StageRecipe"
+      },
+      "title": "Stages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "waypoint_tolerance",
+    "arm_tolerance",
+    "stage_dwell_s",
+    "stage_timeout_s",
+    "lost_grasp_grace_s",
+    "approach_distance_m",
+    "lift_height_m",
+    "min_lift_height_m",
+    "insertion_clearance_m",
+    "shelf_front_y_m",
+    "preinsert_clearance_m",
+    "retract_distance_m",
+    "stages"
+  ],
+  "title": "BookshelfRecipe",
+  "type": "object"
+}

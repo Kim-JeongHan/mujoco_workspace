@@ -1,16 +1,12 @@
-import os
-import subprocess
-import sys
-from contextlib import nullcontext
 from unittest.mock import patch
 
 import mujoco
 import numpy as np
 import pytest
+from simulator_helpers import PassiveViewer, manager_with
 
-from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_environment
+from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.cli import Config
 from mujoco_lab.control import Controller
 from mujoco_lab.utils import Transform
 
@@ -41,48 +37,14 @@ def make_simulator():
     return sim, controller
 
 
-def manager_with(simulator, name="simulator"):
-    manager = SimulatorManager()
-    manager.add_simulator(name, simulator)
-    return manager
-
-
 def test_fixed_default_period_and_explicit_override_leave_scene_unchanged():
     scene = create_environment("table_shelf")
     scene.option.timestep = 0.003
     default = Simulator(scene)
     overridden = Simulator(scene, dt=0.001)
-    assert Config(command="view").dt == 0.002
     assert scene.option.timestep == 0.003
     assert default.dt == default.model.opt.timestep == 0.002
     assert overridden.dt == overridden.model.opt.timestep == 0.001
-
-
-class PassiveViewer:
-    def __init__(self, steps, *, on_lock=None, on_sync=None):
-        self.steps = steps
-        self.on_lock = on_lock
-        self.on_sync = on_sync
-        self.sync_calls = 0
-        self.closed = False
-        self._sim = lambda: None
-
-    def is_running(self):
-        return self.sync_calls < self.steps
-
-    def lock(self):
-        if self.on_lock is not None:
-            self.on_lock()
-        return nullcontext()
-
-    def sync(self, *, state_only=False):
-        assert state_only
-        self.sync_calls += 1
-        if self.on_sync is not None:
-            self.on_sync()
-
-    def close(self):
-        self.closed = True
 
 
 def test_every_step_updates_control_and_chunks_preserve_results():
@@ -169,6 +131,7 @@ def test_control_replaces_external_inputs_on_the_next_tick():
     assert not np.all(sim.data.ctrl[robot.actuator_ids] == 0.25)
     robot.update_state()
     assert robot.control()
+    assert sim._state.get_state() == "idle"
     result = sim.step()["arm"]
     assert result.saturated_steps == 1 and result.errors == [4]
     sim.run_steps(2)
@@ -258,43 +221,6 @@ def test_passive_viewer_matches_headless_timing_and_rk4_trajectory_after_priming
     assert viewer.sync_calls == 9 and viewer.closed
 
 
-def test_passive_viewer_failure_retains_phase_and_lifecycle_state():
-    sim, controller = make_simulator()
-
-    def fail(state, target):
-        raise RuntimeError("controller failed")
-
-    controller.compute = fail
-    manager = manager_with(sim)
-    with (
-        patch("mujoco.viewer.launch_passive", return_value=PassiveViewer(1)),
-        pytest.raises(RuntimeError, match="controller failed"),
-    ):
-        manager.show("simulator")
-    assert sim._state.get_state() == "viewing"
-
-
-def test_successful_nested_control_returns_to_its_lifecycle_parent():
-    sim, _ = make_simulator()
-    robot = sim.robots["arm"]
-
-    sim.step()
-    assert sim._state.get_state() == "idle"
-    robot.control()
-    assert sim._state.get_state() == "idle"
-
-    def check_viewing():
-        assert sim._state.get_state() == "viewing"
-
-    manager = manager_with(sim)
-    viewer = PassiveViewer(1, on_lock=check_viewing)
-    with patch("mujoco.viewer.launch_passive", return_value=viewer):
-        manager.show("simulator")
-    assert sim._state.get_state() == "idle"
-    sim.reset()
-    assert sim._state.get_state() == "idle"
-
-
 def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_work():
     sim, controller = make_simulator()
     manager = manager_with(sim, "first")
@@ -302,6 +228,7 @@ def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_w
     manager.add_simulator("other", other)
 
     def inspect_open_scope():
+        assert sim._state.get_state() == "viewing"
         model = sim.model
         timestep = model.opt.timestep
         state_spec = mujoco.mjtState.mjSTATE_INTEGRATION
@@ -380,7 +307,7 @@ def test_passive_viewer_sync_failure_restores_timestep_and_closes_viewer():
     ):
         manager.show("simulator")
     assert sim.model.opt.timestep == sim.dt == 0.001
-    assert sim._state.get_state() == "viewing"
+    assert sim._state.get_state() == "idle"
     assert viewer.closed
 
 
@@ -415,49 +342,3 @@ def test_invalid_periods_are_rejected_without_changing_the_model(timing):
     with pytest.raises(ValueError):
         Simulator(scene, **timing)
     assert scene.option.timestep == original
-
-
-def test_cli_accepts_single_period(tmp_path):
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--command",
-            "simulate",
-            "--robot",
-            "forte",
-            "--controller",
-            "pd",
-            "--dt",
-            "0.001",
-            "--steps",
-            "10",
-        ],
-        cwd=tmp_path,
-        env={**os.environ, "MUJOCO_GL": "disable"},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
-def test_cli_rejects_invalid_simulator_period(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--command",
-            "simulate",
-            "--robot",
-            "forte",
-            "--dt",
-            "0",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 2
-    assert "dt must be finite and positive" in result.stderr

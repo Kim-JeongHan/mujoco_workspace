@@ -12,7 +12,7 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.learning.collect import Config as CollectConfig
+from mujoco_lab.learning.collect_cube import Config as CollectConfig
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
 from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv

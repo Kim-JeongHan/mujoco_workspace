@@ -10,6 +10,7 @@ from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.robot import ControllerConfig, FortePDGain, GripperConfig, RobotConfig
+from mujoco_lab.behaviors.book import create_book_controller
 from mujoco_lab.control import JointSpacePD, PositionController, create_controller
 
 
@@ -59,6 +60,47 @@ def test_default_controller_matches_robot_actuators(robot_type, kind):
     assert robot.config is not config
     assert robot.config.controller is config.controller
     assert robot.state.constraints is config.constraints
+
+
+def test_yaml_gains_and_book_tuning_are_independent(tmp_path, monkeypatch):
+    sim = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))],
+    )
+    robot = sim.robots["arm"]
+    names = robot.get_arm_joint_mapping()[0]
+    gains = {name: {"kp": 100 + i, "kd": 10 + i} for i, name in enumerate(names)}
+    path = tmp_path / "robot.yaml"
+    path.write_text(yaml.safe_dump({"controller": {"name": "pd", "pd_gains": gains}}))
+    monkeypatch.setitem(ROBOT_ASSETS, "forte", RobotAsset(tmp_path / "robot.xml"))
+    default = create_controller(robot, load_robot_config(robot.robot_type).controller)
+    np.testing.assert_array_equal(default.kp, np.arange(100, 107))
+    np.testing.assert_array_equal(default.kd, np.arange(10, 17))
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "controller": {
+                    "name": "pd",
+                    "pd_gains": gains,
+                    "gravity_compensation": False,
+                },
+            }
+        )
+    )
+    custom = create_controller(robot, load_robot_config(robot.robot_type).controller)
+    assert default.gravity_compensation
+    assert not custom.gravity_compensation
+    np.testing.assert_array_equal(custom.kp, default.kp)
+    np.testing.assert_array_equal(custom.kd, default.kd)
+    book = create_book_controller(robot, load_robot_config(robot.robot_type).controller)
+    np.testing.assert_array_equal(book.kp[:4], default.kp[:4] * 4)
+    np.testing.assert_array_equal(book.kp[4:], default.kp[4:] * 24)
+    np.testing.assert_array_equal(book.kd[:4], default.kd[:4] * 2)
+    np.testing.assert_allclose(book.kd[4:], default.kd[4:] * 2 * np.sqrt(6))
+    np.testing.assert_array_equal(default.kp, np.arange(100, 107))
+    path.write_text(yaml.safe_dump({"controller": {"name": "position"}}))
+    with pytest.raises(ValueError, match="requires position"):
+        create_controller(robot, load_robot_config(robot.robot_type).controller)
 
 
 @pytest.mark.parametrize(

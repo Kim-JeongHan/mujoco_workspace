@@ -6,6 +6,7 @@ import json
 import re
 import zipfile
 from collections.abc import Callable, Iterator
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,9 @@ def collect_episode(
         "length": len(actions),
         "return": float(sum(rewards)),
     }
+    observation_metadata = getattr(env, "observation_metadata", None)
+    if observation_metadata is not None:
+        metadata["observation"] = deepcopy(observation_metadata)
     if replay_metadata is not None:
         metadata["replay"] = replay_metadata.copy()
     if "cube_yaws_degrees" in reset_info:
@@ -131,21 +135,18 @@ def _resume_index(
     for expected_index, (index, path) in enumerate(paths):
         if index != expected_index:
             raise ValueError(f"Episode files have a gap before index {expected_index}")
-        try:
-            with zipfile.ZipFile(path) as archive:
-                names = set(archive.namelist())
-                if not {"states.npy", "actions.npy", "metadata.npy"} <= names:
-                    raise ValueError("missing required arrays")
-                for member in archive.infolist():
-                    with archive.open(member) as contents:
-                        while contents.read(1024 * 1024):
-                            pass
-            with np.load(path, allow_pickle=False) as data:
-                metadata = json.loads(str(data["metadata"].item()))
-            if not isinstance(metadata, dict):
-                raise ValueError("metadata is not an object")
-        except (OSError, EOFError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as exc:
-            raise ValueError(f"Invalid episode file {path}: {exc}") from exc
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            if not {"states.npy", "actions.npy", "metadata.npy"} <= names:
+                raise ValueError("missing required arrays")
+            for member in archive.infolist():
+                with archive.open(member) as contents:
+                    while contents.read(1024 * 1024):
+                        pass
+        with np.load(path, allow_pickle=False) as data:
+            metadata = json.loads(str(data["metadata"].item()))
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata is not an object")
         expected_seed = None if seed is None else seed + index
         if metadata.get("seed") != expected_seed:
             raise ValueError(f"Episode {path} has a different seed")

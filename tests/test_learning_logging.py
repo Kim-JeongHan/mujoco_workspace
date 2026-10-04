@@ -306,7 +306,7 @@ def test_checkpoint_round_trip_is_weights_only_and_preserves_normalizer(tmp_path
         obs_horizon=2,
         chunk_size=1,
         execution_horizon=1,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
     )
     model = build_policy("mse", state_dim=108, action_dim=8, chunk_size=1, hidden_dims=(8,))
     normalizer = Normalizer(
@@ -353,7 +353,7 @@ def test_training_logs_true_held_out_loss_with_training_only_stats(
         batch_size=2,
         chunk_size=1,
         execution_horizon=1,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
         log_interval=1,
     )
     with Logger(tmp_path / "run", {}, wandb_mode="disabled") as logger:

@@ -18,7 +18,7 @@ from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets import load_episodes
 from mujoco_lab.learning.evaluate import create_evaluation_env
 from mujoco_lab.learning.evaluation import (
-    evaluate_policy,
+    PolicyEvaluator,
     evaluation_log_metrics,
 )
 from mujoco_lab.learning.logging import Logger
@@ -28,11 +28,13 @@ from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 def main() -> None:
     console = ConsoleLogger()
-    config = tyro.cli(TrainConfig, description="Train offline cube-stack behavior cloning")
+    config = tyro.cli(TrainConfig, description="Train offline behavior cloning")
     config.validate()
     episodes = load_episodes(config.data_dir)
     for episode in episodes:
-        episode.check_physics_step_consistency(config.physics_steps_per_action)
+        episode.check_physics_step_consistency(
+            config.physics_steps_per_action, simulation_dt=config.simulation_dt
+        )
     validation_count = (
         max(1, round(len(episodes) * config.validation_ratio)) if config.validation_ratio else 0
     )
@@ -60,6 +62,8 @@ def main() -> None:
         "test_seeds": [episode.metadata.get("seed") for episode in test],
         "replay": train[0].metadata["replay"],
     }
+    if "observation" in train[0].metadata:
+        dataset_metadata["observation"] = train[0].metadata["observation"]
     settings = asdict(config)
     settings["data_dir"] = str(config.data_dir)
     settings["output_dir"] = str(config.output_dir)
@@ -73,11 +77,8 @@ def main() -> None:
             min_gap=rollout.min_gap,
             max_steps=rollout.max_steps,
             cube_yaw_range_degrees=rollout.cube_yaw_range_degrees,
+            book_yaw_range_degrees=rollout.book_yaw_range_degrees,
         )
-        if eval_env.observation_space.shape != train[0].states.shape[1:]:
-            raise ValueError("Evaluation observation dimension differs from training episodes")
-        if eval_env.action_space.shape != train[0].actions.shape[1:]:
-            raise ValueError("Evaluation action dimension differs from training episodes")
     config.output_dir.mkdir(parents=True, exist_ok=True)
     run_name = config.exp_name or f"{config.robot}-{config.policy_type}-seed{config.seed}"
     run_dir = (
@@ -100,8 +101,13 @@ def main() -> None:
             step=0,
         )
 
+        evaluator = None
+
         def evaluate(model, normalizer, step: int) -> None:
+            nonlocal evaluator
             assert eval_env is not None
+            if evaluator is None:
+                evaluator = PolicyEvaluator(eval_env, rollout, next(model.parameters()).device)
             metadata = checkpoint_metadata(
                 model,
                 normalizer,
@@ -131,23 +137,13 @@ def main() -> None:
                         f"success={row['success']} steps={row['steps']}"
                     )
 
-                episodes, summary = evaluate_policy(
-                    eval_env,
+                episodes, summary = evaluator.evaluate(
                     model,
                     normalizer,
                     metadata,
-                    num_episodes=rollout.num_episodes,
-                    seed=rollout.env_seed,
-                    policy_seed=rollout.policy_seed,
-                    max_steps=rollout.max_steps,
-                    device=next(model.parameters()).device,
                     flow_num_steps=config.flow_num_steps,
                     on_episode=record,
                     video_dir=step_dir / "videos",
-                    num_video_episodes=rollout.video_episodes,
-                    video_fps=rollout.video_fps,
-                    video_width=rollout.video_width,
-                    video_height=rollout.video_height,
                 )
             with (step_dir / "summary.json").open("x", encoding="utf-8") as summary_file:
                 json.dump(summary, summary_file, indent=2, allow_nan=False)

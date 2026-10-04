@@ -9,8 +9,9 @@ import numpy as np
 import pytest
 import torch
 
+from mujoco_lab.learning.config.config import RolloutConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
-from mujoco_lab.learning.evaluation import evaluate_policy
+from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.policies.mse import MSEPolicy
 
@@ -30,6 +31,12 @@ class Env:
         self.simulator = SimpleNamespace(dt=0.002, data=SimpleNamespace(time=0.0))
         self.steps = 0
         self.fail_step = fail_step
+
+    @property
+    def camera_lookat(self):
+        center = (self.task.starts.mean(axis=0) + self.task.goals.mean(axis=0)) / 2
+        center[2] += 0.12
+        return center
 
     def reset(self, *, seed):
         self.steps = 0
@@ -76,24 +83,19 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
         },
         "train_config": {},
     }
-    return evaluate_policy(
+    return PolicyEvaluator(
         env,
-        model,
-        stats,
-        metadata,
-        num_episodes=3,
-        seed=100,
-        policy_seed=200,
-        max_steps=2,
-        device=torch.device("cpu"),
-        flow_num_steps=1,
-        video_dir=video_dir,
-        num_video_episodes=num_video_episodes,
-        video_fps=20,
-        video_width=64,
-        video_height=48,
-        on_episode=on_episode,
-    )
+        RolloutConfig(
+            num_episodes=3,
+            seed=100,
+            max_steps=2,
+            video_episodes=num_video_episodes,
+            video_fps=20,
+            video_width=64,
+            video_height=48,
+        ),
+        torch.device("cpu"),
+    ).evaluate(model, stats, metadata, flow_num_steps=1, video_dir=video_dir, on_episode=on_episode)
 
 
 def test_records_first_seeds_and_closes_before_callback(tmp_path, monkeypatch):

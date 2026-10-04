@@ -12,8 +12,8 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors import CubeStackTask
-from mujoco_lab.learning.collect import create_expert
+from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
+from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.learning.datasets.episode import Episode, load_episode, save_episode
 from mujoco_lab.learning.datasets.replay import (
     capture_frame,
@@ -23,7 +23,6 @@ from mujoco_lab.learning.datasets.replay import (
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.replay import EpisodeReplay
 from mujoco_lab.learning.rollout import collect_episode, collect_episodes
-from mujoco_lab.planning import default_planning
 
 
 @pytest.fixture(scope="module")
@@ -34,7 +33,7 @@ def recording():
     )
     metadata = cube_stack_metadata(simulator, cubes=2, robot="forte")
     robot = simulator.robots["forte"]
-    robot.change_controller(create_test_controller(robot, "pd", frame="grasp"))
+    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
     task = CubeStackTask(simulator, 2)
 
     class MovingGoalEnv(CubeStackEnv):
@@ -43,7 +42,11 @@ def recording():
             return super().step(action)
 
     env = MovingGoalEnv(task)
-    expert = create_expert(task, planning=default_planning())
+    expert = CubeStackExpert(
+        task,
+        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        method="heuristic",
+    )
     geometry = []
 
     def record():
@@ -116,14 +119,6 @@ def test_replay_uses_recorded_partial_final_frame(recording):
     np.testing.assert_array_equal(replay.frame_times, frame_times)
     replay.set_frame(4)
     assert replay.simulator.data.time == pytest.approx(0.034)
-
-
-def test_replay_rejects_changed_scene(recording):
-    episode, _ = recording
-    metadata = deepcopy(episode.metadata)
-    metadata["replay"]["visual_sha256"] = "changed asset"
-    with pytest.raises(ValueError, match="model differs"):
-        EpisodeReplay(replace(episode, metadata=metadata))
 
 
 def test_collect_episodes_forwards_recording_options(recording, tmp_path, monkeypatch):
@@ -261,7 +256,7 @@ def test_playback_closes_viewer_and_recovers_lifecycle_on_failure(monkeypatch, f
     simulator, viewer, _ = playback(monkeypatch, failure=failure)
     if failure != "launch":
         viewer.close.assert_called_once()
-    assert simulator._state.get_state() == ("viewing" if failure == "close" else "idle")
+    assert simulator._state.get_state() == "idle"
     assert not simulator._stop_requested
 
 

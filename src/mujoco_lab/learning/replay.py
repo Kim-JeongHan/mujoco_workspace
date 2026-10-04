@@ -1,4 +1,4 @@
-"""Replay a recorded cube-stacking episode in the native MuJoCo viewer."""
+"""Replay a recorded manipulation episode in the native MuJoCo viewer."""
 
 from __future__ import annotations
 
@@ -9,13 +9,16 @@ import mujoco
 import numpy as np
 import tyro
 
-from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
+from mujoco_lab import (
+    RobotSpec,
+    Simulator,
+    SimulatorManager,
+    create_book_insertion,
+    create_cube_stack,
+)
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.learning.datasets.episode import Episode, load_episode
-from mujoco_lab.learning.datasets.replay import (
-    replay_action_repeat,
-    visual_signature,
-)
+from mujoco_lab.learning.datasets.replay import replay_action_repeat
 from mujoco_lab.utils.logger import Logger
 
 
@@ -40,18 +43,24 @@ class EpisodeReplay:
         required = {
             "scene",
             "environment",
-            "cubes",
             "robot",
             "robot_name",
             "dt",
-            "visual_sha256",
         }
         if not required.issubset(metadata):
             raise ValueError("Episode replay metadata is incomplete")
-        if metadata["scene"] != "cube_stack" or metadata["environment"] != "table_shelf":
-            raise ValueError("Unsupported replay scene; expected a bundled cube-stack mount")
+        if metadata["scene"] == "cube_stack" and metadata["environment"] == "table_shelf":
+            if "cubes" not in metadata:
+                raise ValueError("Episode replay metadata is incomplete: missing cubes")
+            scene = create_cube_stack(metadata["cubes"])
+        elif metadata["scene"] == "book_insertion" and metadata["environment"] == "book_shelf":
+            if "book" not in metadata:
+                raise ValueError("Episode replay metadata is incomplete: missing book")
+            scene = create_book_insertion(metadata["book"])
+        else:
+            raise ValueError("Unsupported replay scene; expected cube_stack or book_insertion")
         self.simulator = Simulator(
-            create_cube_stack(metadata["cubes"]),
+            scene,
             robots=[
                 RobotSpec(
                     metadata["robot_name"],
@@ -61,11 +70,6 @@ class EpisodeReplay:
             ],
             dt=metadata["dt"],
         )
-        model = self.simulator.model
-        if visual_signature(model) != metadata["visual_sha256"]:
-            raise ValueError(
-                "Replay model differs from the recorded model. Use the same assets and layout."
-            )
         self.frame_count = len(episode) + 1
         action_repeat = replay_action_repeat(metadata)
         self.frame_dt = self.simulator.dt * action_repeat
@@ -91,7 +95,7 @@ class EpisodeReplay:
 
 
 def main() -> None:
-    config = tyro.cli(Config, description="Replay a recorded cube-stacking episode")
+    config = tyro.cli(Config, description="Replay a recorded manipulation episode")
     if not np.isfinite(config.speed) or config.speed <= 0:
         raise ValueError("speed must be finite and positive")
     replay = EpisodeReplay(load_episode(config.path))

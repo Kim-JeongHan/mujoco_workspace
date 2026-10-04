@@ -11,7 +11,6 @@ class CubeProgressTracker:
     """Track each cube's best physical stage during one reset episode."""
 
     lift_meters = 0.04
-    place_hold_seconds = 0.5
 
     def __init__(self, task: CubeStackTask) -> None:
         self.task = task
@@ -20,14 +19,13 @@ class CubeProgressTracker:
         self._grasped = np.zeros(task.cubes, dtype=bool)
         self._lifted = np.zeros(task.cubes, dtype=bool)
         self._placed = np.zeros(task.cubes, dtype=bool)
-        self._place_since: list[float | None] = [None] * task.cubes
         self._final_distances = sample.goal_distances.copy()
 
     def observe(self) -> None:
         """Read the latest physics state once after an environment step."""
         sample = self.task.measurements()
-        now = float(self.task.simulator.data.time)
         self._final_distances = sample.goal_distances.copy()
+        self._placed |= self.task.completed_placements()
         robots = tuple(self.task.simulator.robots.values())
         for index in range(self.task.cubes):
             grasped_now = any(has_physical_grasp(robot, index) for robot in robots)
@@ -37,13 +35,6 @@ class CubeProgressTracker:
                 and sample.centers[index, 2] - self.initial_heights[index] >= self.lift_meters
             )
             self._grasped[index] |= grasped_now
-            if sample.stable_placement[index]:
-                if self._place_since[index] is None:
-                    self._place_since[index] = now
-                if now - self._place_since[index] >= self.place_hold_seconds:
-                    self._placed[index] = True
-            else:
-                self._place_since[index] = None
 
     def result(self) -> dict[str, object]:
         """Return sticky milestones and the actual final goal distances in meters."""
@@ -59,4 +50,41 @@ class CubeProgressTracker:
             "place_fraction": float(np.mean(self._placed)),
             "best_progress": float(np.mean(stages) / 3),
             "final_goal_distance": float(np.mean(self._final_distances)),
+        }
+
+
+class BookProgressTracker:
+    """Record physical book milestones and final pose errors without shaping reward."""
+
+    def __init__(self, task) -> None:
+        self.task = task
+        self.grasped = False
+        self.lifted = False
+        self.inserted = False
+        self.released = False
+        self.status = task.status()
+
+    def observe(self) -> None:
+        """Read grasp contacts and released shelf placement after an action."""
+        grasped_now = self.task.has_grasp()
+        self.grasped |= grasped_now
+        self.status = self.task.status()
+        height = self.task.simulator.data.xpos[self.task.body, 2]
+        self.lifted |= grasped_now and height - self.task.start_center[2] >= 0.04
+        self.inserted |= (
+            self.status.position_error < 0.015
+            and self.status.rotation_error < 0.12
+            and self.status.supported
+        )
+        self.released |= self.status.released_stable
+
+    def result(self) -> dict[str, object]:
+        """Return sticky milestones and final position/angular errors in SI units."""
+        return {
+            "book_grasped": bool(self.grasped),
+            "book_lifted": bool(self.lifted),
+            "book_inserted": bool(self.inserted),
+            "book_released": bool(self.released),
+            "book_position_error": self.status.position_error,
+            "book_rotation_error": self.status.rotation_error,
         }

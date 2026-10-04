@@ -53,10 +53,6 @@ def checkpoint_metadata(
 ) -> dict[str, Any]:
     """Describe the live policy with the same contract as its saved checkpoint."""
     frame_dim = int(normalizer.state_mean.shape[0])
-    if model.state_dim != frame_dim * config.obs_horizon:
-        raise ValueError("Policy input does not match normalizer frame size and obs_horizon")
-    if model.action_dim != normalizer.action_mean.shape[0]:
-        raise ValueError("Policy action dimension does not match normalizer")
     architecture = {
         "policy_type": config.policy_type,
         "frame_dim": frame_dim,
@@ -67,6 +63,8 @@ def checkpoint_metadata(
         "obs_horizon": config.obs_horizon,
         "execution_horizon": config.execution_horizon,
         "physics_steps_per_action": config.physics_steps_per_action,
+        "simulation_hz": config.simulation_hz,
+        "action_execution_hz": config.action_execution_hz,
     }
     if isinstance(model, FlowMatchingPolicy):
         architecture["flow_time_embed_dim"] = model.time_embed_dim

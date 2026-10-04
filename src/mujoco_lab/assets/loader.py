@@ -5,7 +5,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
-from mujoco_lab.assets import CUBE_COUNTS, ENVIRONMENT_SCENES, ROBOT_ASSETS
+from mujoco_lab.assets import BOOK_SCENES, CUBE_COUNTS, ENVIRONMENT_SCENES, ROBOT_ASSETS, BookType
 from mujoco_lab.assets.randomization import sample_cube_positions
 from mujoco_lab.assets.robot.robot import RobotConfig
 
@@ -37,6 +37,15 @@ def create_environment(name: str) -> mujoco.MjSpec:
     if spec.site("robot_mount") is None:
         raise ValueError(f"Environment {name!r} must define a 'robot_mount' site")
     return spec
+
+
+def create_book_insertion(book_type: BookType = "medium") -> mujoco.MjSpec:
+    """Load a fixed book insertion preset, including furniture and goal sites.
+
+    Book physics, initial placement, and matching goals are defined in XML.
+    The scene is editable for later randomization and robot composition.
+    """
+    return mujoco.MjSpec.from_file(str(BOOK_SCENES[book_type]))
 
 
 def create_cube_stack(

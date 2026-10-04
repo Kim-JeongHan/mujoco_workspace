@@ -79,7 +79,7 @@ def _config(policy_type, flow_time_embed_dim=128):
         hidden_dims=(8,),
         chunk_size=2,
         execution_horizon=1,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
     )
 
 

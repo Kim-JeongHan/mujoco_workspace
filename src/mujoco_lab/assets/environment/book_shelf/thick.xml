@@ -1,0 +1,18 @@
+<mujoco model="book_insertion_thick">
+  <include file="scene.xml"/>
+  <asset>
+    <model name="book" file="../objects/book/thick.xml"/>
+  </asset>
+  <worldbody>
+    <frame name="book_placement" pos="0.48 0.2 0.918"
+           quat="0.7071067811865476 0 0 0.7071067811865476">
+      <attach model="book" body="book" prefix=""/>
+    </frame>
+    <site name="book_target" type="box" pos="0.4 0.57 0.953"
+          quat="0.7071067811865476 0 0 0.7071067811865476" size="0.078 0.025 0.118"
+          rgba="0.8 0.4 0.2 0.2" group="1"/>
+    <site name="book_grasp_goal" pos="0.4 0.504 0.953"
+          quat="0 0 0.7071067811865476 0.7071067811865476"
+          size="0.005 0 0" rgba="1 0.5 0 1" group="1"/>
+  </worldbody>
+</mujoco>

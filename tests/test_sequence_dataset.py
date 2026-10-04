@@ -92,7 +92,7 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
         obs_horizon=2,
         chunk_size=1,
         execution_horizon=1,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
         hidden_dims=(16,),
         batch_size=4,
         num_epochs=1,

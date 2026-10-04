@@ -1,12 +1,12 @@
 """Demonstration episode storage and validation."""
 
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
-from zipfile import BadZipFile
 
 import numpy as np
 
@@ -47,14 +47,26 @@ class Episode:
             raise ValueError("states/actions must be finite")
         return self.states.shape[1], self.actions.shape[1]
 
-    def check_physics_step_consistency(self, physics_steps_per_action: int) -> None:
+    def check_physics_step_consistency(
+        self, physics_steps_per_action: int, *, simulation_dt: float | None = None
+    ) -> None:
         replay = self.metadata.get("replay") or {}
         repeat = replay_action_repeat(replay)
         if repeat != physics_steps_per_action:
             raise ValueError(
                 f"physics_steps_per_action={repeat} differs from config "
                 f"{physics_steps_per_action}; recollect with "
-                "--physics-steps-per-action matching the config"
+                "--simulation-hz and --action-execution-hz matching the config"
+            )
+
+        if (
+            simulation_dt is not None
+            and "dt" in replay
+            and not math.isclose(replay["dt"], simulation_dt, rel_tol=1e-10, abs_tol=1e-12)
+        ):
+            raise ValueError(
+                f"Dataset dt={replay['dt']} differs from configured simulation dt={simulation_dt}; "
+                "recollect with --simulation-hz matching the config"
             )
 
 
@@ -115,6 +127,7 @@ def load_episodes(data_dir: str | Path, *, success_only: bool = True) -> list[Ep
     By default only episodes whose metadata has ``success is True`` are kept.
     Failed and unlabeled attempts remain available with ``success_only=False``.
     Optional rewards and replay arrays are left untouched.
+    Loading and validation errors propagate unchanged.
     """
     directory = Path(data_dir)
     if not directory.is_dir():
@@ -126,17 +139,14 @@ def load_episodes(data_dir: str | Path, *, success_only: bool = True) -> list[Ep
     episodes: list[Episode] = []
     dimensions: tuple[int, int] | None = None
     for path in paths:
-        try:
-            episode = load_episode(path)
-            if success_only and episode.metadata.get("success") is not True:
-                continue
-            shape = episode.validate_training_data()
-            if dimensions is None:
-                dimensions = shape
-            elif shape != dimensions:
-                raise ValueError(f"feature dimensions {shape} differ from expected {dimensions}")
-        except (OSError, ValueError, TypeError, KeyError, AttributeError, BadZipFile) as error:
-            raise ValueError(f"Invalid episode {path}: {error}") from error
+        episode = load_episode(path)
+        if success_only and episode.metadata.get("success") is not True:
+            continue
+        shape = episode.validate_training_data()
+        if dimensions is None:
+            dimensions = shape
+        elif shape != dimensions:
+            raise ValueError(f"feature dimensions {shape} differ from expected {dimensions}")
         episodes.append(episode)
 
     if not episodes:

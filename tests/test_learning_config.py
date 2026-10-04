@@ -12,14 +12,14 @@ from mujoco_lab.learning.evaluate import run
 from mujoco_lab.learning.trainers.train_bc import run_training
 
 
-def test_rollout_options_share_cli_names_with_separate_defaults(tmp_path):
-    train = tyro.cli(TrainConfig, args=["--rollout.env-seed", "123"])
+def test_rollout_options_share_cli_names_and_defaults(tmp_path):
+    train = tyro.cli(TrainConfig, args=["--rollout.seed", "123"])
     evaluation = tyro.cli(
         EvalConfig,
-        args=["--checkpoint", str(tmp_path / "checkpoint.pt"), "--rollout.env-seed", "123"],
+        args=["--checkpoint", str(tmp_path / "checkpoint.pt"), "--rollout.seed", "123"],
     )
-    assert train.rollout.env_seed == evaluation.rollout.env_seed == 123
-    assert (train.rollout.num_episodes, evaluation.rollout.num_episodes) == (3, 10)
+    assert train.rollout.seed == evaluation.rollout.seed == 123
+    assert (train.rollout.num_episodes, evaluation.rollout.num_episodes) == (3, 3)
 
 
 @pytest.mark.parametrize(
@@ -28,7 +28,7 @@ def test_rollout_options_share_cli_names_with_separate_defaults(tmp_path):
         ({"obs_horizon": 0}, "obs_horizon"),
         ({"chunk_size": 0}, "chunk_size"),
         ({"execution_horizon": 17}, "execution_horizon"),
-        ({"physics_steps_per_action": 0}, "physics_steps_per_action"),
+        ({"action_execution_hz": 0}, "action_execution_hz"),
         ({"num_epochs": 0}, "num_epochs"),
         ({"log_interval": 0}, "log_interval"),
         ({"eval_interval": -1}, "eval_interval"),
@@ -73,7 +73,7 @@ def test_batch_size_reaches_dataloader_validation():
         batch_size=0,
         chunk_size=1,
         execution_horizon=1,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
         eval_interval=0,
     )
     with pytest.raises(ValueError, match="batch_size should be a positive integer"):

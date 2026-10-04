@@ -2,7 +2,6 @@
 
 import json
 from types import SimpleNamespace
-from typing import cast
 
 import numpy as np
 import pytest
@@ -11,10 +10,9 @@ import torch
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
 from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig, TrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
-from mujoco_lab.learning.evaluate import _verify_replay, run
-from mujoco_lab.learning.evaluation import evaluate_policy
+from mujoco_lab.learning.evaluate import run
+from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.factory import build_policy
-from mujoco_lab.simulation import Simulator
 
 
 class TinyEnv:
@@ -66,7 +64,7 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
         obs_horizon=2,
         chunk_size=chunk_size,
         execution_horizon=execution_horizon,
-        physics_steps_per_action=1,
+        action_execution_hz=500,
     )
     model = build_policy(
         policy_type, state_dim=2, action_dim=1, chunk_size=chunk_size, hidden_dims=()
@@ -89,21 +87,12 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
     return load_checkpoint(path)
 
 
-def evaluate(
-    env, model, normalizer, metadata, *, num_episodes=1, seed=50, policy_seed=70, max_steps=5
-):
-    return evaluate_policy(
+def evaluate(env, model, normalizer, metadata, *, num_episodes=1, seed=50, max_steps=5):
+    return PolicyEvaluator(
         env,
-        model,
-        normalizer,
-        metadata,
-        num_episodes=num_episodes,
-        seed=seed,
-        policy_seed=policy_seed,
-        max_steps=max_steps,
-        device=torch.device("cpu"),
-        flow_num_steps=3,
-    )
+        RolloutConfig(num_episodes=num_episodes, seed=seed, max_steps=max_steps, video_episodes=0),
+        torch.device("cpu"),
+    ).evaluate(model, normalizer, metadata, flow_num_steps=3)
 
 
 def test_mse_history_padding_chunk_alignment_clipping_and_success(tmp_path):
@@ -126,31 +115,12 @@ def test_mse_history_padding_chunk_alignment_clipping_and_success(tmp_path):
     assert [row["steps"] for row in rows] == [3, 3]
     assert all(row["success"] for row in rows)
     assert all(row["termination_reason"] == "success" for row in rows)
-    assert [row["clipped_actions"] for row in rows] == [1, 1]
-    assert [row["clipped_action_axes"] for row in rows] == [[1], [1]]
-    assert summary["clipped_action_axes"] == [2]
-    assert summary["action_clip_axis_fraction"] == pytest.approx([1 / 3])
-    assert summary["action_overrun_mean"] == pytest.approx([2 / 3])
-    assert summary["action_overrun_max"] == pytest.approx([2])
     assert rows[0]["sim_seconds"] == pytest.approx(0.006)
-    assert summary["action_clip_fraction"] == pytest.approx(1 / 3)
     assert summary["mean_success_sim_seconds"] == pytest.approx(0.006)
 
 
-def test_nonfinite_action_fails_attempt_without_stepping_and_timeout_counts(tmp_path):
+def test_timeout_counts(tmp_path):
     model, stats, metadata = checkpoint(tmp_path)
-    with torch.no_grad():
-        model.net[0].weight.zero_()
-        model.net[0].bias.fill_(float("nan"))
-    env = TinyEnv()
-    rows, summary = evaluate(env, model, stats, metadata, num_episodes=2)
-    assert env.seeds == [50, 51]
-    assert env.actions == []
-    assert [row["policy_seed"] for row in rows] == [70, 71]
-    assert summary["attempted"] == summary["nonfinite_failures"] == 2
-    assert summary["mean_success_sim_seconds"] is None
-    with torch.no_grad():
-        model.net[0].bias.zero_()
     rows, summary = evaluate(TinyEnv(finish=2), model, stats, metadata)
     assert rows[0]["termination_reason"] == "time_limit"
     assert not rows[0]["success"] and summary["timeouts"] == 1
@@ -194,39 +164,13 @@ def test_flow_seed_reproducibility_and_rng_and_mode_restoration(tmp_path):
     assert rows1 == rows2
     assert env1.actions == env2.actions
     assert env1.seeds == env2.seeds == [50, 51]
+    assert [row["env_seed"] for row in rows1] == [50, 51]
+    assert all("policy_seed" not in row for row in rows1)
     assert model.training
     torch.testing.assert_close(torch.random.get_rng_state(), rng_before)
     different = TinyEnv()
-    evaluate(different, model, stats, metadata, policy_seed=71)
+    evaluate(different, model, stats, metadata, seed=71)
     assert different.actions != env1.actions[: len(different.actions)]
-
-
-def test_replay_rejects_physics_change_with_same_visual_hash(monkeypatch):
-    simulator = SimpleNamespace(dt=0.004)
-    metadata = {
-        "dataset_metadata": {
-            "replay": {
-                "model_sha256": "old-physics",
-                "visual_sha256": "same-visual",
-                "mujoco_version": "3.13.0",
-            }
-        }
-    }
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluate.cube_stack_metadata",
-        lambda *args, **kwargs: {
-            "model_sha256": "new-physics",
-            "visual_sha256": "same-visual",
-            "mujoco_version": "3.13.0",
-        },
-    )
-    with pytest.raises(ValueError, match="model_sha256"):
-        _verify_replay(
-            cast(Simulator, simulator),
-            metadata["dataset_metadata"]["replay"],
-            robot="forte",
-            cubes=2,
-        )
 
 
 def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monkeypatch):
@@ -259,20 +203,19 @@ def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monke
     monkeypatch.setattr(
         "mujoco_lab.learning.evaluate.load_checkpoint", lambda path: (model, stats, metadata)
     )
-    monkeypatch.setattr("mujoco_lab.learning.evaluate.create_cube_stack", lambda *a, **k: None)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate.Simulator", FakeSimulator)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate._verify_replay", lambda *a, **k: None)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate.create_controller", lambda *a, **k: None)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate.CubeStackTask", lambda *a, **k: None)
+    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.create_cube_stack", lambda *a, **k: None)
+    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.Simulator", FakeSimulator)
+    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.create_controller", lambda *a, **k: None)
+    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.CubeStackTask", lambda *a, **k: None)
     monkeypatch.setattr(
-        "mujoco_lab.learning.evaluate.CubeStackEnv",
+        "mujoco_lab.learning.evaluate_cube.CubeStackEnv",
         lambda *a, **k: TinyEnv(finish=1, success=True, dt=0.004),
     )
     run_dir, summary = run(
         EvalConfig(
             checkpoint=tmp_path / "checkpoint.pt",
             device="cpu",
-            rollout=RolloutConfig(num_episodes=2, env_seed=50, max_steps=1, video_episodes=0),
+            rollout=RolloutConfig(num_episodes=2, seed=50, max_steps=1, video_episodes=0),
             output_dir=tmp_path / "logs",
         )
     )
@@ -294,8 +237,44 @@ def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monke
             "eval/successes": 2,
             "eval/success_rate": 1.0,
             "eval/timeouts": 0,
-            "eval/nonfinite_failures": 0,
-            "eval/action_clip_fraction": summary["action_clip_fraction"],
             "eval/mean_success_sim_seconds": 0.004,
         }
     ]
+
+
+def test_evaluator_reuse_resets_episode_state_and_accepts_another_policy(tmp_path):
+    model, normalizer, metadata = checkpoint(tmp_path, policy_type="flow")
+    env = TinyEnv(finish=3)
+    evaluator = PolicyEvaluator(
+        env,
+        RolloutConfig(num_episodes=2, seed=50, max_steps=5, video_episodes=0),
+        torch.device("cpu"),
+    )
+    first = evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
+    actions = env.actions.copy()
+    second = evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
+    assert second == first
+    assert env.actions == actions * 2
+    assert env.seeds == [50, 51, 50, 51]
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other, other_normalizer, other_metadata = checkpoint(other_dir, policy_type="mse")
+    rows, summary = evaluator.evaluate(other, other_normalizer, other_metadata, flow_num_steps=3)
+    assert len(rows) == summary["attempted"] == 2
+    assert [row["steps"] for row in rows] == [3, 3]
+
+
+def test_evaluator_restores_model_and_rng_when_step_raises(tmp_path):
+    model, normalizer, metadata = checkpoint(tmp_path, policy_type="flow")
+
+    class FailingEnv(TinyEnv):
+        def step(self, action):
+            raise RuntimeError("step failed")
+
+    evaluator = PolicyEvaluator(FailingEnv(), RolloutConfig(video_episodes=0), torch.device("cpu"))
+    model.train()
+    rng = torch.random.get_rng_state().clone()
+    with pytest.raises(RuntimeError, match="step failed"):
+        evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
+    assert model.training
+    torch.testing.assert_close(torch.random.get_rng_state(), rng)

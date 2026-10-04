@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=./schema.json
+# Preserve the previous Panda defaults; physical insertion is not yet validated.
+# Gripper open/closed targets come from the live robot's MJCF limits.
+arm:
+  velocity_limit: 0.35 # rad/s; task tuning, not a motor rating
+  acceleration_limit: 1.0 # rad/s^2
+gripper:
+  velocity_limit: 0.025 # m/s
+  acceleration_limit: 0.1 # m/s^2
+waypoint_tolerance: 0.02
+arm_tolerance: 0.025
+stage_dwell_s: 0.4
+stage_timeout_s: 12.0
+lost_grasp_grace_s: 0.25
+approach_distance_m: 0.032 # Back off along the pickup grasp's tool axis.
+lift_height_m: 0.06
+min_lift_height_m: 0.04
+insertion_clearance_m: 0.04 # Height above the final shelf placement.
+shelf_front_y_m: 0.43
+preinsert_clearance_m: 0.03 # Keep the entire book in front of the opening.
+retract_distance_m: 0.18
+stages:
+  - name: approach
+    arm:
+      velocity_limit: 0.6
+  - name: pick
+  - name: close
+  - name: lift
+  - name: preinsert
+  - name: insert
+  - name: lower
+  - name: release
+  - name: retract

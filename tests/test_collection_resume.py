@@ -3,6 +3,7 @@
 import gc
 import weakref
 from unittest.mock import Mock
+from zipfile import BadZipFile
 
 import numpy as np
 import pytest
@@ -147,7 +148,7 @@ def test_resume_rejects_missing_seed_gap_corruption_and_replay_mismatch(tmp_path
         list(iter_episodes(Mock(), Mock(), 3, seed=10, output_dir=directory, resume=True))
     (directory / "episode_000002.npz").rename(directory / "episode_000001.npz")
     (directory / "episode_000001.npz").write_bytes(b"incomplete archive")
-    with pytest.raises(ValueError, match="Invalid episode file"):
+    with pytest.raises(BadZipFile):
         list(iter_episodes(Mock(), Mock(), 3, seed=10, output_dir=directory, resume=True))
 
 
@@ -184,7 +185,7 @@ def test_atomic_save_never_exposes_partial_final_or_replaces_existing(tmp_path, 
 def test_cli_streams_resume_and_counts_only_new_episodes(
     tmp_path, monkeypatch, capsys, method, cube_yaw_range_degrees, max_steps, robot_name
 ):
-    from mujoco_lab.learning import collect as cli
+    from mujoco_lab.learning import collect_cube as cli
 
     config = cli.Config(
         count=4,
@@ -196,7 +197,7 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
         cube_yaw_range_degrees=cube_yaw_range_degrees,
     )
     simulator = Mock()
-    simulator.robots = {robot_name: Mock()}
+    simulator.robots = {robot_name: Mock(robot_type=robot_name)}
     iteration = Mock(return_value=iter([episode(12), episode(13)]))
     monkeypatch.setattr(cli.tyro, "cli", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(cli, "Simulator", lambda *_args, **_kwargs: simulator)
@@ -205,7 +206,9 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
     monkeypatch.setattr(cli, "create_controller", Mock())
     monkeypatch.setattr(cli, "CubeStackTask", Mock())
     monkeypatch.setattr(cli, "CubeStackEnv", Mock())
-    monkeypatch.setattr(cli, "create_expert", Mock())
+    monkeypatch.setattr(cli, "CubeStackExpert", Mock())
+    monkeypatch.setattr(cli, "load_cube_recipe", Mock())
+    monkeypatch.setattr(cli, "planner_from_config", Mock())
     monkeypatch.setattr(cli, "iter_episodes", iteration)
 
     cli.main()
@@ -216,9 +219,22 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
     assert iteration.call_args.kwargs["max_steps"] == max_steps
     assert iteration.call_args.kwargs["replay_metadata"] == {"model": "same"}
     assert cli.CubeStackEnv.call_args.kwargs["cube_yaw_range_degrees"] == cube_yaw_range_degrees
-    assert cli.create_expert.call_args.kwargs["method"] == method
-    assert cli.create_controller.call_args.args[0] == (
-        "position" if robot_name == "panda" else "pd"
+    assert cli.CubeStackExpert.call_args.kwargs["method"] == method
+    cli.load_cube_recipe.assert_called_once_with(robot_name)
+    assert cli.CubeStackExpert.call_args.kwargs["recipe"] is cli.load_cube_recipe.return_value
+    if method == "sampling":
+        cli.planner_from_config.assert_called_once_with(config.planning)
+        assert (
+            cli.CubeStackExpert.call_args.kwargs["planner"] is cli.planner_from_config.return_value
+        )
+    else:
+        cli.planner_from_config.assert_not_called()
+        assert cli.CubeStackExpert.call_args.kwargs["planner"] is None
+    cli.create_controller.assert_called_once_with(
+        simulator.robots[robot_name], cli.load_robot_config(robot_name).controller
+    )
+    simulator.robots[robot_name].change_controller.assert_called_once_with(
+        cli.create_controller.return_value
     )
     captured = capsys.readouterr()
     assert captured.out == ""
