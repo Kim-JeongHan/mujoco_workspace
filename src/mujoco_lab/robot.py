@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import mujoco
 import numpy as np
@@ -251,7 +251,8 @@ class Robot:
         command = self.data.ctrl[self.actuator_ids].copy()
         if self.controller is not None:
             values = np.asarray(
-                self.controller.compute(self.get_control_state(), self.target), dtype=float
+                self.controller.compute(self.get_control_state(), cast(ControlTarget, self.target)),
+                dtype=float,
             )
             required = len(self.control_actuator_slots)
             if values.shape != (required,):

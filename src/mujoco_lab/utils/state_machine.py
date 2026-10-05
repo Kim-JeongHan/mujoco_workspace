@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Hashable, Mapping
-from typing import Generic, TypeVar
-
-State = TypeVar("State", bound=Hashable)
 
 
-class StateMachine(Generic[State]):
+class StateMachine[State: Hashable]:
     """Hold one state and reject transitions outside a fixed graph.
 
     Transitions are explicit: failed surrounding work does not roll back the state.

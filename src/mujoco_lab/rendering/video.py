@@ -6,7 +6,7 @@ import subprocess
 from contextlib import ExitStack
 from math import ceil, isfinite
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import mujoco
 import numpy as np
@@ -65,7 +65,7 @@ class VideoWriter:
         """Append one RGB frame to the encoder."""
         if pixels.shape != (self.height, self.width, 3) or pixels.dtype != np.uint8:
             raise ValueError("video frame must be uint8 RGB at the configured size")
-        self._process.stdin.write(pixels.tobytes())
+        cast(BinaryIO, self._process.stdin).write(pixels.tobytes())
 
     def close(self) -> Path:
         """Finish MP4 metadata and report encoder errors."""
@@ -75,7 +75,7 @@ class VideoWriter:
                 self._process.stdin.close()
             except BrokenPipeError:
                 broken_pipe = True
-        error = self._process.stderr.read().decode(errors="replace").strip()
+        error = cast(BinaryIO, self._process.stderr).read().decode(errors="replace").strip()
         if self._process.wait() != 0 or broken_pipe:
             raise RuntimeError(f"FFmpeg could not write {self.path}: {error}")
         return self.path

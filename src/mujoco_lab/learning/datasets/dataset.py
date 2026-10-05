@@ -1,10 +1,11 @@
+from collections.abc import Mapping, Sequence
+
+import numpy as np
 from torch.utils.data import Dataset
 
-from mujoco_lab.learning.datasets.episode import Episode
 
-
-class ChunkDataset(Dataset):
-    def __init__(self, episodes: Episode, chunk_size: float):
+class ChunkDataset(Dataset[tuple[np.ndarray, np.ndarray]]):
+    def __init__(self, episodes: Sequence[Mapping[str, np.ndarray]], chunk_size: int):
         self.episodes = episodes
         self.chunk_size = chunk_size
 
@@ -19,8 +20,8 @@ class ChunkDataset(Dataset):
     def __len__(self):
         return len(self.indices)
 
-    def __getitem__(self, idx):
-        ep_idx, t = self.indices[idx]
+    def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        ep_idx, t = self.indices[index]
 
         episode = self.episodes[ep_idx]
 

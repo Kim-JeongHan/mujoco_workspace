@@ -1,0 +1,23 @@
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+
+from mujoco import MjData, MjModel, MjvCamera, MjvScene
+
+class Handle:
+    @property
+    def cam(self) -> MjvCamera: ...
+    @property
+    def user_scn(self) -> MjvScene | None: ...
+    def close(self) -> None: ...
+    def is_running(self) -> bool: ...
+    def lock(self) -> AbstractContextManager[object]: ...
+    def sync(self, state_only: bool = False) -> None: ...
+
+def launch_passive(
+    model: MjModel,
+    data: MjData,
+    *,
+    key_callback: Callable[[int], None] | None = None,
+    show_left_ui: bool = True,
+    show_right_ui: bool = True,
+) -> Handle: ...

@@ -38,7 +38,7 @@ class Logger:
             raise ValueError("wandb_mode must be online or disabled")
         self.run_dir = Path(run_dir)
         self.config = json.loads(json.dumps(dict(config), allow_nan=False))
-        self.wandb_mode = mode
+        self.wandb_mode: Literal["online", "disabled"] = mode
         self.wandb_project = (
             wandb_project
             if wandb_project is not None

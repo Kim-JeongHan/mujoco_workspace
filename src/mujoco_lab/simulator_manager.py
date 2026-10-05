@@ -10,7 +10,7 @@ from contextlib import ExitStack, contextmanager
 from math import isfinite
 from operator import index
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import mujoco
 
@@ -152,8 +152,9 @@ class SimulatorManager:
                 with viewer.lock():
                     simulator.physics_step()
                     if draw is not None:
-                        viewer.user_scn.ngeom = 0
-                        draw(viewer.user_scn, simulator.data)
+                        scene = cast(mujoco.MjvScene, viewer.user_scn)
+                        scene.ngeom = 0
+                        draw(scene, simulator.data)
                 try:
                     viewer.sync(state_only=True)
                 finally:
@@ -223,8 +224,9 @@ class SimulatorManager:
                             completed += 1
                             recorder.record_due(_copy_camera(viewer.cam))
                         if draw is not None:
-                            viewer.user_scn.ngeom = 0
-                            draw(viewer.user_scn, simulator.data)
+                            scene = cast(mujoco.MjvScene, viewer.user_scn)
+                            scene.ngeom = 0
+                            draw(scene, simulator.data)
                     try:
                         viewer.sync(state_only=True)
                     finally:

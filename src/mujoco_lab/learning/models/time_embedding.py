@@ -9,6 +9,8 @@ from torch import nn
 class SinusoidalTimeEmbedding(nn.Module):
     """Embed unit-interval time using periods from 0.004 to 4.0."""
 
+    frequencies: torch.Tensor
+
     def __init__(self, dim: int) -> None:
         super().__init__()
         if not isinstance(dim, int) or isinstance(dim, bool) or dim <= 0 or dim % 2:

@@ -10,6 +10,11 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      TORCHINDUCTOR_COMPILE_THREADS: "1"
 
     steps:
       - name: Checkout repository
@@ -27,16 +32,20 @@ jobs:
         run: uv lock --check
 
       - name: Install dependencies
-        run: uv sync --locked --dev
+        run: uv sync --locked --dev --extra learning --extra viewer
 
       - name: Ruff lint
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Ruff format
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
 
       - name: Type check
-        run: uv run ty check
+        # Type-check production modules and examples. Ruff still checks scripts
+        # and tests; pytest exercises test doubles.
+        run: |
+          uv run --no-sync python -c "import runpy; runpy.run_path('typings/mujoco/__init__.pyi')"
+          uv run --no-sync ty check src examples
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --no-sync pytest

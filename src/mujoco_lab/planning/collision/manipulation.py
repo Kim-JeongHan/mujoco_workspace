@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 import mujoco
 import numpy as np
+from numpy.typing import ArrayLike
 
 from .mujoco import MuJoCoCollisionChecker
 
@@ -34,7 +35,7 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
         robot,
         stage_name: str,
         *,
-        bounds: Sequence[Sequence[float]] | None = None,
+        bounds: ArrayLike | None = None,
         edge_resolution: float = 0.05,
         support_geom: str | int | None = None,
         departure_support_geom: str | int | None = None,

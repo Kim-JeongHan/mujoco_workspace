@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import mujoco
 import numpy as np
@@ -186,7 +187,7 @@ class RobotState:
             data.qpos[indices] = q
             mujoco.mj_kinematics(self.model, data)
             rotation = Rotation.from_matrix(data.site_xmat[site].reshape(3, 3))
-            angle = (target_rotation * rotation.inv()).as_rotvec()
+            angle = cast(Rotation, target_rotation * rotation.inv()).as_rotvec()
             return np.r_[data.site_xpos[site] - position, angle * 0.18]
 
         candidates = (current,) if seed is None else (seed, current)

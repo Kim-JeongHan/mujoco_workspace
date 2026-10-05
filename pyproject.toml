@@ -61,6 +61,7 @@ source-include = [
     "examples/**",
     "tests/**",
     "third_party/**",
+    "typings/**",
     "uv.lock",
     ".python-version",
 ]
@@ -112,6 +113,9 @@ line-ending = "auto"
 # ty
 # ============================================================
 [tool.ty]
+
+[tool.ty.environment]
+extra-paths = ["typings"]
 
 [tool.ty.src]
 exclude = ["third_party"]

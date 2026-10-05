@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -67,6 +67,7 @@ class Transform:
 
         RPY uses extrinsic (fixed-axis) xyz Euler angles.
         """
+        pose = np.asarray(pose)
         return cls(rotation=Rotation.from_euler("xyz", pose[3:]), translation=pose[:3])
 
     @classmethod
@@ -128,7 +129,7 @@ class Transform:
         """Compose transforms: apply ``other`` first, then ``self``."""
         if not isinstance(other, Transform):
             return NotImplemented
-        return self.from_transform(self._transform * other._transform)
+        return self.from_transform(cast(RigidTransform, self._transform * other._transform))
 
     def apply(self, points: ArrayLike) -> NDArray[np.float64]:
         """Transform a point (3,) or points (..., 3), including translation.
@@ -166,7 +167,7 @@ class Transform:
         import matplotlib.pyplot as plt
 
         created_fig = ax is None
-        if created_fig:
+        if ax is None:
             fig = plt.figure(layout="constrained")
             ax = fig.add_subplot(111, projection="3d")
             ax.view_init(elev=25, azim=-60, vertical_axis="z")
@@ -175,7 +176,7 @@ class Transform:
         had_data = ax.has_data()
         origin = self.as_translation()
         directions = self.as_rotation().as_matrix().T * length
-        for axis, color, direction in zip("xyz", "rgb", directions):
+        for axis, color, direction in zip("xyz", "rgb", directions, strict=True):
             ax.quiver(
                 *origin,
                 *direction,
@@ -187,7 +188,7 @@ class Transform:
                 label=f"{label}_{axis}" if label else None,
             )
         if label:
-            ax.text(*origin, label, fontsize=10, color="k")
+            ax.text(origin[0], origin[1], origin[2], label, fontsize=10, color="k")
 
         points = np.vstack((origin, origin + directions))
         ax.set_autoscale_on(True)

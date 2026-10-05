@@ -12,5 +12,5 @@ MUJOCO_LOG.TXT
 
 ur20
 ur30
-third_party
+third_party/*
 /docs/

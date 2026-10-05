@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from time import perf_counter
+from typing import cast
 
 import numpy as np
 import torch
@@ -116,7 +117,7 @@ def run_training(
         averaged = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(config.ema_decay))
         averaged.module.requires_grad_(False)
         averaged.module.eval()
-    evaluation_model = model if averaged is None else averaged.module
+    evaluation_model = model if averaged is None else cast(BasePolicy, averaged.module)
 
     @torch.compile(options={"fallback_random": True})
     def train_step(state, action_chunk):

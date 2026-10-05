@@ -109,7 +109,7 @@ def main() -> None:
             replay.frame_dt,
             replay.set_frame,
             speed=config.speed,
-            frame_times=replay.frame_times,
+            frame_times=replay.frame_times.tolist(),
         )
     finally:
         manager.remove_simulator("replay")

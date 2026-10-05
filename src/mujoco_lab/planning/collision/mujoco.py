@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import mujoco
 import numpy as np
@@ -32,7 +33,7 @@ class MuJoCoCollisionChecker(CollisionChecker):
         *,
         frame: str | None = None,
         joint_names: Sequence[str] | None = None,
-        bounds: Sequence[Sequence[float]] | None = None,
+        bounds: ArrayLike | None = None,
         edge_resolution: float = 0.1,
     ) -> None:
         if (frame is None) == (joint_names is None):
@@ -45,7 +46,7 @@ class MuJoCoCollisionChecker(CollisionChecker):
         if frame is not None:
             selected = [state.joint_ids[slot] for slot in state.get_frame_joint_slots(frame)]
         else:
-            names = tuple(joint_names)
+            names = tuple(cast(Sequence[str], joint_names))
             if not names or len(names) != len(set(names)):
                 raise ValueError("joint_names must be nonempty and unique")
             unknown = set(names) - set(state.joint_names)
