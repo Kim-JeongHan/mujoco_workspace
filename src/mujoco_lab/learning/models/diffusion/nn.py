@@ -9,7 +9,9 @@ enforces local consistency; composing many steps drives global coherence.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from itertools import pairwise
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -233,7 +235,7 @@ class TemporalUnet(nn.Module):
         t_emb = self.time_mlp(t)  # [B, time_embed_dim]
 
         skips: list[torch.Tensor] = []
-        for resnet1, resnet2, downsample in self.downs:
+        for resnet1, resnet2, downsample in cast(Iterable[nn.ModuleList], self.downs):
             x = resnet1(x, t_emb)
             x = resnet2(x, t_emb)
             skips.append(x)
@@ -242,7 +244,7 @@ class TemporalUnet(nn.Module):
         x = self.mid_block1(x, t_emb)
         x = self.mid_block2(x, t_emb)
 
-        for resnet1, resnet2, upsample in self.ups:
+        for resnet1, resnet2, upsample in cast(Iterable[nn.ModuleList], self.ups):
             skip = skips.pop()
             # Crop skip to match x if sizes differ (can happen with odd lengths).
             if skip.shape[-1] != x.shape[-1]:
@@ -325,6 +327,8 @@ class TemporalValueNet(nn.Module):
         # Register a learned constant to fill the time-embedding slot.
         self.register_buffer("_const_t", torch.zeros(time_embed_dim))
 
+    _const_t: torch.Tensor
+
     def _get_t_emb(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return self._const_t.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1)
 
@@ -346,7 +350,7 @@ class TemporalValueNet(nn.Module):
         x, _ = self._pad_to_multiple(x)
         t_emb = self._get_t_emb(batch, device=x.device, dtype=x.dtype)
 
-        for resnet1, resnet2, downsample in self.encoder:
+        for resnet1, resnet2, downsample in cast(Iterable[nn.ModuleList], self.encoder):
             x = resnet1(x, t_emb)
             x = resnet2(x, t_emb)
             x = downsample(x)

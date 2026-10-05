@@ -80,18 +80,6 @@ class DiffusionModel(nn.Module):
             t = t.expand(x.shape[0])
         return self.unet(x, t)
 
-    # ------------------------------------------------------------------
-    # Checkpoint interface - expose full model state, not just the backbone.
-    # ------------------------------------------------------------------
-
-    def load_state_dict(  # type: ignore[override]
-        self,
-        state_dict: dict[str, object],
-        strict: bool = True,
-    ) -> tuple[list[str], list[str]]:
-        incompatible = super().load_state_dict(state_dict, strict=strict)  # type: ignore[arg-type]
-        return incompatible.missing_keys, incompatible.unexpected_keys
-
     def set_seed(self, seed: int) -> None:
         torch.manual_seed(seed)
 
