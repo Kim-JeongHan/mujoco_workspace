@@ -174,8 +174,10 @@ def cube_stack_metadata(
     robot: str,
     physics_steps_per_action: int = 1,
     cube_yaw_range_degrees: float = 0.0,
+    xy_range: float = 0.02,
+    min_gap: float = 0.01,
 ) -> dict[str, Any]:
-    """Describe a bundled cube scene with one robot at its scene mount."""
+    """Describe a bundled cube scene and its collection randomization."""
     repeat = replay_action_repeat({"physics_steps_per_action": physics_steps_per_action})
     return {
         "scene": "cube_stack",
@@ -186,6 +188,8 @@ def cube_stack_metadata(
         "dt": simulator.dt,
         "physics_steps_per_action": repeat,
         "cube_yaw_range_degrees": cube_yaw_range_degrees,
+        "xy_range": xy_range,
+        "min_gap": min_gap,
         "mujoco_version": mujoco.__version__,
         "model_sha256": model_signature(simulator.model),
         "visual_sha256": visual_signature(simulator.model),

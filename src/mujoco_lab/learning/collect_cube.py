@@ -101,6 +101,8 @@ def main() -> None:
         robot=config.robot,
         physics_steps_per_action=config.physics_steps_per_action,
         cube_yaw_range_degrees=config.cube_yaw_range_degrees,
+        xy_range=config.xy_range,
+        min_gap=config.min_gap,
     )
     robot = simulator.robots[config.robot]
     controller = create_controller(robot, robot_config.controller)

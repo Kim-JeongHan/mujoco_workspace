@@ -9,6 +9,7 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.randomization import sample_cube_positions
 from mujoco_lab.behaviors import CubeStackTask
+from mujoco_lab.learning.datasets.replay import cube_stack_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
 
@@ -97,7 +98,8 @@ def test_zero_yaw_keeps_legacy_xy_draws_and_home_quaternion():
         CubeStackEnv(CubeStackTask(simulator, 2), cube_yaw_range_degrees=float("nan"))
 
 
-def test_evaluation_restores_recorded_yaw(monkeypatch):
+@pytest.mark.parametrize("recorded_ranges", [False, True])
+def test_evaluation_restores_recorded_randomization(recorded_ranges):
     metadata = {
         "dataset_metadata": {
             "replay": {
@@ -111,9 +113,24 @@ def test_evaluation_restores_recorded_yaw(monkeypatch):
             }
         }
     }
-    env, scene = create_evaluation_env(metadata, xy_range=0.02, min_gap=0.01, max_steps=1)
+    replay = metadata["dataset_metadata"]["replay"]
+    if recorded_ranges:
+        replay.update(xy_range=0.04, min_gap=0.02)
+    env, scene = create_evaluation_env(metadata, xy_range=None, min_gap=None, max_steps=1)
+    assert env.xy_range == scene["xy_range"] == (0.04 if recorded_ranges else 0.02)
+    assert env.min_gap == scene["min_gap"] == (0.02 if recorded_ranges else 0.01)
     assert env.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 45.0
     assert max(map(abs, env.reset(seed=11)[1]["cube_yaws_degrees"])) > 0
+    recorded = cube_stack_metadata(
+        env.simulator,
+        cubes=2,
+        robot="forte",
+        xy_range=env.xy_range,
+        min_gap=env.min_gap,
+        cube_yaw_range_degrees=env.cube_yaw_range_degrees,
+    )
+    assert recorded["xy_range"] == scene["xy_range"]
+    assert recorded["min_gap"] == scene["min_gap"]
     del env
     gc.collect()
     overridden, scene = create_evaluation_env(
@@ -124,5 +141,7 @@ def test_evaluation_restores_recorded_yaw(monkeypatch):
         cube_yaw_range_degrees=0.0,
     )
     assert overridden.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 0.0
+    assert overridden.xy_range == scene["xy_range"] == 0.02
+    assert overridden.min_gap == scene["min_gap"] == 0.01
     del overridden
     gc.collect()

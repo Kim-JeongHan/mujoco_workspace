@@ -26,7 +26,7 @@ def create_evaluation_env(
     metadata: dict[str, Any],
     *,
     xy_range: float | None,
-    min_gap: float,
+    min_gap: float | None,
     max_steps: int,
     cube_yaw_range_degrees: float | None = None,
     book_yaw_range_degrees: float | None = None,

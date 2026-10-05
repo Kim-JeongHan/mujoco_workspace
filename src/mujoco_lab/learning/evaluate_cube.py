@@ -18,7 +18,7 @@ def create_cube_evaluation_env(
     metadata: dict[str, Any],
     *,
     xy_range: float | None,
-    min_gap: float,
+    min_gap: float | None,
     max_steps: int,
     cube_yaw_range_degrees: float | None = None,
 ) -> tuple[CubeStackEnv, dict[str, Any]]:
@@ -48,9 +48,11 @@ def create_cube_evaluation_env(
     controller = create_controller(robot, robot_config.controller)
     robot.change_controller(controller)
     task = CubeStackTask(simulator, cubes)
+    xy_range = replay.get("xy_range", 0.02) if xy_range is None else xy_range
+    min_gap = replay.get("min_gap", 0.01) if min_gap is None else min_gap
     env = CubeStackEnv(
         task,
-        xy_range=replay.get("xy_range", 0.02) if xy_range is None else xy_range,
+        xy_range=xy_range,
         min_gap=min_gap,
         cube_yaw_range_degrees=yaw_range,
         max_steps=max_steps,
@@ -66,6 +68,8 @@ def create_cube_evaluation_env(
         "action_execution_hz": 1.0 / (simulator.dt * action_repeat),
         "physics_steps_per_action": action_repeat,
         "cube_yaw_range_degrees": yaw_range,
+        "xy_range": xy_range,
+        "min_gap": min_gap,
         "action_dt": env.action_dt,
     }
     return env, scene
