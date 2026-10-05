@@ -23,6 +23,11 @@ The CLI supports Panda and Forte, cube-stack scenes, and heuristic or sampling e
 
 Simulator initializes robot joints from `pose.default` in `robot.yaml` when it is configured. Arm angles in YAML use degrees and the gripper position uses meters; dependent finger joints follow their equality constraints. `reset()` restores this same initial pose. Robots without `pose.default` use their XML `home` keyframe.
 
+The cube heuristic uses the measured Forte arm posture as a shared IK reference
+and chooses nearby collision-free wrist branches for its recipe poses.
+Forte pickup, transport, and retract paths are collision-checked, including their
+smoothed trajectories. An incompatible path reports a failure before execution.
+
 ## Collect demonstrations
 
 ```bash

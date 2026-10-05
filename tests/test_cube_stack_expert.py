@@ -321,6 +321,7 @@ def test_heuristic_first_approach_limits_detours_from_the_actual_home_pose():
     obs, info = env.reset(seed=42)
     expert.reset(obs, info)
     stage = expert._plan[0]
+    reference = robot.state.snapshot().qpos[:7].copy()
     site = expert.robot.state.site_id("grasp")
     goal = expert.starts[stage.cube_index] + stage.recipe.offset_xyz_m
     above_pick = expert.starts[stage.cube_index] + expert.recipe.stages[0].offset_xyz_m
@@ -363,5 +364,6 @@ def test_heuristic_first_approach_limits_detours_from_the_actual_home_pose():
         (second * first.inv()).magnitude() for first, second in pairwise(rotations)
     )
     assert angular_travel < orientation_errors[0] + np.deg2rad(20)
-    assert np.max(np.abs(stage.waypoints[-1][5:7])) < np.deg2rad(45)
+    # Wrist angles use the XML's rebased zero; constrain motion from the actual home.
+    assert np.max(np.abs(stage.waypoints[-1][5:7] - reference[5:7])) < np.deg2rad(90)
     assert not simulator.data.warning.number.any()

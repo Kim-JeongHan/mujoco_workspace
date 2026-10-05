@@ -168,7 +168,8 @@ class CubeStackExpert(Expert):
     ) -> bool:
         """Advance after trajectory completion, reach, and requested physical checks."""
         stage = self._plan[self.stage]
-        goal = stage.waypoints[-1]
+        trajectory = self.execution.trajectory
+        goal = trajectory.path[-1, :7] if trajectory is not None else stage.waypoints[-1]
         close_enough = np.max(np.abs(goal - current[:7])) < self.recipe.arm_tolerance
         # A cube can prevent the fingers from reaching the commanded closing gap.
         finger_close = abs(stage.gripper_target - finger_target) < self.recipe.gripper_tolerance
@@ -302,15 +303,43 @@ class CubeStackExpert(Expert):
             else self.heuristic_trajectory(stage)
         )
 
+    def forte_heuristic_ik_candidates(self, pose, reference, checker):
+        """Return nearby checked IK branches for a requested Forte grasp pose."""
+        seeds = [reference]
+        # Forearm/wrist roll seeds escape folded wrist branches without
+        # changing the requested grasp pose or using a sampling path planner.
+        for sign in (-1, 1):
+            for wrist_sign in (-1, 1):
+                seed = reference.copy()
+                seed[4] += sign * np.pi / 2
+                seed[6] += wrist_sign * np.pi / 2
+                seeds.append(seed)
+        continuous = ~self.simulator.model.jnt_limited[self.robot.state.joint_ids[:7]].astype(bool)
+        candidates = []
+        for seed in seeds:
+            try:
+                q = self.motion.solve_ik(pose, seed)
+            except IKError:
+                continue
+            q[continuous] = (
+                reference[continuous]
+                + (q[continuous] - reference[continuous] + np.pi) % (2 * np.pi)
+                - np.pi
+            )
+            if checker.is_collision_free(q):
+                candidates.append(q)
+        return sorted(candidates, key=lambda q: np.linalg.norm(q - reference))
+
     def build_stages(self, starts: np.ndarray, goals: np.ndarray) -> list[PlannedStage]:
         """Compute ordered targets from (cube_count, 3) poses; defer live paths."""
         self._starts = np.array(starts, dtype=float, copy=True)
-        # Keep Forte's tabletop IK on its reachable forward-facing branch.
+        # Keep heuristic IK near the measured posture after joint-reference changes.
         state = self.robot.state
+        reference = state.snapshot().qpos[:7].copy()
         seed = (
             self.simulator.model.qpos0[state.qpos_indices[:7]].copy()
-            if self.robot.robot_type == "forte"
-            else state.snapshot().qpos[:7].copy()
+            if self.robot.robot_type == "forte" and self.method == "sampling"
+            else reference
         )
         if self.recipe.euler_xyz_degrees is None:
             rotation = self.simulator.data.site_xmat[state.site_id(self.recipe.frame)].reshape(3, 3)
@@ -322,9 +351,26 @@ class CubeStackExpert(Expert):
             recipes = tuple(stage for stage in recipes if stage.name in self.SAMPLING_STAGES)
         stages = []
         for index in np.argsort(goals[:, 2]):
+            checker = (
+                self.collision_checker(int(index), "pick")
+                if self.robot.robot_type == "forte" and self.method == "heuristic"
+                else None
+            )
             for stage in recipes:
                 pose = self.stage_pose(stage, int(index), starts, goals, rotation)
-                seed = self.motion.solve_ik(pose, seed)
+                # Independent Forte poses share the same posture reference so a
+                # pickup-side null-space drift cannot carry into place or the next cube.
+                if checker is not None:
+                    candidates = self.forte_heuristic_ik_candidates(pose, reference, checker)
+                    # Let execution report a blocked pose as an expected route
+                    # failure, so collectors can save it and continue to the next episode.
+                    seed = (
+                        candidates[0]
+                        if candidates
+                        else self.motion.solve_ik(pose, reference, wrap_angles=True)
+                    )
+                else:
+                    seed = self.motion.solve_ik(pose, seed)
                 stages.append(
                     PlannedStage(
                         f"cube{index}:{stage.name}",
@@ -394,13 +440,18 @@ class CubeStackExpert(Expert):
     def heuristic_trajectory(
         self, stage: PlannedStage
     ) -> tuple[JointTrajectory | None, str | None]:
+        target = cast(ControlTarget, self.robot.target)
         arm_path = np.vstack(
             (
-                cast(ControlTarget, self.robot.target).position[:7],
+                target.position[:7],
                 *stage.waypoints,
             )
         )
-        if len(stage.waypoints) == 1:
+        if stage.recipe.name in ("close", "release") or (
+            self.robot.robot_type != "forte" and len(stage.waypoints) == 1
+        ):
+            if self.robot.robot_type == "forte" and stage.recipe.name in ("close", "release"):
+                arm_path = np.repeat(target.position[None, :7], 2, axis=0)
             return self.motion.trajectory(
                 arm_path, stage.gripper_target, self.stage_constraints(stage)
             ), None
@@ -408,6 +459,42 @@ class CubeStackExpert(Expert):
         trajectory = self.motion.trajectory(
             arm_path, stage.gripper_target, self.stage_constraints(stage), checker
         )
+        if trajectory is None and self.robot.robot_type == "forte":
+            trajectory = self.forte_heuristic_branch_path(stage, target.position[:7], checker)
         if trajectory is None:
             return None, f"No checked heuristic route for {stage.name}"
         return trajectory, None
+
+    def forte_heuristic_branch_path(self, stage, start, checker):
+        """Connect recipe poses through a bounded set of checked IK branches."""
+        model = self.simulator.model
+        data = mujoco.MjData(model)
+        mujoco.mj_copyData(data, model, self.simulator.data)
+        slots = self.robot.state.qpos_indices[:7]
+        site = self.robot.state.site_id("grasp")
+        routes = [(start,)]
+        for waypoint in stage.waypoints:
+            data.qpos[slots] = waypoint
+            mujoco.mj_kinematics(model, data)
+            pose = Transform(
+                rotation=data.site_xmat[site].reshape(3, 3).copy(),
+                translation=data.site_xpos[site].copy(),
+            )
+            candidates = self.forte_heuristic_ik_candidates(pose, start, checker)
+            routes = [
+                (*route, candidate)
+                for route in routes
+                for candidate in candidates
+                if checker.is_path_collision_free(route[-1], candidate)
+            ]
+            if not routes:
+                return None
+            routes.sort(key=lambda route: np.linalg.norm(np.diff(route, axis=0), axis=1).sum())
+            routes = routes[:5]
+        for route in routes:
+            trajectory = self.motion.trajectory(
+                np.asarray(route), stage.gripper_target, self.stage_constraints(stage), checker
+            )
+            if trajectory is not None:
+                return trajectory
+        return None
