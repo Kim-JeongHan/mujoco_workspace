@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import mujoco
 import numpy as np
@@ -110,7 +111,7 @@ class BookTask:
         position_error = float(np.linalg.norm(data.xpos[self.body] - data.site_xpos[self.target]))
         book_rotation = Rotation.from_matrix(data.xmat[self.body].reshape(3, 3))
         target_rotation = Rotation.from_matrix(data.site_xmat[self.target].reshape(3, 3))
-        rotation_error = float((target_rotation * book_rotation.inv()).magnitude())
+        rotation_error = float(cast(Rotation, target_rotation * book_rotation.inv()).magnitude())
         contacts = self.contact_geoms()
         supported = self.support in contacts
         touching = any(model.geom(g).name.startswith(self.robot.prefix) for g in contacts)

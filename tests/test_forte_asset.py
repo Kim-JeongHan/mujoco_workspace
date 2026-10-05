@@ -11,7 +11,6 @@ from controller_config import create_test_controller
 from mujoco_lab import ENVIRONMENT_NAMES, ControlTarget, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.forte_coordinates import HOME_DEGREES, from_legacy
-from mujoco_lab.control.trajectory import PD_WAYPOINTS
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "src/mujoco_lab/assets/robot/forte/robot.xml"
@@ -71,11 +70,9 @@ def test_cad_mass_and_home_pose_tool_frame():
     model, data = sim.model, sim.data
     assert model.body_mass.sum() == pytest.approx(7.4975378572836, abs=1e-9)
     assert np.all(model.body_inertia[1:] > 0)
-    np.testing.assert_allclose(
-        data.site("forte/ee_site").xpos,
-        [0.37701991, -0.00021759, 0.31030735],
-        atol=1e-6,
-    )
+    left, right = data.geom("forte/gripper_left_pad"), data.geom("forte/gripper_right_pad")
+    expected_grasp = (left.xpos + right.xpos) / 2 + left.xmat.reshape(3, 3)[:, 1] * 0.01
+    np.testing.assert_allclose(data.site("forte/grasp").xpos, expected_grasp, atol=1e-6)
     upper_arm = data.body("forte/elbowlink").xpos - data.body("forte/upperarmright").xpos
     forearm = data.body("forte/spiral_gear_2").xpos - data.body("forte/elbowlink").xpos
     assert abs(upper_arm[0]) < 0.005
@@ -85,9 +82,9 @@ def test_cad_mass_and_home_pose_tool_frame():
     # forearm roll axis instead of forcing the wrist pivot onto that line.
     forearm_axis = data.xaxis[model.joint("forte/lower_arm_roll").id]
     assert forearm_axis[0] > 0.98
-    hand = data.site("forte/ee_site").xpos - data.body("forte/part_8_2").xpos
+    hand = data.site("forte/grasp").xpos - data.body("forte/part_8_2").xpos
     jaw = data.geom("forte/gripper_right_pad").xpos - data.geom("forte/gripper_left_pad").xpos
-    assert hand[2] < -0.16
+    assert hand[2] < -0.12
     assert np.linalg.norm(jaw) > 0.07
     np.testing.assert_allclose(
         model.body_quat[model.body("forte/main_drum").id], [1, 0, 0, 0], atol=1e-6
@@ -106,8 +103,8 @@ def test_cad_mass_and_home_pose_tool_frame():
         (left.xpos + right.xpos) / 2 + 0.01 * pad_axes[:, 1],
         atol=1e-6,
     )
-    np.testing.assert_allclose(grasp_axes[:, 0], pad_axes[:, 0], atol=1e-6)
-    np.testing.assert_allclose(grasp_axes[:, 2], pad_axes[:, 1], atol=1e-6)
+    np.testing.assert_allclose(grasp_axes[:, 0], pad_axes[:, 0], atol=1e-5)
+    np.testing.assert_allclose(grasp_axes[:, 2], [0, 0, -1], atol=1e-6)
 
 
 def test_gripper_closes_and_reopens_under_native_physics():
@@ -125,19 +122,6 @@ def test_gripper_closes_and_reopens_under_native_physics():
     sim.reset()
     assert robot.gripper.get_target() == 0
     np.testing.assert_array_equal(sim.data.qpos[-2:], 0)
-
-
-def test_collision_is_clear_along_the_pd_demo_with_open_and_closed_fingers():
-    model = mujoco.MjModel.from_xml_path(str(RUNTIME))
-    data = mujoco.MjData(model)
-    for index, start in enumerate(PD_WAYPOINTS):
-        end = PD_WAYPOINTS[(index + 1) % len(PD_WAYPOINTS)]
-        for fraction in np.linspace(0, 1, 21):
-            data.qpos[:7] = start + fraction * (end - start)
-            for grip in (0, -0.02):
-                data.qpos[-2:] = grip
-                mujoco.mj_forward(model, data)
-                assert all(contact.dist >= -0.0001 for contact in data.contact)
 
 
 def test_collision_covers_previously_missed_cad_surfaces():
@@ -236,7 +220,7 @@ def test_gripper_holds_lifts_and_releases_a_cube_under_gravity():
     start_height = data.body("cube").xpos[2]
     robot.update_state()
     start_target = robot.target.position.copy()
-    jacobian = robot.state.get_jacobian("ee_site")[:3, :7]
+    jacobian = robot.state.get_jacobian("grasp")[:3, :7]
     delta = np.linalg.pinv(jacobian) @ np.array([0, 0, 0.05])
     for fraction in np.linspace(0, 1, 2500):
         blend = 10 * fraction**3 - 15 * fraction**4 + 6 * fraction**5

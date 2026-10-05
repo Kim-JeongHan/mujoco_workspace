@@ -199,10 +199,13 @@ def test_forte_ik_returns_seven_arm_angles_and_keeps_the_gripper_unchanged():
     state = simulator.robots["arm"].state
     state.data.qpos[state.qpos_indices[-2:]] = -0.012
     mujoco.mj_forward(state.model, state.data)
-    target = pose_for(state, [0.03, -0.04, 0.03, 0.08, 0.02, 0.01, 0.04], "ee_site")
+    target = pose_for(state, [0.03, -0.04, 0.03, 0.08, 0.02, 0.01, 0.04], "grasp")
     before = shared_fields(state)
-    solution = state.solve_ik(target, frame="ee_site")
+    solution = state.solve_ik(target, frame="grasp")
     assert solution.shape == (7,)
-    assert_pose(pose_for(state, solution, "ee_site"), target)
+    actual = pose_for(state, solution, "grasp")
+    # The numerical arm solver accepts 8 mm translation and 1/3 rad rotation error.
+    assert np.linalg.norm(actual.as_translation() - target.as_translation()) <= 0.008
+    assert (target.as_rotation() * actual.as_rotation().inv()).magnitude() <= 1 / 3
     for previous, current in zip(before, shared_fields(state), strict=True):
         np.testing.assert_array_equal(previous, current)

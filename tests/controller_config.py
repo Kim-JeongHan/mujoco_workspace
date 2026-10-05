@@ -6,7 +6,7 @@ from mujoco_lab.assets.robot.robot import ControllerConfig
 from mujoco_lab.control import create_controller
 
 
-def create_test_controller(robot, controller, *, frame="ee_site", gravity_compensation=None):
+def create_test_controller(robot, controller, *, frame="grasp", gravity_compensation=None):
     path = ROBOT_ASSETS[robot.robot_type].path.with_name("robot.yaml")
     config = (
         load_robot_config(robot.robot_type).controller

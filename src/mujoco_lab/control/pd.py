@@ -17,7 +17,7 @@ class JointSpacePD(Controller):
         kp: ArrayLike,
         kd: ArrayLike,
         gravity_compensation: bool = True,
-        frame: str = "ee_site",
+        frame: str = "grasp",
         *,
         control_dt: float,
     ) -> None:

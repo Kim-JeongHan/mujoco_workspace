@@ -3,22 +3,8 @@
 import numpy as np
 from scipy.interpolate import CubicHermiteSpline
 
-from mujoco_lab.assets.robot.forte_coordinates import HOME_RADIANS
 from mujoco_lab.control.target import ControlTarget
 
-# Relative demo displacements work for any robot; Forte starts at its home pose.
-HOME_QPOS = HOME_RADIANS.copy()
-PD_WAYPOINT_OFFSETS = np.array(
-    [
-        np.zeros(7),
-        [0.05, -0.15, 0.05, 0.15, 0.0, 0.0, 0.0],
-        [-0.05, -0.10, -0.05, 0.20, 0.10, -0.10, 0.10],
-        [0.0, 0.05, 0.05, 0.05, -0.10, 0.10, -0.10],
-    ]
-)
-PD_WAYPOINTS = HOME_QPOS + PD_WAYPOINT_OFFSETS
-# Base-relative zero-pose ee_site position; the root's 0.058 m lift is added later.
-CIRCLE_CENTER = np.array([0.6349, -0.04638, 0.40459])
 CIRCLE_RADIUS = 0.025
 CIRCLE_PERIOD = 5.0
 LEAD_IN = 2.0
@@ -197,29 +183,6 @@ class JointTrajectory:
         )
 
 
-def pd_waypoint_target(
-    time: float,
-    *,
-    start_time: float,
-    waypoints: np.ndarray = PD_WAYPOINTS,
-    transit: float = 1.5,
-    hold: float = 0.4,
-) -> ControlTarget:
-    """Return the cyclic Forte joint target at an explicit time epoch."""
-
-    segment = transit + hold
-    phase = (time - start_time) % (len(waypoints) * segment)
-    index = int(phase // segment)
-    local = phase - index * segment
-    start = waypoints[index]
-    end = waypoints[(index + 1) % len(waypoints)]
-    if local >= transit:
-        return ControlTarget(end)
-    blend, slope = min_jerk(local / transit)
-    delta = end - start
-    return ControlTarget(start + delta * blend, delta * slope / transit)
-
-
 def osc_circle_target(
     time: float,
     *,
@@ -227,7 +190,7 @@ def osc_circle_target(
     start_position: np.ndarray,
     base_position: np.ndarray,
     base_rotation: np.ndarray,
-    center: np.ndarray = CIRCLE_CENTER,
+    center: np.ndarray | None = None,
     radius: float = CIRCLE_RADIUS,
     period: float = CIRCLE_PERIOD,
     lead_in: float = LEAD_IN,
@@ -236,6 +199,8 @@ def osc_circle_target(
 
     elapsed = time - start_time
     omega = 2.0 * np.pi / period
+    if center is None:
+        center = base_rotation.T @ (start_position - base_position)
 
     def circle(phase):
         angle = omega * phase
@@ -256,7 +221,7 @@ def osc_circle_target(
 
 
 def demo_target_updater(simulator, modes: dict[str, str]):
-    """Build one explicit-time reference updater for bundled PD/OSC demos.
+    """Build one explicit-time reference updater for the OSC circle demo.
 
     The start epoch and controlled poses are captured now. Simulator.reset restores
     the same initial time and pose, so this updater replays from the beginning.
@@ -266,28 +231,22 @@ def demo_target_updater(simulator, modes: dict[str, str]):
     epoch = simulator.data.time
     trajectories = {}
     for name, mode in modes.items():
+        if mode != "osc":
+            raise ValueError(f"No demo motion is defined for controller {mode!r}")
         robot = simulator.robots[name]
-        if mode == "pd":
-            start = robot.get_control_state().qpos.copy()
-            slots = robot.state.get_frame_joint_slots("ee_site")
-            limits = robot.state.get_joint_limits(slots)
-            waypoints = np.clip(start + PD_WAYPOINT_OFFSETS, limits[:, 0], limits[:, 1])
-            trajectories[name] = partial(pd_waypoint_target, start_time=epoch, waypoints=waypoints)
-        elif mode == "osc":
-            base = simulator.data.body(robot.state.root_body_id)
-            start = robot.state.get_frame_position("ee_site").copy()
-            rotation = base.xmat.reshape(3, 3).copy()
-            center = rotation.T @ (start - base.xpos)
-            trajectories[name] = partial(
-                osc_circle_target,
-                start_time=epoch,
-                start_position=start,
-                base_position=base.xpos.copy(),
-                base_rotation=rotation,
-                center=center,
-            )
-        else:
-            raise ValueError(f"Unknown demo controller {mode!r}")
+        frame = robot.config.controller.frame
+        base = simulator.data.body(robot.state.root_body_id)
+        start = robot.state.get_frame_position(frame).copy()
+        rotation = base.xmat.reshape(3, 3).copy()
+        center = rotation.T @ (start - base.xpos)
+        trajectories[name] = partial(
+            osc_circle_target,
+            start_time=epoch,
+            start_position=start,
+            base_position=base.xpos.copy(),
+            base_rotation=rotation,
+            center=center,
+        )
 
     def update(sim):
         for name, trajectory in trajectories.items():

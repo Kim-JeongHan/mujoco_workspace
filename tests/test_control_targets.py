@@ -61,7 +61,7 @@ def test_manual_target_persists_and_switch_reinitializes_target_space():
     np.testing.assert_array_equal(robot.target.position, commanded)
     robot.change_controller(create_test_controller(robot, controller="osc"))
     assert robot.target.position.shape == (3,)
-    np.testing.assert_allclose(robot.target.position, robot.state.get_frame_position("ee_site"))
+    np.testing.assert_allclose(robot.target.position, robot.state.get_frame_position("grasp"))
     robot.change_controller(create_test_controller(robot, controller="pd"))
     robot.update_state()
     np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
@@ -146,7 +146,7 @@ def test_osc_supplied_derivatives_change_command_without_changing_target_positio
     np.testing.assert_array_equal(osc._target, position)
 
 
-@pytest.mark.parametrize("mode", ["pd", "osc"])
+@pytest.mark.parametrize("mode", ["osc"])
 def test_demo_trajectory_replays_after_reset(mode):
     sim, robot = forte_sim()
     robot.change_controller(create_test_controller(robot, controller=mode))

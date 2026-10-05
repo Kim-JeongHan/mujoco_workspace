@@ -91,13 +91,18 @@ class Constraints:
 
 @dataclass
 class PoseConfig:
-    """Default arm joint positions in radians, followed by a gripper position in meters.
+    """Named arm poses in radians, followed by a gripper position in meters.
 
     Robots without a configured gripper contain only arm joint positions.
     RobotConfig.load converts YAML arm angles from degrees to radians.
     """
 
     default: list[float]
+    presets: dict[str, list[float]] = field(default_factory=dict, kw_only=True)
+
+    def named_poses(self) -> dict[str, list[float]]:
+        """Return the default pose and additional poses by their YAML names."""
+        return {"default": self.default, **self.presets}
 
 
 @dataclass
@@ -111,7 +116,7 @@ class GripperConfig:
 class ControllerConfig:
     name: ControllerType
     gravity_compensation: bool = True
-    frame: str = "ee_site"
+    frame: str = "grasp"
     pd_gains: FortePDGain | dict[str, PDGain] | None = None
 
     def pd_gain(self, joint_names: tuple[str, ...]) -> tuple[list[float], list[float]]:
@@ -135,17 +140,26 @@ class RobotConfig:
     def load(cls, path: str | Path) -> Self:
         """Load YAML settings, converting arm poses and angular bounds to radians."""
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        if data.get("pose") is not None:
+            poses = data["pose"]
+            data["pose"] = {
+                "default": poses["default"],
+                "presets": {name: values for name, values in poses.items() if name != "default"},
+            }
         config = from_dict(data_class=cls, data=data)
         if config.constraints is not None:
             config.constraints.position_limit = [
                 [radians(value) for value in bounds] for bounds in config.constraints.position_limit
             ]
         if config.pose is not None:
-            arm_count = len(config.pose.default) - int(config.gripper is not None)
-            config.pose.default = [
-                *[radians(value) for value in config.pose.default[:arm_count]],
-                *config.pose.default[arm_count:],
-            ]
+            poses = {}
+            for name, values in config.pose.named_poses().items():
+                arm_count = len(values) - int(config.gripper is not None)
+                poses[name] = [
+                    *[radians(value) for value in values[:arm_count]],
+                    *values[arm_count:],
+                ]
+            config.pose = PoseConfig(default=poses.pop("default"), presets=poses)
         return config
 
     def update_model_info(self, spec: mujoco.MjSpec) -> None:

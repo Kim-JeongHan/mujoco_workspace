@@ -7,10 +7,11 @@ from controller_config import create_test_controller
 
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.robot.forte_coordinates import HOME_RADIANS as HOME_QPOS
 from mujoco_lab.control import ControlTarget, demo_target_updater
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
-from mujoco_lab.control.trajectory import HOME_QPOS, PD_WAYPOINTS, osc_circle_target
+from mujoco_lab.control.trajectory import osc_circle_target
 from mujoco_lab.rendering.annotations import annotate_controller
 from mujoco_lab.state import JointState
 from mujoco_lab.utils import Transform
@@ -87,8 +88,8 @@ def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     assert robot.control_joint_names == tuple(state.joint_names[:7])
     joint_slots = robot.control_joint_slots
     np.testing.assert_array_equal(
-        state.get_jacobian("ee_site", joint_slots),
-        robot.state.get_jacobian("ee_site")[:, joint_slots],
+        state.get_jacobian("grasp", joint_slots),
+        robot.state.get_jacobian("grasp")[:, joint_slots],
     )
     np.testing.assert_array_equal(
         state.get_mass_matrix(joint_slots),
@@ -110,35 +111,14 @@ def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
     assert robot.gripper.get_target() == 0
 
 
-def test_pd_targets_respect_bounded_source_axes():
-    assert HOME_QPOS.shape == (7,)
-    assert PD_WAYPOINTS.shape[1] == 7
-    sim = forte_simulator()
-    ranges = sim.model.jnt_range[:3]
-    assert np.all(PD_WAYPOINTS[:, :3] >= ranges[:, 0])
-    assert np.all(PD_WAYPOINTS[:, :3] <= ranges[:, 1])
-    robot = sim.robots["robot"]
-    robot.change_controller(create_test_controller(robot, controller="pd"))
-    start = robot.target.position.copy()
-    updater = demo_target_updater(sim, {robot.name: "pd"})
-    updater(sim)
-    np.testing.assert_array_equal(robot.target.position, start)
-    slots = robot.state.get_frame_joint_slots("ee_site")
-    limits = robot.state.get_joint_limits(slots)
-    for time in np.linspace(0, 7.6, 17):
-        sim.data.time = time
-        updater(sim)
-        assert np.all(robot.target.position >= limits[:, 0])
-        assert np.all(robot.target.position <= limits[:, 1])
-
-
 @pytest.mark.parametrize("mode", ["pd", "osc"])
 @pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
 def test_feedback_control_is_finite_in_each_environment(mode, environment):
     sim = forte_simulator(environment)
     robot = sim.robots["robot"]
     robot.change_controller(create_test_controller(robot, controller=mode))
-    sim.target_updater = demo_target_updater(sim, {robot.name: mode})
+    if mode == "osc":
+        sim.target_updater = demo_target_updater(sim, {robot.name: mode})
     stats = sim.run_steps(400)[robot.name]
     assert stats.steps == 400
     assert np.isfinite(sim.data.qpos).all()
@@ -167,22 +147,22 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
     moved_sim.target_updater = demo_target_updater(moved_sim, {"robot": "osc"})
     rotation = moved_data.body("robot/base_link").xmat.reshape(3, 3)
     translation = moved_data.body("robot/base_link").xpos
-    center = robot.state.get_frame_position("ee_site") - sim.data.body("robot/base_link").xpos
+    center = robot.state.get_frame_position("grasp") - sim.data.body("robot/base_link").xpos
     entry = osc_circle_target(
         2.0,
         start_time=0,
-        start_position=robot.state.get_frame_position("ee_site"),
+        start_position=robot.state.get_frame_position("grasp"),
         base_position=sim.data.body("robot/base_link").xpos,
         base_rotation=np.eye(3),
         center=center,
     )
-    entry_distance = np.linalg.norm(entry.position - robot.state.get_frame_position("ee_site"))
+    entry_distance = np.linalg.norm(entry.position - robot.state.get_frame_position("grasp"))
     assert entry_distance == pytest.approx(0.025, abs=1e-5)
     for elapsed in [0.0, 1.25, 2.5]:
         reference = osc_circle_target(
             elapsed + 2,
             start_time=0,
-            start_position=robot.state.get_frame_position("ee_site"),
+            start_position=robot.state.get_frame_position("grasp"),
             base_position=np.zeros(3),
             base_rotation=np.eye(3),
             center=center,
@@ -190,7 +170,7 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
         actual = osc_circle_target(
             elapsed + 2,
             start_time=0,
-            start_position=moved_robot.state.get_frame_position("ee_site"),
+            start_position=moved_robot.state.get_frame_position("grasp"),
             base_position=translation,
             base_rotation=rotation,
             center=center,

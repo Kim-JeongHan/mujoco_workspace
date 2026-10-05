@@ -1148,8 +1148,7 @@
                     <geom pos="0.0461988 0.111733 -0.017212" quat="0.703528 0.383339 0.286319 0.525472" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_5_2" name="part_8_2_collision_4" />
                     <geom pos="0.0561891 0.0798359 -0.0292911" quat="-0.778351 0.189931 0.141858 -0.581354" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_5" />
                     <geom pos="-0.00368604 0.0975575 -0.0127091" quat="0.189931 0.77835 0.581354 0.141859" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_6" />
-                    <site name="ee_site" pos="0.0487 0.1643 -0.0146" size="0.008" rgba="1 0.2 0.1 1" />
-                    <site name="grasp" pos="0.0398841241051 0.134757709764 -0.0268140270887" quat="-0.452770631242 0.880023262695 -0.127496711913 0.0655926905333" size="0.004" rgba="0.1 0.8 0.2 1" />
+                    <site name="grasp" pos="0.0398841241051 0.134757709764 -0.0268140270887" quat="0.699803114456 -0.699798319784 0.101384245058 -0.101386130611" size="0.004" rgba="0.1 0.8 0.2 1" />
                   </body>
                   <geom pos="-0.0708603 0.0025 0.10899" quat="0.878942 0 0.476928 0" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Spiral_Gear_2" name="spiral_gear_2_collision_0" />
                   <geom pos="-0.286444 0.0224997 0.680911" quat="1.16618e-06 -0.878942 6.32786e-07 0.476928" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_61" name="spiral_gear_2_collision_1" />

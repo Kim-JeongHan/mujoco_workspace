@@ -55,6 +55,7 @@ def test_default_controller_matches_robot_actuators(robot_type, kind):
         expected = np.tile([-2 * np.pi, 2 * np.pi], ((~bounded).sum(), 1))
         if robot_type == "forte":
             expected -= ZERO_LEGACY_RADIANS[~bounded, None]
+            expected = np.deg2rad(np.round(np.rad2deg(expected)))
         np.testing.assert_allclose(configured_limits[~bounded], expected)
     assert isinstance(config.gripper, GripperConfig)
     assert robot.gripper.actuator_id == sim.model.actuator("arm/" + config.gripper.actuator).id

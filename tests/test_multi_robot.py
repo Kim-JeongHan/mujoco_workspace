@@ -348,11 +348,11 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
 def test_dynamics_are_robot_scoped_and_buffers_do_not_alias_other_robots():
     sim = make_pair()
     left, right = sim.robots.values()
-    jac = left.state.get_jacobian("ee_site")
+    jac = left.state.get_jacobian("grasp")
     saved_jac = jac.copy()
     mass = left.state.get_mass_matrix()
     saved_mass = mass.copy()
-    right.state.get_jacobian("ee_site")
+    right.state.get_jacobian("grasp")
     right.state.get_mass_matrix()
     np.testing.assert_array_equal(jac, saved_jac)
     np.testing.assert_array_equal(mass, saved_mass)
@@ -361,10 +361,10 @@ def test_dynamics_are_robot_scoped_and_buffers_do_not_alias_other_robots():
     for robot in sim.robots.values():
         expected = whole[np.ix_(robot.state.dof_indices, robot.state.dof_indices)]
         np.testing.assert_array_equal(robot.state.get_mass_matrix(), expected)
-        assert robot.state.get_jacobian("ee_site").shape == (6, robot.state.nv)
+        assert robot.state.get_jacobian("grasp").shape == (6, robot.state.nv)
     np.testing.assert_array_equal(whole[np.ix_(left.state.dof_indices, right.state.dof_indices)], 0)
     with pytest.raises(ValueError, match="no site"):
-        left.state.get_frame_position("right/ee_site")
+        left.state.get_frame_position("right/grasp")
 
 
 def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
@@ -387,7 +387,7 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
         left.state.get_frame_position("helper_site")
     left.change_controller(create_test_controller(left, controller="osc"))
     sim.step()
-    assert left.state.get_jacobian("ee_site").shape == (6, 9)
+    assert left.state.get_jacobian("grasp").shape == (6, 9)
 
 
 @pytest.mark.parametrize(
@@ -395,7 +395,7 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     [
         ("body", "left/base_link"),
         ("geom", "left/forearm_collision"),
-        ("site", "left/ee_site"),
+        ("site", "left/grasp"),
     ],
 )
 def test_mujoco_rejects_environment_name_collisions(kind, entity_name):
@@ -484,7 +484,7 @@ def test_pd_annotations_share_scratch_and_preserve_scene_state():
         mujoco.mj_copyData(reference, sim.model, sim.data)
         reference.qpos[robot.state.qpos_indices[:7]] = robot.target.position
         mujoco.mj_kinematics(sim.model, reference)
-        site = robot.state.site_id("ee_site")
+        site = robot.state.site_id("grasp")
         expected_targets.append(reference.site_xpos[site].copy())
         expected_actual.append(sim.data.site_xpos[site].copy())
         targets.append(robot.target.position.copy())

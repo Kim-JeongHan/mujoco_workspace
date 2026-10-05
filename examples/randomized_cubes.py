@@ -1,12 +1,14 @@
 """View randomized cube placements: uv run python examples/randomized_cubes.py."""
 
 from dataclasses import dataclass
+from typing import cast
 
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.control import create_controller
+from mujoco_lab.gripper import Gripper
 
 
 @dataclass
@@ -23,7 +25,7 @@ class Config:
 
 def main() -> None:
     """Build and display a fresh randomized cube scene with Forte at home."""
-    manager = SimulatorManager.get_instance()
+    manager = SimulatorManager()
     logger = manager.logger
     config = tyro.cli(Config, description="View randomized cubes beside Forte")
     if config.steps < 0:
@@ -40,7 +42,7 @@ def main() -> None:
     simulator = Simulator(scene, robots=[RobotSpec("forte", "forte", config=robot_config)])
     robot = simulator.robots["forte"]
     robot.change_controller(create_controller(robot, robot_config.controller))
-    robot.gripper.set_target(0.0)
+    cast(Gripper, robot.gripper).set_target(0.0)
 
     name = "randomized_cubes"
     if config.headless:
@@ -54,11 +56,7 @@ def main() -> None:
         return
 
     manager.add_simulator(name, simulator)
-    try:
-        manager.show(name)
-    finally:
-        if manager.simulators.get(name) is simulator:
-            manager.remove_simulator(name)
+    manager.show(name)
 
 
 if __name__ == "__main__":

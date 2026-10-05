@@ -27,7 +27,7 @@ class OperationalSpaceControl(Controller):
     def __init__(
         self,
         robot_state: RobotState,
-        frame: str = "ee_site",
+        frame: str = "grasp",
         *,
         posture: np.ndarray,
         dof_slots: Sequence[int] | None = None,

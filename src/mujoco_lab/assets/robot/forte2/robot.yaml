@@ -1,11 +1,12 @@
 pose:
   # Seven arm angles in degrees, followed by the gripper position in meters.
   default: [0, -90, 0, -90, 0, 90, 0, 0]
+  zero: [0, 0, 0, 0, 0, 0, 0, 0]
 
 controller:
   name: pd
   gravity_compensation: true
-  frame: grasp # ee_site
+  frame: grasp
   pd_gains:
     shoulder_yaw:
       kp: 147.0

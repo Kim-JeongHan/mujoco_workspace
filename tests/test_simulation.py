@@ -104,19 +104,22 @@ def test_divergence_releases_lifecycle_and_allows_reset(field):
     assert sim._state.get_state() == "idle"
 
 
-def test_model_example_simulates_an_external_model_without_robot_binding(tmp_path):
-    path = tmp_path / "scene.xml"
-    path.write_text(
+def test_simulation_example_loads_an_external_model_with_relative_includes(tmp_path):
+    model_dir = tmp_path / "external"
+    model_dir.mkdir()
+    path = model_dir / "scene.xml"
+    path.write_text('<mujoco><include file="body.xml"/></mujoco>')
+    (model_dir / "body.xml").write_text(
         '<mujoco><worldbody><body pos="0 0 1"><freejoint/>'
         '<geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
     )
-    example = Path(__file__).parents[1] / "examples" / "model.py"
+    example = Path(__file__).parents[1] / "examples" / "simulation.py"
     result = subprocess.run(
         [
             sys.executable,
             str(example),
-            "--model",
-            str(path),
+            "--environment",
+            "external/scene.xml",
             "--headless",
             "--steps",
             "10",
@@ -127,7 +130,7 @@ def test_model_example_simulates_an_external_model_without_robot_binding(tmp_pat
         text=True,
         check=True,
     )
-    assert f"[INFO] {path}: simulated 0.020 seconds" in result.stderr
+    assert "[INFO] environment=external/scene.xml robot=none simulated=0.020s" in result.stderr
 
 
 def test_installed_cli_runs_without_display_from_another_directory(tmp_path):
