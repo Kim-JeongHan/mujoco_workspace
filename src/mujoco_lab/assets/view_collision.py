@@ -11,12 +11,14 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import mujoco
 import numpy as np
 import trimesh
 import viser
 
+from mujoco_lab.assets.robot.robot import RobotConfig
 from mujoco_lab.utils.transform_utils import Transform
 
 ROBOT_PATH = Path(__file__).parent / "robot"
@@ -132,6 +134,57 @@ class RobotPreview:
             self.controls.append(
                 JointControl(joint, model.joint(joint).name, scale, unit, lower, upper)
             )
+        self.poses = {
+            local_name(model.key(index).name): model.key(index).qpos.copy()
+            for index in range(model.nkey)
+        }
+        config_path = ROBOT_PATH / name / "robot.yaml"
+        if config_path.exists():
+            config = RobotConfig.load(config_path)
+            if config.pose is not None:
+                self.poses = {}
+                for preset, values in config.pose.named_poses().items():
+                    if len(values) != len(self.controls):
+                        raise ValueError(
+                            f"Robot {name!r} pose {preset!r} must contain "
+                            f"{len(self.controls)} independent joint positions"
+                        )
+                    qpos = self.home.copy()
+                    for control, value in zip(self.controls, values, strict=True):
+                        qpos[model.jnt_qposadr[control.joint]] = value
+                    self.poses[preset] = qpos
+        if not self.poses:
+            self.poses = {"default": self.home.copy()}
+        self.default_pose = (
+            "default"
+            if "default" in self.poses
+            else "home"
+            if "home" in self.poses
+            else next(iter(self.poses))
+        )
+        self.selected_pose = self.default_pose
+        self.apply_pose(self.default_pose)
+        self.home = self.data.qpos.copy()
+        # Continuous-joint sliders must also reach every configured preset.
+        self.controls = [
+            JointControl(
+                control.joint,
+                control.name,
+                control.scale,
+                control.unit,
+                min(
+                    control.lower,
+                    *(q[model.jnt_qposadr[control.joint]] for q in self.poses.values()),
+                ),
+                max(
+                    control.upper,
+                    *(q[model.jnt_qposadr[control.joint]] for q in self.poses.values()),
+                ),
+            )
+            if not model.jnt_limited[control.joint]
+            else control
+            for control in self.controls
+        ]
         self.set_values({})
 
     def values(self):
@@ -160,13 +213,21 @@ class RobotPreview:
         mujoco.mj_forward(model, self.data)
 
     def reset_home(self):
-        self.data.qpos[:] = self.home
+        self.apply_pose(self.default_pose)
+
+    def apply_pose(self, name):
+        """Apply a named YAML pose or an XML keyframe and update coupled joints."""
+        self.data.qpos[:] = self.poses[name]
+        self.selected_pose = name
         self.set_values({})
 
     def reset_zero(self):
         """Restore a named zero preset when the asset defines one."""
         if self.zero is None:
             raise ValueError(f"Robot {self.name!r} has no zero preset")
+        if "zero" in self.poses:
+            self.apply_pose("zero")
+            return
         mujoco.mj_resetDataKeyframe(self.model, self.data, self.zero)
         self.set_values({})
 
@@ -183,7 +244,9 @@ class ModelView:
             body: server.scene.add_frame(f"{self.root_path}/body_{body}", show_axes=False)
             for body in range(preview.model.nbody)
         }
-        self.visuals, self.details, self.collisions, self.labels = [], [], [], []
+        self.coordinate_frames = {}
+        self.build_coordinate_frames()
+        self.visuals, self.details, self.collisions = [], [], []
         self.detail_built = False
         self.build_visuals(detail=False)
         self.build_collisions()
@@ -204,9 +267,49 @@ class ModelView:
     def body_name(self, body):
         return self.preview.model.body(body).name or f"body_{body}"
 
-    def geom_name(self, geom):
+    def build_coordinate_frames(self):
+        """Attach local XYZ axes at joint pivots and end-effector sites."""
         model = self.preview.model
-        return model.geom(geom).name or f"{self.body_name(model.geom_bodyid[geom])}/geom_{geom}"
+        frames = []
+        for joint in range(model.njnt):
+            if int(model.jnt_type[joint]) not in (
+                mujoco.mjtJoint.mjJNT_HINGE,
+                mujoco.mjtJoint.mjJNT_SLIDE,
+            ):
+                continue
+            frames.append(
+                (
+                    f"joint_{joint}",
+                    local_name(model.joint(joint).name),
+                    int(model.jnt_bodyid[joint]),
+                    model.jnt_pos[joint],
+                    (1.0, 0.0, 0.0, 0.0),
+                )
+            )
+        for site in range(model.nsite):
+            name = local_name(model.site(site).name)
+            if name in ("ee_site", "grasp"):
+                frames.append(
+                    (
+                        f"site_{site}",
+                        name,
+                        int(model.site_bodyid[site]),
+                        model.site_pos[site],
+                        model.site_quat[site],
+                    )
+                )
+        for identifier, name, body, position, quaternion in frames:
+            path = f"{self.root_path}/body_{body}/{identifier}_coordinates"
+            handle = self.server.scene.add_frame(
+                path,
+                position=position,
+                wxyz=quaternion,
+                axes_length=0.07,
+                axes_radius=0.0015,
+                visible=False,
+            )
+            self.server.scene.add_label(f"{path}/label", name, position=(0.0, 0.0, 0.085))
+            self.coordinate_frames[name] = handle
 
     def build_visuals(self, *, detail):
         """Group visual geoms by body and color; defer components under 40 mm."""
@@ -216,6 +319,7 @@ class ModelView:
             (model.geom_group == 1)
             | ((model.geom_group != 3) & (model.geom_type != int(mujoco.mjtGeom.mjGEOM_PLANE)))
         )
+        self.has_details = bool(np.any(model.geom_rbound[visual] < 0.02))
         for geom in visual:
             if (model.geom_rbound[geom] < 0.02) != detail:
                 continue
@@ -231,7 +335,7 @@ class ModelView:
             groups.setdefault((body, color), []).append(mesh)
         target = self.details if detail else self.visuals
         for index, ((body, color), meshes) in enumerate(groups.items()):
-            mesh = trimesh.util.concatenate(meshes)
+            mesh = cast(trimesh.Trimesh, trimesh.util.concatenate(meshes))
             target.append(
                 self.server.scene.add_mesh_simple(
                     f"{self.root_path}/body_{body}/{'detail' if detail else 'visual'}_{index}",
@@ -263,14 +367,6 @@ class ModelView:
                 wxyz=model.geom_quat[geom],
             )
             self.collisions.append((geom, body, color, handle))
-            if is_capsule:
-                label = self.server.scene.add_label(
-                    f"{self.root_path}/body_{body}/label_{geom}",
-                    f"{self.geom_name(geom)} | r={model.geom_size[geom, 0] * 1000:.0f} mm",
-                    position=model.geom_pos[geom],
-                    visible=False,
-                )
-                self.labels.append((body, label))
 
 
 class CollisionViewer:
@@ -288,30 +384,39 @@ class CollisionViewer:
         self.current = self.views[robot]
         with self.server.gui.add_folder("Display", order=-1):
             self.robot = self.server.gui.add_dropdown("Model", robot_names(), initial_value=robot)
-            self.show_visual = self.server.gui.add_checkbox("CAD exterior", True)
-            self.full_cad = self.server.gui.add_checkbox("Full CAD details", False)
+            self.pose = self.server.gui.add_dropdown(
+                "Pose preset", tuple(preview.poses), initial_value=preview.default_pose
+            )
+            self.reset = self.server.gui.add_button("Reset pose")
+            self.show_visual = self.server.gui.add_checkbox("CAD", True)
+            self.full_cad = self.server.gui.add_checkbox(
+                "Full CAD details", False, visible=self.current.has_details
+            )
             self.show_collision = self.server.gui.add_checkbox("Collision geometry", True)
             self.opacity = self.server.gui.add_slider("Collision opacity", 0.05, 1.0, 0.05, 0.35)
             self.wireframe = self.server.gui.add_checkbox("Collision wireframe", False)
-            self.show_labels = self.server.gui.add_checkbox("Capsule labels", False)
+            self.show_coordinates = self.server.gui.add_dropdown(
+                "Coordinate frames",
+                self.coordinate_options(),
+                initial_value="Off",
+                hint="Local XYZ axes at joint origins and tool frames: X red, Y green, Z blue.",
+            )
             self.focus = self.server.gui.add_dropdown("Collision body", self.body_options())
-            self.home = self.server.gui.add_button("Reset home")
-            self.zero = self.server.gui.add_button("Zero pose", visible=preview.zero is not None)
         for handle in (
             self.show_visual,
             self.full_cad,
             self.show_collision,
             self.opacity,
             self.wireframe,
-            self.show_labels,
+            self.show_coordinates,
             self.focus,
         ):
             handle.on_update(self.update)
         for slider in self.current.sliders.values():
             slider.on_update(self.update)
         self.robot.on_update(self.switch_model)
-        self.home.on_click(self.reset_home)
-        self.zero.on_click(self.reset_zero)
+        self.pose.on_update(self.select_pose)
+        self.reset.on_click(self.select_pose)
         self.update()
 
     def body_options(self):
@@ -321,6 +426,9 @@ class CollisionViewer:
                 self.current.body_name(body) for _, body, _, _ in self.current.collisions
             ),
         )
+
+    def coordinate_options(self):
+        return ("Off", "All", *self.current.coordinate_frames)
 
     def switch_model(self, _event=None):
         with self.lock:
@@ -335,31 +443,40 @@ class CollisionViewer:
                     for slider in self.views[name].sliders.values():
                         slider.on_update(self.update)
                 self.current = self.views[name]
+                self.full_cad.visible = self.current.has_details
                 for control in self.current.preview.controls:
                     if control.name in values:
                         value = np.clip(values[control.name], control.lower, control.upper)
                         self.current.sliders[control.name].value = float(value * control.scale)
                 self.focus.options = self.body_options()
                 self.focus.value = "All"
-                self.zero.visible = self.current.preview.zero is not None
+                self.pose.options = tuple(self.current.preview.poses)
+                self.pose.value = self.current.preview.selected_pose
+                selection = self.show_coordinates.value
+                self.show_coordinates.options = self.coordinate_options()
+                self.show_coordinates.value = (
+                    selection if selection in self.coordinate_options() else "Off"
+                )
             finally:
                 self.switching = False
             self.update()
 
     def reset_home(self, _event=None):
-        self.reset_pose("home")
+        self.reset_pose(self.current.preview.default_pose)
 
     def reset_zero(self, _event=None):
         self.reset_pose("zero")
+
+    def select_pose(self, _event=None):
+        if not self.switching:
+            self.reset_pose(self.pose.value)
 
     def reset_pose(self, preset):
         with self.lock:
             self.switching = True
             try:
-                if preset == "zero":
-                    self.current.preview.reset_zero()
-                else:
-                    self.current.preview.reset_home()
+                self.current.preview.apply_pose(preset)
+                self.pose.value = preset
                 values = self.current.preview.values()
                 for control in self.current.preview.controls:
                     self.current.sliders[control.name].value = values[control.name] * control.scale
@@ -385,7 +502,7 @@ class CollisionViewer:
                 if contact.dist >= -0.0001:
                     continue
                 penetrating.update((int(contact.geom1), int(contact.geom2)))
-            if self.full_cad.value and not view.detail_built:
+            if self.full_cad.value and view.has_details and not view.detail_built:
                 view.build_visuals(detail=True)
                 view.detail_built = True
             with self.server.atomic():
@@ -395,6 +512,8 @@ class CollisionViewer:
                 for body, frame in view.frames.items():
                     pose = Transform(data.xmat[body].reshape(3, 3), data.xpos[body]).as_xyzquat()
                     frame.position, frame.wxyz = pose[:3], pose[3:]
+                for name, frame in view.coordinate_frames.items():
+                    frame.visible = self.show_coordinates.value in ("All", name)
                 for handle in view.visuals:
                     handle.visible = self.show_visual.value
                 for handle in view.details:
@@ -405,12 +524,6 @@ class CollisionViewer:
                     handle.opacity = self.opacity.value
                     handle.wireframe = self.wireframe.value
                     handle.color = CAPSULE_COLOR if geom in penetrating else color
-                for body, label in view.labels:
-                    label.visible = (
-                        self.show_collision.value
-                        and self.show_labels.value
-                        and self.focus.value in ("All", view.body_name(body))
-                    )
 
 
 def main():

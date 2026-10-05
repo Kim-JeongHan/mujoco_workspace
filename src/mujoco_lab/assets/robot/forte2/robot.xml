@@ -12,16 +12,13 @@
     <mesh name="EL05_merged_1" content_type="model/stl" file="../forte/meshes/EL05_merged_1.stl" />
     <mesh name="ElbowLink" content_type="model/stl" file="../forte/meshes/ElbowLink.stl" />
     <mesh name="ElbowPCB_cover" content_type="model/stl" file="../forte/meshes/ElbowPCB_cover.stl" />
-    <mesh name="grommet" content_type="model/stl" file="../forte/meshes/grommet.stl" />
     <mesh name="HingeCover" content_type="model/stl" file="../forte/meshes/HingeCover.stl" />
     <mesh name="LeftColumn" content_type="model/stl" file="../forte/meshes/LeftColumn.stl" />
     <mesh name="LeftHinge" content_type="model/stl" file="../forte/meshes/LeftHinge.stl" />
     <mesh name="main_drum" content_type="model/stl" file="../forte/meshes/main_drum.stl" />
     <mesh name="Part_1_9" content_type="model/stl" file="../forte/meshes/Part_1_9.stl" />
-    <mesh name="Part_2_4" content_type="model/stl" file="../forte/meshes/Part_2_4.stl" />
     <mesh name="Part_2_5" content_type="model/stl" file="../forte/meshes/Part_2_5.stl" />
     <mesh name="Part_30_1" content_type="model/stl" file="../forte/meshes/Part_30_1.stl" />
-    <mesh name="Part_3_2" content_type="model/stl" file="../forte/meshes/Part_3_2.stl" />
     <mesh name="Part_41" content_type="model/stl" file="../forte/meshes/Part_41.stl" />
     <mesh name="Part_42" content_type="model/stl" file="../forte/meshes/Part_42.stl" />
     <mesh name="Part_46" content_type="model/stl" file="../forte/meshes/Part_46.stl" />
@@ -38,12 +35,9 @@
     <mesh name="Part_65" content_type="model/stl" file="../forte/meshes/Part_65.stl" />
     <mesh name="Part_66" content_type="model/stl" file="../forte/meshes/Part_66.stl" />
     <mesh name="Part_67" content_type="model/stl" file="../forte/meshes/Part_67.stl" />
-    <mesh name="Part_6_2" content_type="model/stl" file="../forte/meshes/Part_6_2.stl" />
     <mesh name="Part_6_3" content_type="model/stl" file="../forte/meshes/Part_6_3.stl" />
     <mesh name="Part_7_2" content_type="model/stl" file="../forte/meshes/Part_7_2.stl" />
-    <mesh name="Part_7_3" content_type="model/stl" file="../forte/meshes/Part_7_3.stl" />
     <mesh name="Part_8_2" content_type="model/stl" file="../forte/meshes/Part_8_2.stl" />
-    <mesh name="Part_8_3" content_type="model/stl" file="../forte/meshes/Part_8_3.stl" />
     <mesh name="RightColumn" content_type="model/stl" file="../forte/meshes/RightColumn.stl" />
     <mesh name="RS60_merged" content_type="model/stl" file="../forte/meshes/RS60_merged.stl" />
     <mesh name="ShoulderCable" content_type="model/stl" file="../forte/meshes/ShoulderCable.stl" />
@@ -54,7 +48,6 @@
     <mesh name="ShoulderRoll" content_type="model/stl" file="../forte/meshes/ShoulderRoll.stl" />
     <mesh name="ShoulderRollActAdapter" content_type="model/stl" file="../forte/meshes/ShoulderRollActAdapter.stl" />
     <mesh name="Spiral_Gear_2" content_type="model/stl" file="../forte/meshes/Spiral_Gear_2.stl" />
-    <mesh name="Spur_gear__20_teeth_" content_type="model/stl" file="../forte/meshes/Spur_gear__20_teeth_.stl" />
     <mesh name="Spur_gear__40_teeth_" content_type="model/stl" file="../forte/meshes/Spur_gear__40_teeth_.stl" />
     <mesh name="Spur_gear__40_teeth__2" content_type="model/stl" file="../forte/meshes/Spur_gear__40_teeth__2.stl" />
     <mesh name="turntable_cap" content_type="model/stl" file="../forte/meshes/turntable_cap.stl" />
@@ -113,10 +106,8 @@
               <joint name="elbow_pitch" axis="0 -1 0" armature="0.01" damping="0.05" />
               <geom pos="-0.36 0.0265 -0.111" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.980392 0.796078 0.262745 1" density="0" mesh="ElbowLink" />
               <geom pos="0.04675 0.0279692 0.0630647" quat="0.69352 -0.137949 -0.693521 0.137949" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
-              <geom pos="0.012 0.0265 0.05" quat="0.533428 -0.46417 0.533424 -0.464176" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.231373 0.380392 0.705882 1" density="0" mesh="Spur_gear__20_teeth_" />
               <geom pos="0.04875 0.0250304 -0.0230645" quat="0.137946 0.69352 -0.137951 -0.69352" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
               <geom pos="-0.340002 -0.122216 0.0516732" quat="-0.555573 0.831468 -3.5678e-06 4.07452e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.501961 0.501961 0.501961 1" density="0" mesh="Part_56" />
-              <geom pos="0.0319999 0.0265255 -0.00993686" quat="-0.69352 0.137942 -0.693521 0.137953" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.231373 0.380392 0.705882 1" density="0" mesh="Spur_gear__20_teeth_" />
               <body name="spur_gear__40_teeth_" pos="0.047 0.0265 0.02" quat="-0.472193626548 -0.526338161745 0.472191846063 0.526342264169">
                 <inertial mass="0.581584356315" pos="-2.3715762974e-05 -4.5931594948e-05 -0.179386989443" fullinertia="0.00530148588194 0.00531310896832 0.000154065154589 -1.31622380589e-06 -2.93152931766e-06 1.36436659234e-06" />
                 <joint name="lower_arm_roll" axis="0 0 -1" armature="0.01" damping="0.05" />
@@ -125,8 +116,6 @@
                 <geom pos="0.0141658 -0.13023 0.407001" quat="-0.472192 0.526341 -0.472193 -0.526339" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.498039 0.498039 0.498039 1" density="0" mesh="Part_58" />
                 <geom pos="0.116906 -0.0591082 0.407" quat="0.164 -0.687826 0.164003 0.687825" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.980392 0.713726 0.00392157 1" density="0" mesh="Part_59" />
                 <geom pos="0.062469 -0.0315853 0.0194997" quat="-0.523823 3.40862e-06 -6.92366e-07 0.851827" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Spur_gear__40_teeth__2" />
-                <geom pos="7.97617e-08 3.87181e-08 0.0305" quat="-0.602331 -0.602335 -0.370401 -0.370395" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.537255 0.854902 0.827451 1" density="0" mesh="grommet" />
-                <geom pos="9.41107e-08 -1.17775e-06 -0.3" quat="-0.602331 0.602334 0.370399 -0.370399" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.537255 0.854902 0.827451 1" density="0" mesh="grommet" />
                 <body name="spiral_gear_2" pos="-0.0223679 -0.00243427 -0.32" quat="-0.713650323317 -0.189827514966 -0.211596776767 0.640230844816">
                   <inertial mass="0.208852414626" pos="0.0238151718086 0.0228958888847 -0.0341179757091" fullinertia="0.000216625074956 0.000220649219125 0.000176375065336 2.95863518572e-06 6.15779823244e-05 -3.85152093854e-06" />
                   <joint name="wrist_pitch" axis="0 -1 0" armature="0.01" damping="0.05" />
@@ -143,16 +132,6 @@
                     <geom pos="0.0376194 0.114272 -0.00836773" quat="0.801187 0 0 0.598414" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_4_2" />
                     <geom pos="0.0461988 0.111733 -0.017212" quat="0.703528 0.383339 0.286319 0.525472" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_5_2" />
                     <geom pos="0.0561891 0.0798359 -0.0292911" quat="-0.778351 0.189931 0.141858 -0.581354" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
-                    <geom pos="0.048711 0.093521 -0.00798857" quat="0.129229 -0.142156 -0.981194 -0.0187216" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_2_4" />
-                    <geom pos="0.048711 0.093521 -0.00798857" quat="-0.129229 0.142156 0.981194 0.018719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_6_2" />
-                    <geom pos="0.048711 0.093521 -0.00798857" quat="-0.129229 0.142156 0.981194 0.018719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_3_2" />
-                    <geom pos="0.048711 0.093521 -0.00798857" quat="-0.129229 0.142156 0.981194 0.018719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_8_3" />
-                    <geom pos="0.048711 0.093521 -0.00798857" quat="-0.129229 0.142156 0.981194 0.018719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_7_3" />
-                    <geom pos="0.0100359 0.104968 -0.0340116" quat="-0.0744629 0.845747 -0.122537 -0.513957" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_2_4" />
-                    <geom pos="0.0100359 0.104968 -0.0340116" quat="-0.0744629 0.845747 -0.122537 -0.513957" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_8_3" />
-                    <geom pos="0.0100359 0.104968 -0.0340116" quat="-0.0744629 0.845747 -0.122537 -0.513957" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_7_3" />
-                    <geom pos="0.0100359 0.104968 -0.0340116" quat="-0.0744629 0.845747 -0.122537 -0.513957" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_6_2" />
-                    <geom pos="0.0100359 0.104968 -0.0340116" quat="-0.0744629 0.845747 -0.122537 -0.513957" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_3_2" />
                     <geom pos="-0.00368604 0.0975575 -0.0127091" quat="0.189931 0.77835 0.581354 0.141859" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
                     <body name="part_1_35" pos="0.0890438 0.0658364 -0.0310003" quat="-5.26666e-07 0.989668 -0.14338 -3.63525e-06">
                       <inertial mass="0.0406918624958" pos="-0.0243710489653 -0.0348702163403 -0.00925924919913" fullinertia="1.91083887711e-05 5.85671599913e-06 1.48505463967e-05 -1.69955927714e-06 -3.37939224658e-07 -8.01769760679e-07" />
