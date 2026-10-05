@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import ceil
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -11,7 +11,7 @@ from scipy.spatial.transform import Rotation
 from mujoco_lab.assets.robot.robot import Constraints, MotionLimits
 from mujoco_lab.control.trajectory import JointTrajectory
 from mujoco_lab.planning.collision.collision_checker import CollisionChecker
-from mujoco_lab.planning.planners import PathPlanner
+from mujoco_lab.planning.planners import PlannerConfig, plan_path, planner_name
 from mujoco_lab.utils import Transform
 
 
@@ -49,9 +49,9 @@ class MotionPlanner:
     RuntimeError, and IKError propagates to the expert's execution boundary.
     """
 
-    def __init__(self, robot, planner: PathPlanner | None = None) -> None:
+    def __init__(self, robot, planning: PlannerConfig | None = None) -> None:
         self.robot = robot
-        self.planner = planner
+        self.planning = planning
         self.planning_epoch = 0
 
     def reset(self) -> None:
@@ -155,8 +155,10 @@ class MotionPlanner:
             target = target if isinstance(target, np.ndarray) else previous
             path = np.vstack((previous, target))
         elif request.mode == "cartesian":
-            path = self.cartesian_path(request.waypoints[-1])
+            path = self.cartesian_path(cast(Transform, request.waypoints[-1]))
         else:
+            if self.planning is None:
+                raise ValueError("A sampling planner configuration is required")
             waypoints = []
             for index, waypoint in enumerate(request.waypoints):
                 if isinstance(waypoint, Transform):
@@ -174,7 +176,7 @@ class MotionPlanner:
                 vertices = self.plan_arm_path(start, goal, checker)
                 label = " departure" if index < len(waypoints) - 1 else ""
                 if vertices is None:
-                    return None, f"No {self.planner.name}{label} route for {request.name}"
+                    return None, f"No {planner_name(self.planning)}{label} route for {request.name}"
                 vertices = self.shortcut_path(vertices, checker)
                 legs.append(vertices if index == 0 else vertices[1:])
                 start = goal
@@ -203,40 +205,35 @@ class MotionPlanner:
         start = measured.as_translation()
         goal = destination.as_translation()
         start_rotation = measured.as_rotation()
-        delta_rotation = (destination.as_rotation() * start_rotation.inv()).as_rotvec()
+        delta_rotation = cast(
+            Rotation, destination.as_rotation() * start_rotation.inv()
+        ).as_rotvec()
         slots = self.robot.state.get_frame_joint_slots("grasp")
         vertices = [self.robot.state.snapshot().qpos[slots].copy()]
         steps = max(2, int(np.ceil(np.linalg.norm(goal - start) / resolution)) + 1)
         for fraction in np.linspace(0, 1, steps)[1:]:
             pose = Transform(
-                rotation=Rotation.from_rotvec(delta_rotation * fraction) * start_rotation,
+                rotation=cast(
+                    Rotation, Rotation.from_rotvec(delta_rotation * fraction) * start_rotation
+                ),
                 translation=start + fraction * (goal - start),
             )
             vertices.append(self.solve_ik(pose, vertices[-1], wrap_angles=True))
         return np.asarray(vertices)
 
     def plan_arm_path(self, start: np.ndarray, goal: np.ndarray, checker) -> np.ndarray | None:
-        if self.planner is None:
-            raise ValueError("A sampling planner is required")
-        seed = self.planner.seed
+        if self.planning is None:
+            raise ValueError("A sampling planner configuration is required")
+        seed = self.planning.seed
         seed = seed + self.planning_epoch if seed is not None else None
         self.planning_epoch += 1
-        vertices = self.planner.plan(
-            start, goal, [tuple(row) for row in checker.bounds], checker, seed=seed
+        vertices = plan_path(
+            self.planning, start, goal, [tuple(row) for row in checker.bounds], checker, seed=seed
         )
         if vertices is None:
             return None
-        vertices = np.asarray(vertices, dtype=float)
-        if vertices.ndim != 2 or vertices.shape[1] != len(start) or not len(vertices):
-            raise RuntimeError("Planner returned an invalid arm path")
         if len(vertices) == 1:
             vertices = np.vstack((vertices, goal))
-        if (
-            not np.isfinite(vertices).all()
-            or not np.allclose(vertices[0], start, atol=1e-9, rtol=0)
-            or not np.allclose(vertices[-1], goal, atol=1e-9, rtol=0)
-        ):
-            raise RuntimeError("Planner path endpoints do not match the query")
         return vertices
 
     @staticmethod

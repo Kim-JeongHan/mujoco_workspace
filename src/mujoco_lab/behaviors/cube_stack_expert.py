@@ -16,7 +16,7 @@ from mujoco_lab.behaviors.expert import Expert
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
 from mujoco_lab.control import ControlTarget
 from mujoco_lab.control.trajectory import JointTrajectory
-from mujoco_lab.planning import PathPlanner
+from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
 from mujoco_lab.state import IKError
@@ -44,7 +44,7 @@ class CubeStackExpert(Expert):
     must bind a seven-joint target controller and gripper before construction.
 
     The application explicitly selects heuristic or sampling execution.
-    Sampling requires an injected path planner.
+    Sampling requires an explicit planner configuration.
     """
 
     def __init__(
@@ -53,15 +53,15 @@ class CubeStackExpert(Expert):
         *,
         recipe: CubeStackRecipe,
         method: Literal["heuristic", "sampling"],
-        planner: PathPlanner | None = None,
+        planning: PlannerConfig | None = None,
     ) -> None:
         super().__init__()
         if method not in ("heuristic", "sampling"):
             raise ValueError(f"Unsupported cube execution method: {method}")
-        if method == "sampling" and planner is None:
-            raise ValueError("Sampling execution requires an explicit path planner")
-        if method == "heuristic" and planner is not None:
-            raise ValueError("Heuristic execution does not use a path planner")
+        if method == "sampling" and planning is None:
+            raise ValueError("Sampling execution requires an explicit planner configuration")
+        if method == "heuristic" and planning is not None:
+            raise ValueError("Heuristic execution does not use a planner configuration")
         self.method = method
         self.task = task
         self.simulator = task.simulator
@@ -79,9 +79,10 @@ class CubeStackExpert(Expert):
 
         if self.robot.robot_type not in ("panda", "forte"):
             raise ValueError("Cube stacking execution requires panda or forte")
+        self.gripper = robot.gripper
         self.recipe = recipe
-        self.planner = planner
-        self.motion = MotionPlanner(self.robot, planner)
+        self.planning = planning
+        self.motion = MotionPlanner(self.robot, planning)
         self.reset()
 
     def reset(self, initial_obs: Any = None, info: dict[str, Any] | None = None) -> None:
@@ -114,7 +115,7 @@ class CubeStackExpert(Expert):
         return self._plan[self.stage].name if self.stage < len(self._plan) else "settle"
 
     def _hold_action(self):
-        return np.r_[self.robot.target.position[:7], self.robot.gripper.get_target()]
+        return np.r_[cast(ControlTarget, self.robot.target).position[:7], self.gripper.get_target()]
 
     def act(self, obs: Any = None) -> np.ndarray:
         if self.failed or self.stage >= len(self._plan):
@@ -157,7 +158,7 @@ class CubeStackExpert(Expert):
             raise ValueError("Expert is bound to a different simulator")
         action = self.act()
         self.robot.target = ControlTarget(action[:7])
-        self.robot.gripper.set_target(float(action[7]))
+        self.gripper.set_target(float(action[7]))
         success = self.task.status().released_stable_stack
         if self.failed or (self.stage >= len(self._plan) and success):
             simulator.stop()
@@ -181,7 +182,7 @@ class CubeStackExpert(Expert):
             if self.method == "sampling":
                 # Retract planning freezes the fingers at their measured opening.
                 physical_ready = physical_ready and (
-                    abs(self.robot.gripper.get_position() - stage.gripper_target)
+                    abs(self.gripper.get_position() - stage.gripper_target)
                     < self.recipe.gripper_tolerance
                 )
             if physical_ready and self.method == "sampling":
@@ -234,7 +235,7 @@ class CubeStackExpert(Expert):
             rotation if isinstance(rotation, Rotation) else Rotation.from_matrix(rotation)
         )
         return Transform(
-            rotation=yaw_rotation * nominal_rotation,
+            rotation=cast(Rotation, yaw_rotation * nominal_rotation),
             translation=reference + yaw_rotation.apply(stage.offset_xyz_m),
         )
 
@@ -395,7 +396,7 @@ class CubeStackExpert(Expert):
     ) -> tuple[JointTrajectory | None, str | None]:
         arm_path = np.vstack(
             (
-                self.robot.target.position[:7],
+                cast(ControlTarget, self.robot.target).position[:7],
                 *stage.waypoints,
             )
         )

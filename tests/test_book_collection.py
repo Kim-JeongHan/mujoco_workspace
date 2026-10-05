@@ -14,7 +14,7 @@ from mujoco_lab.learning.datasets.replay import book_metadata, capture_frame
 from mujoco_lab.learning.envs.book import BookEnv
 from mujoco_lab.learning.replay import EpisodeReplay
 from mujoco_lab.learning.rollout.collector import collect_episode
-from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig, planner_from_config
+from mujoco_lab.planning import PRMConfig, RRTConfig, RRTConnectConfig
 
 
 @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ def test_book_recording_round_trip_restores_geometry(tmp_path):
         physics_steps_per_action=5,
     )
     expert = BookInsertionExpert(
-        task, recipe=load_recipe(robot.robot_type), planner=planner_from_config(config.planning)
+        task, recipe=load_recipe(robot.robot_type), planning=config.planning
     )
     metadata = book_metadata(
         simulator,

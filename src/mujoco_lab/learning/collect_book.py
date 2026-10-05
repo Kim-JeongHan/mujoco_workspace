@@ -25,7 +25,6 @@ from mujoco_lab.planning import (
     RRTConfig,
     RRTConnectConfig,
     default_planning,
-    planner_from_config,
 )
 from mujoco_lab.utils import Logger
 
@@ -116,12 +115,11 @@ def main() -> None:
         max_steps=max_steps,
         physics_steps_per_action=repeat,
     )
-    planner = planner_from_config(config.planning)
-    recipe = load_book_recipe(robot.robot_type)
+    recipe = load_book_recipe(config.robot)
     expert = BookInsertionExpert(
         task,
         recipe=recipe,
-        planner=planner,
+        planning=config.planning,
     )
 
     saved = 0

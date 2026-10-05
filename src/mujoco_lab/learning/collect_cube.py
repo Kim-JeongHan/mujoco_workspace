@@ -26,7 +26,6 @@ from mujoco_lab.planning import (
     RRTConfig,
     RRTConnectConfig,
     default_planning,
-    planner_from_config,
 )
 from mujoco_lab.utils import Logger
 
@@ -117,13 +116,12 @@ def main() -> None:
         max_steps=max_steps,
         physics_steps_per_action=repeat,
     )
-    planner = planner_from_config(config.planning) if config.method == "sampling" else None
-    recipe = load_cube_recipe(robot.robot_type)
+    recipe = load_cube_recipe(config.robot)
     expert = CubeStackExpert(
         task,
         recipe=recipe,
         method=config.method,
-        planner=planner,
+        planning=config.planning if config.method == "sampling" else None,
     )
 
     saved = 0

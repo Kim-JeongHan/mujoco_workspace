@@ -1,4 +1,4 @@
-"""Centered grasps, physical carry checks, and released sampling insertion."""
+"""Centered grasps, physical carry checks, and released book insertion."""
 
 import mujoco
 import numpy as np
@@ -14,10 +14,10 @@ from mujoco_lab.behaviors.book import (
 from mujoco_lab.behaviors.book_expert import BookInsertionExpert
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
 from mujoco_lab.control import create_controller
-from mujoco_lab.planning import default_planning, planner_from_config
+from mujoco_lab.planning import default_planning
 
 
-def make_expert(planner=None):
+def make_expert(planning=None, *, method="sampling"):
     sim = Simulator(
         create_book_insertion(),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
@@ -30,7 +30,8 @@ def make_expert(planner=None):
     expert = BookInsertionExpert(
         task,
         recipe=load_book_recipe(next(iter(task.simulator.robots.values())).robot_type),
-        planner=planner or planner_from_config(default_planning()),
+        method=method,
+        planning=(planning or default_planning()) if method == "sampling" else None,
     )
     return sim, task, expert
 
@@ -92,19 +93,13 @@ def test_book_controller_tuning_preserves_asset_contact_settings():
     np.testing.assert_array_equal(sim.model.geom_friction, friction)
 
 
-def test_missing_route_stops_with_reason_and_reset_clears_failure():
-    class RejectPlanner:
-        name = "reject"
-        seed = 3
-
-        def plan(self, *args, **kwargs):
-            return None
-
-    sim, _, expert = make_expert(RejectPlanner())
+def test_missing_route_stops_with_reason_and_reset_clears_failure(monkeypatch):
+    monkeypatch.setattr("mujoco_lab.planning.motion.plan_path", lambda *args, **kwargs: None)
+    sim, _, expert = make_expert()
     sim.target_updater = expert.update
     sim.run_steps(10)
     assert expert.failed
-    assert expert.failure_reason == "No reject route for approach"
+    assert expert.failure_reason == "No rrt_connect route for approach"
     assert sim.data.time == pytest.approx(sim.dt)
     sim.reset()
     expert.reset()
@@ -123,8 +118,9 @@ def test_no_physical_grasp_cannot_start_carry():
     assert expert.failure_reason == "No two-pad physical grasp for lift"
 
 
-def test_sampling_medium_book_is_lifted_inserted_and_released():
-    sim, task, expert = make_expert()
+@pytest.mark.parametrize("method", ["sampling", "heuristic"])
+def test_medium_book_is_lifted_inserted_and_released(method):
+    sim, task, expert = make_expert(method=method)
     sim.target_updater = expert.update
     sim.run_steps(60000)
     assert not expert.failed, expert.failure_reason
@@ -135,5 +131,7 @@ def test_sampling_medium_book_is_lifted_inserted_and_released():
     assert status.supported and not status.touching_robot
     assert status.position_error < 0.015
     assert status.rotation_error < 0.12
-    assert expert.motion.planning_epoch == 2
+    assert expert.motion.planning_epoch == (2 if method == "sampling" else 0)
+    if method == "heuristic":
+        assert expert.motion.planning is None
     assert not sim.data.warning.number.any()

@@ -9,12 +9,10 @@ from .collision import (
 )
 from .graph import Edge, Graph, Node
 from .planners import (
-    PathPlanner,
-    PRMPlanner,
-    RRTConnectPlanner,
-    RRTPlanner,
+    PlannerConfig,
     default_planning,
-    planner_from_config,
+    plan_path,
+    planner_name,
 )
 from .sampling import (
     PRM,
@@ -57,23 +55,21 @@ __all__ = [
     "Node",
     "PRM",
     "PRMConfig",
-    "PRMPlanner",
     "PRMStar",
     "PRMStarConfig",
     "PlanningSpace",
-    "PathPlanner",
+    "PlannerConfig",
     "RRG",
     "RRGConfig",
     "RRT",
     "RRTConfig",
     "RRTConnect",
     "RRTConnectConfig",
-    "RRTConnectPlanner",
-    "RRTPlanner",
     "RRTStar",
     "RRTStarConfig",
     "Sampler",
     "UniformSampler",
-    "planner_from_config",
+    "planner_name",
+    "plan_path",
     "default_planning",
 ]

@@ -13,7 +13,7 @@ from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import book_expert
 from mujoco_lab.behaviors.book import BookTask, create_book_controller
 from mujoco_lab.behaviors.bookshelf_recipe import BookshelfRecipe, load_recipe
-from mujoco_lab.planning import default_planning, planner_from_config
+from mujoco_lab.planning import default_planning
 from mujoco_lab.utils import Transform
 
 
@@ -79,7 +79,7 @@ def test_changed_recipe_controls_book_destinations_and_limits():
         create_book_controller(robot, load_robot_config(robot.robot_type).controller)
     )
     expert = book_expert.BookInsertionExpert(
-        BookTask(sim), recipe=changed, planner=planner_from_config(default_planning())
+        BookTask(sim), recipe=changed, planning=default_planning()
     )
     request = expert.motion_request("approach", expert.pick_pose)
     assert request.constraints is not None

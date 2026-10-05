@@ -10,6 +10,7 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.robot import MotionLimits
 from mujoco_lab.control import ControlTarget, create_controller
+from mujoco_lab.planning import RRTConnectConfig
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest
 
 
@@ -216,23 +217,21 @@ def test_sampling_visits_mixed_waypoints_with_adjacent_calls_and_seeds(motion, m
             # Reconstructing the old command would collide in the current scene.
             return not np.array_equal(start, previous) and not np.array_equal(end, previous)
 
-    class RecordingPlanner:
-        name = "recording"
-        seed = 19
-
-        def plan(self, start, end, bounds, checker, *, seed):
-            calls.append((start.copy(), end.copy(), seed))
-            # A free edge permits shortcutting this internal bend.
-            bend = (start + end) / 2
-            bend[2] += 0.02
-            return np.vstack((start, bend, end))
+    def record_query(config, start, end, bounds, checker, *, seed):
+        assert config is motion.planning
+        calls.append((start.copy(), end.copy(), seed))
+        # A free edge permits shortcutting this internal bend.
+        bend = (start + end) / 2
+        bend[2] += 0.02
+        return np.vstack((start, bend, end))
 
     def solve_ik(destination, seed):
         assert destination is pose
         ik_seeds.append(seed.copy())
         return departure.copy()
 
-    motion.planner = RecordingPlanner()
+    motion.planning = RRTConnectConfig(seed=19)
+    monkeypatch.setattr("mujoco_lab.planning.motion.plan_path", record_query)
     monkeypatch.setattr(motion, "solve_ik", solve_ik)
     monkeypatch.setattr(motion, "smooth_path_collision_free", lambda *_: True)
     request = MotionRequest(

@@ -16,11 +16,9 @@ from mujoco_lab.behaviors import (
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
 from mujoco_lab.planning import (
-    PRMConfig,
-    RRTConfig,
-    RRTConnectConfig,
+    PlannerConfig,
     default_planning,
-    planner_from_config,
+    planner_name,
 )
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.simulator_manager import SimulatorManager
@@ -34,7 +32,7 @@ class Config:
     robot: RobotName = "panda"
     environment: Literal["table_shelf", "warehouse"] = "table_shelf"
     method: Literal["heuristic", "sampling"] = "heuristic"
-    planning: RRTConnectConfig | RRTConfig | PRMConfig = field(default_factory=default_planning)
+    planning: PlannerConfig = field(default_factory=default_planning)
     headless: bool = False
     steps: int | None = None
     output: Path | None = None
@@ -70,14 +68,13 @@ def main() -> None:
     task = CubeStackTask(simulator, config.cubes)
     recipe = load_cube_recipe(config.robot)
     if config.method == "sampling":
-        planner = planner_from_config(config.planning)
         expert = CubeStackExpert(
             task,
             recipe=recipe,
             method="sampling",
-            planner=planner,
+            planning=config.planning,
         )
-        planner_label = planner.name
+        planner_label = planner_name(config.planning)
     else:
         planner_label = "none"
         expert = CubeStackExpert(

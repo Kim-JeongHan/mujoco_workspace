@@ -17,7 +17,7 @@ from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_reci
 from mujoco_lab.control import ControlTarget
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import Expert, collect_episode
-from mujoco_lab.planning import default_planning, planner_from_config
+from mujoco_lab.planning import default_planning
 
 
 def _forte_expert(method="heuristic"):
@@ -28,7 +28,7 @@ def _forte_expert(method="heuristic"):
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
     robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
-    planner = planner_from_config(default_planning()) if method == "sampling" else None
+    planning = default_planning() if method == "sampling" else None
     return (
         simulator,
         task,
@@ -36,7 +36,7 @@ def _forte_expert(method="heuristic"):
             task,
             recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
             method=method,
-            planner=planner,
+            planning=planning,
         ),
     )
 
@@ -205,26 +205,23 @@ def test_explicit_method_and_planner_preserve_controller_without_attaching_callb
     controller = create_test_controller(robot, controller="pd", frame="grasp")
     robot.change_controller(controller)
     for method in ("heuristic", "sampling"):
-        planner = planner_from_config(default_planning()) if method == "sampling" else None
+        planning = default_planning() if method == "sampling" else None
         expert = CubeStackExpert(
             task,
             recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
             method=method,
-            planner=planner,
+            planning=planning,
         )
         assert isinstance(expert, CubeStackExpert)
         assert expert.method == method
-        if method == "sampling":
-            assert expert.planner.name == "rrt_connect"
-        else:
-            assert expert.planner is None
+        assert expert.planning is planning
         assert robot.controller is controller
         assert simulator.target_updater is None
 
 
 def test_cube_execution_requires_explicit_method():
     _, task, _ = _forte_expert()
-    planner = planner_from_config(default_planning())
+    planning = default_planning()
     with pytest.raises(TypeError, match="method"):
         CubeStackExpert(
             task, recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type)
@@ -233,15 +230,15 @@ def test_cube_execution_requires_explicit_method():
         CubeStackExpert(
             task,
             recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
-            planner=planner,
+            planning=planning,
         )
 
 
 @pytest.mark.parametrize(
     "method,use_planner,reason",
     [
-        ("sampling", False, "requires an explicit path planner"),
-        ("heuristic", True, "does not use a path planner"),
+        ("sampling", False, "requires an explicit planner configuration"),
+        ("heuristic", True, "does not use a planner configuration"),
         ("unknown", False, "Unsupported cube execution method"),
     ],
 )
@@ -249,13 +246,13 @@ def test_cube_execution_rejects_invalid_method_and_planner_combinations(
     method, use_planner, reason
 ):
     _, task, _ = _forte_expert()
-    planner = planner_from_config(default_planning()) if use_planner else None
+    planning = default_planning() if use_planner else None
     with pytest.raises(ValueError, match=reason):
         CubeStackExpert(
             task,
             recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
             method=method,
-            planner=planner,
+            planning=planning,
         )
 
 

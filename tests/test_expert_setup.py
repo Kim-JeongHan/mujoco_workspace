@@ -15,16 +15,9 @@ from mujoco_lab.behaviors.book import create_book_controller
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
+from mujoco_lab.planning import default_planning
 from mujoco_lab.planning.motion import MotionPlanner
 from mujoco_lab.state import IKError
-
-
-class RejectPlanner:
-    name = "reject"
-    seed = 7
-
-    def plan(self, *args, **kwargs):
-        return None
 
 
 def book_simulator():
@@ -44,7 +37,7 @@ def book_task():
 
 
 @pytest.mark.parametrize("task_name", ["book", "cube_stack"])
-def test_explicit_expert_preserves_task_and_control(task_name):
+def test_explicit_expert_preserves_task_and_control(task_name, monkeypatch):
     if task_name == "book":
         simulator = book_simulator()
     else:
@@ -52,7 +45,8 @@ def test_explicit_expert_preserves_task_and_control(task_name):
             create_cube_stack(1),
             robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
         )
-    planner = RejectPlanner()
+    planning = default_planning()
+    monkeypatch.setattr("mujoco_lab.planning.motion.plan_path", lambda *args, **kwargs: None)
     robot = next(iter(simulator.robots.values()))
     robot.change_controller(
         create_book_controller(robot, load_robot_config(robot.robot_type).controller)
@@ -64,19 +58,19 @@ def test_explicit_expert_preserves_task_and_control(task_name):
         BookInsertionExpert(
             task,
             recipe=load_book_recipe(next(iter(task.simulator.robots.values())).robot_type),
-            planner=planner,
+            planning=planning,
         )
         if task_name == "book"
         else CubeStackExpert(
             task,
             recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
             method="sampling",
-            planner=planner,
+            planning=planning,
         )
     )
     assert isinstance(expert, Expert)
     assert isinstance(expert.motion, MotionPlanner)
-    assert expert.motion.planner is planner
+    assert expert.motion.planning is planning
     assert expert.task.simulator is simulator
     assert expert.robot.controller is not None
     assert simulator.target_updater is None
@@ -84,7 +78,7 @@ def test_explicit_expert_preserves_task_and_control(task_name):
         assert expert.task.cubes == 1
     expert.act()
     assert expert.failed
-    assert "No reject route" in expert.failure_reason
+    assert "No rrt_connect route" in expert.failure_reason
 
 
 def test_explicit_expert_preserves_existing_controller():
@@ -95,21 +89,22 @@ def test_explicit_expert_preserves_existing_controller():
     BookInsertionExpert(
         BookTask(simulator),
         recipe=load_book_recipe("forte"),
-        planner=RejectPlanner(),
+        planning=default_planning(),
     )
     assert robot.controller is controller
 
 
 @pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
-def test_unexpected_planner_errors_propagate_to_application(error_type):
-    class BrokenPlanner(RejectPlanner):
-        def plan(self, *args, **kwargs):
-            raise error_type("planner implementation error")
+def test_unexpected_planner_errors_propagate_to_application(error_type, monkeypatch):
+    def broken_query(*args, **kwargs):
+        raise error_type("planner implementation error")
+
+    monkeypatch.setattr("mujoco_lab.planning.motion.plan_path", broken_query)
 
     expert = BookInsertionExpert(
         book_task(),
         recipe=load_book_recipe("forte"),
-        planner=BrokenPlanner(),
+        planning=default_planning(),
     )
     with pytest.raises(error_type, match="planner implementation error"):
         expert.act()
@@ -121,7 +116,7 @@ def test_expected_ik_failure_is_handled_once_at_execution_boundary(monkeypatch):
     expert = BookInsertionExpert(
         book_task(),
         recipe=load_book_recipe("forte"),
-        planner=RejectPlanner(),
+        planning=default_planning(),
     )
     calls = []
 
@@ -143,15 +138,25 @@ def test_task_requires_explicit_robot_setup():
         BookTask(simulator)
 
 
-def test_book_insertion_requires_explicit_planner():
+def test_sampling_book_insertion_requires_explicit_planning():
     task = book_task()
-    with pytest.raises(TypeError, match="planner"):
+    with pytest.raises(ValueError, match="explicit planner configuration"):
         BookInsertionExpert(
             task, recipe=load_book_recipe(next(iter(task.simulator.robots.values())).robot_type)
         )
-    with pytest.raises(ValueError, match="explicit path planner"):
+    with pytest.raises(ValueError, match="explicit planner configuration"):
         BookInsertionExpert(
             task,
             recipe=load_book_recipe(next(iter(task.simulator.robots.values())).robot_type),
-            planner=None,
+            planning=None,
+        )
+
+
+def test_heuristic_book_insertion_rejects_sampling_planning():
+    with pytest.raises(ValueError, match="does not use a planner configuration"):
+        BookInsertionExpert(
+            book_task(),
+            recipe=load_book_recipe("forte"),
+            method="heuristic",
+            planning=default_planning(),
         )

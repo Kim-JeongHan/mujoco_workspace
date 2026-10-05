@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -12,7 +12,7 @@ from mujoco_lab.behaviors.expert import Expert
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
 from mujoco_lab.control import ControlTarget
 from mujoco_lab.control.trajectory import JointTrajectory
-from mujoco_lab.planning import PathPlanner
+from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
 from mujoco_lab.state import IKError
@@ -20,15 +20,31 @@ from mujoco_lab.utils import Transform
 
 
 class BookInsertionExpert(Expert):
-    """Plan each book stage and execute it with physical readiness checks."""
+    """Execute sampling or heuristic book stages with physical readiness checks.
+
+    Heuristic execution follows Cartesian IK paths without a sampling planner.
+    Both methods preserve stage-specific collision and physical grasp checks.
+    """
 
     STAGES = STAGE_ORDER
     CARRY = frozenset(("lift", "preinsert", "insert", "lower"))
 
-    def __init__(self, task: BookTask, *, recipe: BookshelfRecipe, planner: PathPlanner) -> None:
+    def __init__(
+        self,
+        task: BookTask,
+        *,
+        recipe: BookshelfRecipe,
+        method: Literal["heuristic", "sampling"] = "sampling",
+        planning: PlannerConfig | None = None,
+    ) -> None:
         super().__init__()
-        if planner is None:
-            raise ValueError("Book insertion requires an explicit path planner")
+        if method not in ("heuristic", "sampling"):
+            raise ValueError(f"Unsupported book execution method: {method}")
+        if method == "sampling" and planning is None:
+            raise ValueError("Sampling book insertion requires an explicit planner configuration")
+        if method == "heuristic" and planning is not None:
+            raise ValueError("Heuristic execution does not use a planner configuration")
+        self.method = method
         self.task = task
         self.simulator, self.robot = task.simulator, task.robot
         robot = self.robot
@@ -39,9 +55,10 @@ class BookInsertionExpert(Expert):
         ):
             raise ValueError("Trajectory expert requires a seven-joint target controller")
 
+        self.gripper = robot.gripper
         self.recipe = recipe
-        self.motion = MotionPlanner(self.robot, planner)
-        limits = self.robot.gripper.get_control_limits()
+        self.motion = MotionPlanner(self.robot, planning)
+        limits = self.gripper.get_control_limits()
         self.open, self.closed = float(limits[1]), float(limits[0])
         self.reset()
 
@@ -60,7 +77,7 @@ class BookInsertionExpert(Expert):
         self._lost_grasp_since = None
 
     def _hold_action(self):
-        return np.r_[self.robot.target.position[:7], self.robot.gripper.get_target()]
+        return np.r_[cast(ControlTarget, self.robot.target).position[:7], self.gripper.get_target()]
 
     def act(self, obs: Any = None) -> np.ndarray:
         if self.failed or self.stage >= len(self.STAGES):
@@ -99,7 +116,7 @@ class BookInsertionExpert(Expert):
             raise ValueError("Expert is bound to a different simulator")
         action = self.act()
         self.robot.target = ControlTarget(action[:7])
-        self.robot.gripper.set_target(float(action[7]))
+        self.gripper.set_target(float(action[7]))
         success = self.task.status().released_stable
         if self.failed or (self.stage >= len(self.STAGES) and success):
             simulator.stop()
@@ -150,11 +167,11 @@ class BookInsertionExpert(Expert):
         stage = self.recipe.stages[self.STAGES.index(phase)]
         if phase in ("close", "release"):
             mode = "hold"
-        elif phase in ("pick", "lift", "insert", "lower", "retract"):
+        elif self.method == "heuristic" or phase in ("pick", "lift", "insert", "lower", "retract"):
             mode = "cartesian"
         else:
             mode = "sampling"
-        limits = self.robot.gripper.get_control_limits()
+        limits = self.gripper.get_control_limits()
         grip = limits[1] if phase in ("approach", "pick", "release", "retract") else limits[0]
         return MotionRequest(
             name=phase,

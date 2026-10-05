@@ -10,7 +10,7 @@ from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
-from mujoco_lab.planning import default_planning, planner_from_config
+from mujoco_lab.planning import default_planning
 
 
 def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "panda"):
@@ -33,7 +33,7 @@ def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "p
         task,
         recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
         method=method,
-        planner=planner_from_config(default_planning()) if method == "sampling" else None,
+        planning=default_planning() if method == "sampling" else None,
     )
     starts = np.array([simulator.data.body(f"cube{i}/object_0").xpos for i in range(2)])
     goals = np.array([simulator.data.body(f"cube{i}/object_target_0").xpos for i in range(2)])

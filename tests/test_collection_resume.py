@@ -104,16 +104,22 @@ def test_resume_rejects_missing_or_different_action_cadence(tmp_path, monkeypatc
             )
 
 
-def test_resume_requires_matching_yaw_metadata(tmp_path):
+@pytest.mark.parametrize(
+    ("setting", "changed"),
+    [("cube_yaw_range_degrees", 45.0), ("xy_range", 0.04), ("min_gap", 0.02)],
+)
+def test_resume_requires_matching_randomization_metadata(tmp_path, setting, changed):
     from mujoco_lab.learning.rollout.collector import _resume_index
 
-    recorded = {"model": "same", "cube_yaw_range_degrees": 0.0}
+    recorded = {"model": "same", "cube_yaw_range_degrees": 0.0, "xy_range": 0.02, "min_gap": 0.01}
     save_episode(tmp_path / "episode_000000.npz", episode(10, recorded))
     assert _resume_index(tmp_path, 10, recorded) == 1
     with pytest.raises(ValueError, match="different replay metadata"):
-        _resume_index(tmp_path, 10, {"model": "same"})
+        _resume_index(
+            tmp_path, 10, {key: value for key, value in recorded.items() if key != setting}
+        )
     with pytest.raises(ValueError, match="different replay metadata"):
-        _resume_index(tmp_path, 10, {**recorded, "cube_yaw_range_degrees": 45.0})
+        _resume_index(tmp_path, 10, {**recorded, setting: changed})
 
 
 def test_resume_rejects_missing_seed_gap_corruption_and_replay_mismatch(tmp_path, monkeypatch):
@@ -195,6 +201,8 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
         robot=robot_name,
         method=method,
         cube_yaw_range_degrees=cube_yaw_range_degrees,
+        xy_range=0.04,
+        min_gap=0.02,
     )
     simulator = Mock()
     simulator.robots = {robot_name: Mock(robot_type=robot_name)}
@@ -202,13 +210,13 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
     monkeypatch.setattr(cli.tyro, "cli", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(cli, "Simulator", lambda *_args, **_kwargs: simulator)
     monkeypatch.setattr(cli, "create_cube_stack", Mock())
-    monkeypatch.setattr(cli, "cube_stack_metadata", lambda *_args, **_kwargs: {"model": "same"})
+    metadata = Mock(return_value={"model": "same"})
+    monkeypatch.setattr(cli, "cube_stack_metadata", metadata)
     monkeypatch.setattr(cli, "create_controller", Mock())
     monkeypatch.setattr(cli, "CubeStackTask", Mock())
     monkeypatch.setattr(cli, "CubeStackEnv", Mock())
     monkeypatch.setattr(cli, "CubeStackExpert", Mock())
     monkeypatch.setattr(cli, "load_cube_recipe", Mock())
-    monkeypatch.setattr(cli, "planner_from_config", Mock())
     monkeypatch.setattr(cli, "iter_episodes", iteration)
 
     cli.main()
@@ -218,18 +226,22 @@ def test_cli_streams_resume_and_counts_only_new_episodes(
     assert iteration.call_args.kwargs["seed"] == 10
     assert iteration.call_args.kwargs["max_steps"] == max_steps
     assert iteration.call_args.kwargs["replay_metadata"] == {"model": "same"}
+    assert (
+        metadata.call_args.kwargs["xy_range"]
+        == cli.CubeStackEnv.call_args.kwargs["xy_range"]
+        == 0.04
+    )
+    assert (
+        metadata.call_args.kwargs["min_gap"] == cli.CubeStackEnv.call_args.kwargs["min_gap"] == 0.02
+    )
     assert cli.CubeStackEnv.call_args.kwargs["cube_yaw_range_degrees"] == cube_yaw_range_degrees
     assert cli.CubeStackExpert.call_args.kwargs["method"] == method
     cli.load_cube_recipe.assert_called_once_with(robot_name)
     assert cli.CubeStackExpert.call_args.kwargs["recipe"] is cli.load_cube_recipe.return_value
     if method == "sampling":
-        cli.planner_from_config.assert_called_once_with(config.planning)
-        assert (
-            cli.CubeStackExpert.call_args.kwargs["planner"] is cli.planner_from_config.return_value
-        )
+        assert cli.CubeStackExpert.call_args.kwargs["planning"] is config.planning
     else:
-        cli.planner_from_config.assert_not_called()
-        assert cli.CubeStackExpert.call_args.kwargs["planner"] is None
+        assert cli.CubeStackExpert.call_args.kwargs["planning"] is None
     cli.create_controller.assert_called_once_with(
         simulator.robots[robot_name], cli.load_robot_config(robot_name).controller
     )

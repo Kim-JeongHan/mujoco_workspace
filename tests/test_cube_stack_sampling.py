@@ -15,7 +15,6 @@ from mujoco_lab.planning import (
     RRTConfig,
     RRTConnectConfig,
     default_planning,
-    planner_from_config,
 )
 from mujoco_lab.planning.sampling.sampler import GoalBiasedSampler
 from mujoco_lab.state import IKError
@@ -28,7 +27,7 @@ def make_sampling_expert(task, planning):
         task,
         recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
         method="sampling",
-        planner=planner_from_config(planning),
+        planning=planning,
     )
 
 
@@ -132,38 +131,34 @@ def test_explicit_heuristic_method_uses_no_sampling_planner():
         method="heuristic",
     )
     assert expert.method == "heuristic"
-    assert expert.planner is None
+    assert expert.planning is None
 
 
-def test_sampling_accepts_injected_planner_and_advances_stage_seed():
+def test_sampling_uses_config_and_advances_stage_seed(monkeypatch):
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
     )
     task = CubeStackTask(simulator, 2)
 
-    class DirectPlanner:
-        name = "direct_test"
-        seed = 13
+    planning = RRTConnectConfig(seed=13)
+    seeds = []
 
-        def __init__(self):
-            self.seeds = []
+    def direct_query(config, start, goal, bounds, collision_checker, *, seed):
+        assert config is planning
+        seeds.append(seed)
+        return np.vstack((start, goal))
 
-        def plan(self, start, goal, bounds, collision_checker, *, seed):
-            self.seeds.append(seed)
-            return np.vstack((start, goal))
-
-    planner = DirectPlanner()
+    monkeypatch.setattr("mujoco_lab.planning.motion.plan_path", direct_query)
     robot = simulator.robots["panda"]
     robot.change_controller(create_test_controller(robot, controller="position", frame="grasp"))
     expert = CubeStackExpert(
         task,
         recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
         method="sampling",
-        planner=planner,
+        planning=planning,
     )
-    assert expert.planner is planner
-    assert expert.planner.name == "direct_test"
+    assert expert.planning is planning
     stage = expert._plan[0]
     checker = expert.collision_checker(stage.cube_index, stage.recipe.name)
     assert (
@@ -174,7 +169,7 @@ def test_sampling_accepts_injected_planner_and_advances_stage_seed():
         expert.motion.plan_arm_path(robot.state.snapshot().qpos[:7], stage.waypoints[-1], checker)
         is not None
     )
-    assert planner.seeds == [13, 14]
+    assert seeds == [13, 14]
     expert.reset()
     assert expert.motion.planning_epoch == 0
     stage = expert._plan[0]
@@ -186,7 +181,7 @@ def test_sampling_accepts_injected_planner_and_advances_stage_seed():
         )
         is not None
     )
-    assert planner.seeds[-1] == 13
+    assert seeds[-1] == 13
 
 
 def test_sampling_no_route_stops_cleanly_and_reset_replans(monkeypatch):
