@@ -103,7 +103,7 @@ class Simulator:
         if environment_home >= 0:
             mujoco.mj_resetDataKeyframe(model, self.data, environment_home)
         for robot in self.robots.values():
-            robot._apply_home_keyframe()
+            robot._apply_initial_pose()
             if robot.gripper is not None:
                 robot.gripper._capture_home()
         mujoco.mj_forward(model, self.data)

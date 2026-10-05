@@ -1,12 +1,14 @@
 """Robot-local YAML defaults, joint gains, and task-specific tuning."""
 
+from dataclasses import replace
+
 import mujoco
 import numpy as np
 import pytest
 import yaml
 from dacite.exceptions import DaciteError
 
-from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.forte_coordinates import ZERO_LEGACY_RADIANS
@@ -17,8 +19,10 @@ from mujoco_lab.assets.robot.robot import (
     PoseConfig,
     RobotConfig,
 )
+from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.behaviors.book import create_book_controller
 from mujoco_lab.control import JointSpacePD, PositionController, create_controller
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 
 
 @pytest.mark.parametrize(
@@ -205,6 +209,39 @@ def test_yaml_pose_preserves_gripper_position_and_converts_arm_angles(tmp_path, 
         expected.append(-0.02)
     np.testing.assert_allclose(config.pose.default, expected)
     assert yaml.safe_load(path.read_text())["pose"]["default"] == default
+
+
+@pytest.mark.parametrize("robot_type", ["forte", "panda"])
+def test_default_pose_initializes_joints_controls_and_environment_reset(robot_type):
+    config = load_robot_config(robot_type)
+    pose = [0.12, -np.pi / 4, 0, -3 * np.pi / 4, 0, np.pi / 2, np.pi / 4, 0.02]
+    if config.pose is not None:
+        pose = config.pose.default.copy()
+        pose[0], pose[-1] = 0.12, -0.01
+    config = replace(config, pose=PoseConfig(pose))
+    sim = Simulator(create_cube_stack(1), robots=[RobotSpec("arm", robot_type, config=config)])
+    robot = sim.robots["arm"]
+    assert robot.gripper is not None
+    _, slots = robot.get_arm_joint_mapping()
+    np.testing.assert_allclose(robot.state.snapshot().qpos[slots], pose[:-1])
+    np.testing.assert_allclose(sim.data.qpos[robot.gripper._finger_qpos_indices], pose[-1])
+    assert robot.gripper.get_target() == pytest.approx(pose[-1])
+    assert sim.data.ctrl[robot.gripper.actuator_id] == pytest.approx(pose[-1] * robot.gripper.gear)
+    robot.change_controller(create_controller(robot, config.controller))
+    assert robot.target is not None
+    np.testing.assert_allclose(robot.target.position, pose[:-1])
+    expected = {name: getattr(sim.data, name).copy() for name in ("qpos", "qvel", "ctrl")}
+    sim.data.qpos[robot.state.qpos_indices] += 0.2
+    sim.data.qvel[robot.state.dof_indices] = 0.3
+    sim.data.ctrl[robot.actuator_ids] = 1
+    robot.gripper.set_target(0)
+    env = CubeStackEnv(CubeStackTask(sim, 1), xy_range=0)
+    env.reset(seed=0)
+    for name, values in expected.items():
+        np.testing.assert_allclose(getattr(sim.data, name), values)
+    np.testing.assert_allclose(robot.target.position, pose[:-1])
+    assert robot.gripper.get_target() == pytest.approx(pose[-1])
+    assert not robot.gripper.is_active()
 
 
 def test_shared_config_gets_independent_asset_metadata(tmp_path, monkeypatch):

@@ -8,7 +8,7 @@ import pytest
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ASSET_PATH, ROBOT_ASSETS, ROBOT_NAMES, RobotAsset
 from mujoco_lab.assets.loader import load_asset, load_robot_config
-from mujoco_lab.assets.robot.robot import ControllerConfig, RobotConfig
+from mujoco_lab.assets.robot.robot import ControllerConfig, PoseConfig, RobotConfig
 
 ASSETS = ASSET_PATH / "robot"
 
@@ -19,7 +19,10 @@ def test_bundled_robot_home_times_are_zero(name):
     assert spec.key("home").time == 0
 
 
-def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypatch):
+@pytest.mark.parametrize("default_pose", [None, [-np.pi / 6]])
+def test_initial_pose_is_composed_at_time_zero_with_one_compile(
+    tmp_path, monkeypatch, default_pose
+):
     path = tmp_path / "robot.xml"
     path.write_text("""<mujoco>
       <worldbody>
@@ -44,7 +47,16 @@ def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypa
     monkeypatch.setattr(mujoco.MjSpec, "compile", compile_once)
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("arm", "test", config=RobotConfig(ControllerConfig("none")))],
+        robots=[
+            RobotSpec(
+                "arm",
+                "test",
+                config=RobotConfig(
+                    ControllerConfig("none"),
+                    pose=None if default_pose is None else PoseConfig(default_pose),
+                ),
+            )
+        ],
     )
     assert len(compilations) == 1
     robot = sim.robots["arm"]
@@ -54,9 +66,9 @@ def test_asset_home_is_composed_at_time_zero_with_one_compile(tmp_path, monkeypa
     sim.run_steps(3)
     sim.reset()
     assert sim.data.time == 0
-    np.testing.assert_array_equal(sim.data.qpos, [0.4])
-    np.testing.assert_array_equal(sim.data.qvel, [0.2])
-    np.testing.assert_array_equal(sim.data.ctrl, [0.3])
+    np.testing.assert_array_equal(sim.data.qpos, [0.4] if default_pose is None else default_pose)
+    np.testing.assert_array_equal(sim.data.qvel, [0.2] if default_pose is None else [0])
+    np.testing.assert_array_equal(sim.data.ctrl, [0.3] if default_pose is None else [0])
 
 
 @pytest.mark.parametrize("name,nv,nu", [("panda", 9, 8)])

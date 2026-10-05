@@ -94,6 +94,7 @@ class PoseConfig:
     """Named arm poses in radians, followed by a gripper position in meters.
 
     Robots without a configured gripper contain only arm joint positions.
+    Values follow asset joint order, omitting dependent equality joints.
     RobotConfig.load converts YAML arm angles from degrees to radians.
     """
 

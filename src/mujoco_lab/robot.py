@@ -186,15 +186,75 @@ class Robot:
             raise ValueError(f"Robot {self.name!r} controller joint mapping changed")
         return [action_names.index(name) for name in self.control_joint_names]
 
-    def _apply_home_keyframe(self) -> None:
-        """Apply this robot's home state without forwarding the shared scene."""
+    def _apply_initial_pose(self) -> None:
+        """Apply the YAML default pose, falling back to the asset home state."""
         home = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, self.prefix + "home")
-        if home < 0:
+        if home >= 0:
+            key = self.model.key(home)
+            self.data.qpos[self.state.qpos_indices] = key.qpos[self.state.qpos_indices]
+            self.data.qvel[self.state.dof_indices] = key.qvel[self.state.dof_indices]
+            self.data.ctrl[self.actuator_ids] = key.ctrl[self.actuator_ids]
+        if self.config.pose is None:
             return
-        key = self.model.key(home)
-        self.data.qpos[self.state.qpos_indices] = key.qpos[self.state.qpos_indices]
-        self.data.qvel[self.state.dof_indices] = key.qvel[self.state.dof_indices]
-        self.data.ctrl[self.actuator_ids] = key.ctrl[self.actuator_ids]
+
+        model, data = self.model, self.data
+        pending = [
+            index
+            for index in range(model.neq)
+            if model.eq_type[index] == mujoco.mjtEq.mjEQ_JOINT
+            and model.eq_active0[index]
+            and model.eq_obj1id[index] in self.state.joint_ids
+        ]
+        dependent = {int(model.eq_obj1id[index]) for index in pending}
+        joints = [joint for joint in self.state.joint_ids if joint not in dependent]
+        values = np.asarray(self.config.pose.default, dtype=float)
+        if values.shape != (len(joints),) or not np.isfinite(values).all():
+            raise ValueError(
+                f"Robot {self.name!r} default pose must contain "
+                f"{len(joints)} finite joint positions"
+            )
+        slots = [self.state.joint_ids.index(joint) for joint in joints]
+        limits = self.state.get_joint_limits(slots)
+        if np.any(values < limits[:, 0]) or np.any(values > limits[:, 1]):
+            raise ValueError(f"Robot {self.name!r} default pose exceeds joint limits")
+        data.qpos[model.jnt_qposadr[joints]] = values
+        resolved = set(joints)
+        while pending:
+            ready = [
+                index
+                for index in pending
+                if model.eq_obj2id[index] < 0 or model.eq_obj2id[index] in resolved
+            ]
+            if not ready:
+                raise ValueError(f"Robot {self.name!r} has cyclic joint equality dependencies")
+            for index in ready:
+                first, second = int(model.eq_obj1id[index]), int(model.eq_obj2id[index])
+                address = model.jnt_qposadr[first]
+                displacement = (
+                    0.0
+                    if second < 0
+                    else data.qpos[model.jnt_qposadr[second]]
+                    - model.qpos0[model.jnt_qposadr[second]]
+                )
+                data.qpos[address] = model.qpos0[address] + np.polynomial.polynomial.polyval(
+                    displacement, model.eq_data[index, :5]
+                )
+                resolved.add(first)
+                pending.remove(index)
+
+        data.qvel[self.state.dof_indices] = 0
+        data.ctrl[self.actuator_ids] = 0
+        for slot, joint, gear, position_servo in zip(
+            self._arm_actuator_slots,
+            self._arm_joint_ids,
+            self._arm_gear,
+            self._arm_position,
+            strict=True,
+        ):
+            if position_servo:
+                data.ctrl[self.actuator_ids[slot]] = data.qpos[model.jnt_qposadr[joint]] * gear
+        if self.gripper is not None:
+            data.ctrl[self.gripper.actuator_id] = self.gripper.get_position() * self.gripper.gear
 
     def change_controller(self, controller: Controller | None) -> None:
         """Bind and reset a replacement controller, or detach it with None."""

@@ -21,6 +21,8 @@ uv run python examples/manipulator.py --robot panda --environment warehouse
 
 The CLI supports Panda and Forte, cube-stack scenes, and heuristic or sampling experts. See [Forte asset notes](src/mujoco_lab/assets/robot/forte/README.md) for details about its model and simulated zero pose.
 
+Simulator initializes robot joints from `pose.default` in `robot.yaml` when it is configured. Arm angles in YAML use degrees and the gripper position uses meters; dependent finger joints follow their equality constraints. `reset()` restores this same initial pose. Robots without `pose.default` use their XML `home` keyframe.
+
 ## Collect demonstrations
 
 ```bash
