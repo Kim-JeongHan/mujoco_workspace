@@ -99,9 +99,11 @@ def test_mixed_layouts_fail_before_training(split):
         run_training(TrainConfig(), train, validation)
 
 
-def test_book_without_observation_metadata_does_not_guess_layout():
+@pytest.mark.parametrize("scene", ["book", "cube_stack"])
+def test_missing_observation_metadata_does_not_guess_layout(scene):
     episode = _episode()
     del episode.metadata["observation"]
+    episode.metadata["replay"] = {"scene": scene, "cubes": 2}
     assert _observation_rotation_indices(episode, 48) == []
 
 

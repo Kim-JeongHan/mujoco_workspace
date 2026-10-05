@@ -31,7 +31,13 @@ def _episode(cubes: int = 2) -> Episode:
     return Episode(
         states=states,
         actions=np.array([[2.0], [4.0], [6.0]], dtype=np.float32),
-        metadata={"replay": {"scene": "cube_stack", "cubes": cubes, "physics_steps_per_action": 1}},
+        metadata={
+            "replay": {"scene": "cube_stack", "cubes": cubes, "physics_steps_per_action": 1},
+            "observation": {
+                "frame_dim": states.shape[1],
+                "rotation_indices": _rotation_indices(cubes),
+            },
+        },
     )
 
 
@@ -119,7 +125,7 @@ def test_generic_state_with_same_width_keeps_zscore():
 
 
 @pytest.mark.parametrize("cubes", [1, 2, 3, 4])
-def test_cube_count_selects_all_rotation_slices(cubes):
+def test_recorded_cube_layout_selects_all_rotation_slices(cubes):
     from mujoco_lab.learning.trainers.train_bc import _observation_rotation_indices
 
     episode = _episode(cubes)
@@ -148,7 +154,7 @@ def test_rotation_layout_matches_single_robot_observation(cubes):
         np.testing.assert_allclose(observation[rotations[6 + 6 * cube : 12 + 6 * cube]], rotation)
 
 
-def test_cube_stack_metadata_must_match_observation_shape():
+def test_recorded_observation_dimension_must_match_states():
     from mujoco_lab.learning.trainers.train_bc import _observation_rotation_indices
 
     episode = _episode()

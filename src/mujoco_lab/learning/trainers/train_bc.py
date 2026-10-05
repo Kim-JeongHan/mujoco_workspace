@@ -13,7 +13,6 @@ from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
-from mujoco_lab.learning.envs.cube_stack import cube_stack_observation_layout
 from mujoco_lab.learning.infrastructure.utils import set_seed
 from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.policies.base import BasePolicy
@@ -21,29 +20,23 @@ from mujoco_lab.learning.policies.factory import build_policy
 
 
 def _observation_rotation_indices(episode: Episode, frame_dim: int) -> list[int]:
-    """Parse observation layout metadata, with support for historical cube episodes."""
-    if "observation" in episode.metadata:
-        observation = episode.metadata["observation"]
-        if not isinstance(observation, dict):
-            raise ValueError("Observation metadata must be an object")
-        recorded_dim = observation.get("frame_dim")
-        if type(recorded_dim) is not int or recorded_dim != frame_dim:
-            raise ValueError("Observation frame dimension does not match episode states")
-        indices = observation.get("rotation_indices")
-        if (
-            not isinstance(indices, list)
-            or any(type(index) is not int or not 0 <= index < frame_dim for index in indices)
-            or len(set(indices)) != len(indices)
-        ):
-            raise ValueError("Observation rotation_indices must be unique in-range integers")
-        return sorted(indices)
-    replay = episode.metadata.get("replay") or {}
-    if replay.get("scene") != "cube_stack":
+    """Read rotation indices from explicit observation layout metadata."""
+    if "observation" not in episode.metadata:
         return []
-    expected_dim, rotation_indices = cube_stack_observation_layout(replay["cubes"])
-    if frame_dim != expected_dim:
-        raise ValueError("Cube-stack observation dimension does not match replay cube count")
-    return rotation_indices
+    observation = episode.metadata["observation"]
+    if not isinstance(observation, dict):
+        raise ValueError("Observation metadata must be an object")
+    recorded_dim = observation.get("frame_dim")
+    if type(recorded_dim) is not int or recorded_dim != frame_dim:
+        raise ValueError("Observation frame dimension does not match episode states")
+    indices = observation.get("rotation_indices")
+    if (
+        not isinstance(indices, list)
+        or any(type(index) is not int or not 0 <= index < frame_dim for index in indices)
+        or len(set(indices)) != len(indices)
+    ):
+        raise ValueError("Observation rotation_indices must be unique in-range integers")
+    return sorted(indices)
 
 
 def run_training(
