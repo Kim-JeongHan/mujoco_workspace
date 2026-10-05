@@ -149,6 +149,13 @@ def build():
     tree = ET.parse(SOURCE / "robot.xml")
     xml = tree.getroot()
     xml.set("model", "forte2_capsules")
+    # Ignore proxy overlaps around the shoulder and elbow joints.
+    contact = xml.find("contact")
+    for body1, body2 in (
+        ("base_link", "upperarmright"),
+        ("upperarmright", "spur_gear__40_teeth_"),
+    ):
+        ET.SubElement(contact, "exclude", body1=body1, body2=body2)
     for mesh in xml.findall("asset/mesh"):
         mesh.set("file", "../forte/" + mesh.attrib["file"])
     bodies = {body.get("name"): body for body in xml.iter("body")}

@@ -188,6 +188,9 @@
     <exclude body1="elbowlink" body2="spur_gear__40_teeth_" />
     <exclude body1="spur_gear__40_teeth_" body2="spiral_gear_2" />
     <exclude body1="spiral_gear_2" body2="part_8_2" />
+    <!-- Ignore proxy overlaps around the shoulder and elbow joints. -->
+    <exclude body1="base_link" body2="upperarmright" />
+    <exclude body1="upperarmright" body2="spur_gear__40_teeth_" />
   </contact>
   <equality>
     <joint name="gripper_parallel" joint1="gripper_left_joint" joint2="gripper_right_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
