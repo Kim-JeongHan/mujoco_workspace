@@ -49,4 +49,6 @@ uv run --locked --extra learning python -m mujoco_lab.learning.evaluate --checkp
 
 Replace `RUN` with the training run directory. Training and evaluation settings are in [`TrainConfig` and `EvalConfig`](src/mujoco_lab/learning/config/config.py).
 
+Training rollouts and standalone evaluation default to `xy_range=0.02` m and `min_gap=0.01` m. Use `--rollout.xy-range` and `--rollout.min-gap` to choose other values.
+
 Cube models and stacking layouts derive from OGBench task 5; upstream provenance and licenses are recorded in the [OGBench source manifest](third_party/ogbench.SOURCE.json). Planning code includes upstream components documented in the [planning guide](third_party/planning/README.md) and [planning source manifest](third_party/planning.SOURCE.json).

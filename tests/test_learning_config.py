@@ -20,6 +20,8 @@ def test_rollout_options_share_cli_names_and_defaults(tmp_path):
     )
     assert train.rollout.seed == evaluation.rollout.seed == 123
     assert (train.rollout.num_episodes, evaluation.rollout.num_episodes) == (3, 3)
+    assert train.rollout.xy_range == evaluation.rollout.xy_range == 0.02
+    assert train.rollout.min_gap == evaluation.rollout.min_gap == 0.01
 
 
 @pytest.mark.parametrize(

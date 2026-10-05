@@ -15,7 +15,7 @@ class RolloutConfig:
     num_episodes: int = 3
     seed: int = 5_000
     max_steps: int = 1_500
-    xy_range: float | None = None
+    xy_range: float | None = 0.02
     min_gap: float = 0.01
     cube_yaw_range_degrees: float = 45.0
     book_yaw_range_degrees: float | None = None
