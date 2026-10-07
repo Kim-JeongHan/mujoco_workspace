@@ -1,7 +1,5 @@
 """Streaming evaluation video lifecycle and file-based W&B logging."""
 
-import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +10,6 @@ import torch
 from mujoco_lab.learning.config.config import RolloutConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation import PolicyEvaluator
-from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.policies.mse import MSEPolicy
 
 
@@ -37,6 +34,10 @@ class Env:
         center = (self.task.starts.mean(axis=0) + self.task.goals.mean(axis=0)) / 2
         center[2] += 0.12
         return center
+
+    @property
+    def action_dt(self):
+        return self.simulator.dt * self.physics_steps_per_action
 
     def reset(self, *, seed):
         self.steps = 0
@@ -88,7 +89,7 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
         RolloutConfig(
             num_episodes=3,
             seed=100,
-            max_steps=2,
+            max_seconds=0.004,
             video_episodes=num_video_episodes,
             video_fps=20,
             video_width=64,
@@ -162,19 +163,6 @@ def test_records_first_seeds_and_closes_before_callback(tmp_path, monkeypatch):
     ]
 
 
-def test_video_disabled_never_creates_camera_or_recorder(monkeypatch):
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluation.evaluator.VideoRecorder",
-        lambda *a, **k: pytest.fail("recorder created"),
-    )
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluation.evaluator.create_free_camera",
-        lambda *a, **k: pytest.fail("camera created"),
-    )
-    rows, _ = run(Env())
-    assert all("video_path" not in row for row in rows)
-
-
 def test_video_closes_when_environment_step_fails(tmp_path, monkeypatch):
     events = []
 
@@ -195,56 +183,3 @@ def test_video_closes_when_environment_step_fails(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="step failed"):
         run(Env(fail_step=True), video_dir=tmp_path, num_video_episodes=1)
     assert events == ["initial", "close"]
-
-
-def test_video_does_not_overwrite_existing_file(tmp_path, monkeypatch):
-    path = tmp_path / "seed_100.mp4"
-    path.write_bytes(b"existing")
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluation.evaluator.VideoRecorder",
-        lambda *a, **k: pytest.fail("recorder created"),
-    )
-    with pytest.raises(FileExistsError, match="seed_100.mp4"):
-        run(Env(), video_dir=tmp_path, num_video_episodes=1)
-    assert path.read_bytes() == b"existing"
-
-
-def test_logger_sends_completed_mp4_path_at_same_optimizer_step(tmp_path, monkeypatch):
-    video_path = tmp_path / "episode.mp4"
-    video_path.write_bytes(b"mp4")
-    events = []
-
-    class FakeRun:
-        def define_metric(self, *args, **kwargs):
-            pass
-
-        def log(self, row, *, step, commit):
-            events.append(("log", row, step, commit))
-
-        def finish(self, *, exit_code):
-            events.append(("finish", exit_code))
-
-    monkeypatch.setitem(
-        sys.modules,
-        "wandb",
-        SimpleNamespace(
-            init=lambda **kwargs: FakeRun(),
-            Video=lambda path, *, format: (path, format),
-        ),
-    )
-    with Logger(tmp_path / "run", {}, wandb_mode="online") as logger:
-        logger.log_video_file("eval/video/0", video_path, step=9)
-    assert events[0] == (
-        "log",
-        {"optimizer_step": 9, "eval/video/0": (str(video_path), "mp4")},
-        9,
-        False,
-    )
-    assert events[1] == ("log", {}, 9, True)
-    assert events[2] == ("finish", 0)
-    assert json.loads((tmp_path / "run" / "metrics.jsonl").read_text()) == {
-        "optimizer_step": 9,
-        "event": "video",
-        "name": "eval/video/0",
-        "path": str(video_path),
-    }

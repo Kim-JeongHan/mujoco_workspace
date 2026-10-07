@@ -1,7 +1,5 @@
 """Track timed trajectory progress and pause at unchecked waypoints."""
 
-from typing import cast
-
 import numpy as np
 
 from mujoco_lab.control.trajectory import JointTrajectory
@@ -24,9 +22,17 @@ class TrajectoryExecution:
         self.last_time = self.start_time = now
 
     def sample(
-        self, now: float, current: np.ndarray, arm_tolerance: float
+        self, now: float, current: np.ndarray, arm_tolerance: float, *, dt: float = 0.0
     ) -> tuple[np.ndarray, bool]:
-        trajectory = cast(JointTrajectory, self.trajectory)
+        """Return a target dt seconds ahead and completion at the current time.
+
+        Previewing never advances execution or crosses an unchecked stop waypoint.
+        """
+        if not np.isfinite(dt) or dt < 0:
+            raise ValueError("dt must be finite and nonnegative")
+        trajectory = self.trajectory
+        if trajectory is None:
+            raise RuntimeError("Cannot sample a trajectory before it is started")
         elapsed = self.elapsed + max(0.0, now - self.last_time)
         self.last_time = now
         if not trajectory.smooth:
@@ -46,10 +52,13 @@ class TrajectoryExecution:
                 len(trajectory.path),
                 int(np.searchsorted(trajectory.waypoint_times, self.elapsed, side="right")),
             )
-        action = trajectory.sample(self.elapsed).position
+        sample_time = self.elapsed + dt
+        if not trajectory.smooth and self.vertex < len(trajectory.path):
+            sample_time = min(sample_time, trajectory.waypoint_times[self.vertex])
+        next_act = trajectory.sample(sample_time).position
         complete = (
             self.elapsed >= trajectory.duration
             if trajectory.smooth
             else self.vertex == len(trajectory.path)
         )
-        return action, complete
+        return next_act, complete

@@ -1,7 +1,7 @@
 pose:
-  # Seven arm angles in degrees, followed by the gripper position in meters.
-  default: [0, -90, 0, -90, 0, 90, 0, 0]
-  zero: [0, 0, 0, 0, 0, 0, 0, 0]
+  # Seven arm angles in degrees, followed by the gripper opening width in meters (0 closed).
+  default: [0, -90, 0, -90, 0, 90, 0, 0.074]
+  zero: [0, 0, 0, 0, 0, 0, 0, 0.074]
 
 controller:
   name: pd
@@ -54,7 +54,8 @@ constraints:
 
 gripper:
   actuator: gripper_motor
-  # Native XML target range: -0.037 m closed, 0 m open.
-  # Configured gripper motion limits.
-  velocity_limit: 0.2 # m/s
-  acceleration_limit: 1.0 # m/s^2
+  joints: [gripper_left_joint, gripper_right_joint]
+  # Native XML target range: 0 m closed, 0.037 m open.
+  # Opening-width motion limits; native joint motion is half this rate.
+  velocity_limit: 0.4 # m/s (opening width)
+  acceleration_limit: 2.0 # m/s^2 (opening width)

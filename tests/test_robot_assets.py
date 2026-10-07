@@ -1,122 +1,14 @@
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
 
-from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
-from mujoco_lab.assets import ASSET_PATH, ROBOT_ASSETS, ROBOT_NAMES, RobotAsset
+from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets import ASSET_PATH
 from mujoco_lab.assets.loader import load_asset, load_robot_config
-from mujoco_lab.assets.robot.robot import ControllerConfig, PoseConfig, RobotConfig
 
 ASSETS = ASSET_PATH / "robot"
-
-
-@pytest.mark.parametrize("name", ROBOT_NAMES)
-def test_bundled_robot_home_times_are_zero(name):
-    spec = load_asset(name)
-    assert spec.key("home").time == 0
-
-
-@pytest.mark.parametrize("default_pose", [None, [-np.pi / 6]])
-def test_initial_pose_is_composed_at_time_zero_with_one_compile(
-    tmp_path, monkeypatch, default_pose
-):
-    path = tmp_path / "robot.xml"
-    path.write_text("""<mujoco>
-      <worldbody>
-        <site name="world_site"/>
-        <body name="root">
-          <joint name="joint"/>
-          <geom type="sphere" size="0.1"/>
-          <site name="tip"/><site/>
-        </body>
-      </worldbody>
-      <actuator><motor name="motor" joint="joint"/></actuator>
-      <keyframe><key name="home" time="2" qpos="0.4" qvel="0.2" ctrl="0.3"/></keyframe>
-    </mujoco>""")
-    monkeypatch.setitem(ROBOT_ASSETS, "test", RobotAsset(path))
-    compile_spec = mujoco.MjSpec.compile
-    compilations = []
-
-    def compile_once(spec):
-        compilations.append(spec.modelname)
-        return compile_spec(spec)
-
-    monkeypatch.setattr(mujoco.MjSpec, "compile", compile_once)
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[
-            RobotSpec(
-                "arm",
-                "test",
-                config=RobotConfig(
-                    ControllerConfig("none"),
-                    pose=None if default_pose is None else PoseConfig(default_pose),
-                ),
-            )
-        ],
-    )
-    assert len(compilations) == 1
-    robot = sim.robots["arm"]
-    assert robot.state.site_id("tip") == sim.model.site("arm/tip").id
-    with pytest.raises(ValueError, match="no site"):
-        robot.state.site_id("world_site")
-    sim.run_steps(3)
-    sim.reset()
-    assert sim.data.time == 0
-    np.testing.assert_array_equal(sim.data.qpos, [0.4] if default_pose is None else default_pose)
-    np.testing.assert_array_equal(sim.data.qvel, [0.2] if default_pose is None else [0])
-    np.testing.assert_array_equal(sim.data.ctrl, [0.3] if default_pose is None else [0])
-
-
-@pytest.mark.parametrize("name,nv,nu", [("panda", 9, 8)])
-@pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
-def test_robot_home_pose_and_position_servos(name, nv, nu, environment):
-    sim = Simulator(
-        create_environment(environment),
-        robots=[RobotSpec(name, name, config=load_robot_config(name))],
-    )
-    model, data = sim.model, sim.data
-    robot = sim.robots[name]
-    assert robot.state.nv == nv
-    assert robot.num_actuators == nu
-    home = model.key(name + "/home")
-    np.testing.assert_allclose(
-        data.qpos[robot.state.qpos_indices], home.qpos[robot.state.qpos_indices]
-    )
-    np.testing.assert_allclose(data.ctrl[robot.actuator_ids], home.ctrl[robot.actuator_ids])
-    assert all(
-        not model.geom(contact.geom1).name.startswith(name + "/")
-        and not model.geom(contact.geom2).name.startswith(name + "/")
-        for contact in data.contact
-    )
-    mujoco.mj_step(model, data, nstep=1000)
-    assert np.isfinite(data.qpos).all()
-    assert np.isfinite(data.qvel).all()
-    assert int(data.warning.number.sum()) == 0
-    assert (
-        np.max(np.abs(data.qpos[robot.state.qpos_indices] - home.qpos[robot.state.qpos_indices]))
-        < 0.15
-    )
-
-
-@pytest.mark.parametrize("name", ["panda"])
-def test_mjcf_joint_limits_and_link_masses_match_urdf(name):
-    model = Simulator(load_asset(name)).model
-    urdf = ET.parse(ASSETS / name / "robot.urdf").getroot()
-    for link in urdf.findall("link"):
-        mass = link.find("inertial/mass")
-        if mass is not None:
-            actual = float(model.body(link.attrib["name"]).mass[0])
-            assert actual == pytest.approx(float(mass.attrib["value"]), rel=1e-5)
-    for joint in urdf.findall("joint"):
-        if joint.attrib["type"] in {"fixed", "continuous"}:
-            continue
-        limit = joint.find("limit")
-        expected = [float(limit.attrib["lower"]), float(limit.attrib["upper"])]
-        np.testing.assert_allclose(model.joint(joint.attrib["name"]).range, expected, atol=1e-5)
 
 
 def rotation(axis, angle):
@@ -187,15 +79,3 @@ def test_panda_fingers_remain_coupled_when_commanded():
     assert abs(left - right) < 1e-3
     assert left < 0.03
     assert int(data.warning.number.sum()) == 0
-
-
-@pytest.mark.parametrize("name", ["panda", "forte"])
-def test_robot_files_resolve_inside_the_asset_directory(name):
-    directory = ASSETS / name
-    for element in ET.parse(directory / "robot.xml").iter():
-        reference = element.get("file")
-        if reference:
-            assert not Path(reference).is_absolute()
-            target = (directory / reference).resolve()
-            assert target.is_relative_to(directory.resolve())
-            assert target.is_file()

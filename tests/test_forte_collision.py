@@ -1,10 +1,10 @@
-"""Forte2 proxy exclusions preserve a collision-free home and environment contacts."""
+"""Forte proxy exclusions preserve a collision-free home and environment contacts."""
 
 from pathlib import Path
 
 import mujoco
 
-ASSET = Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot/forte2/robot.xml"
+ASSET = Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot/forte/robot.xml"
 
 
 def home_state(model):
@@ -14,12 +14,12 @@ def home_state(model):
     return data
 
 
-def test_forte2_home_has_no_proxy_self_contacts():
+def test_forte_home_has_no_proxy_self_contacts():
     model = mujoco.MjModel.from_xml_path(str(ASSET))
     assert home_state(model).ncon == 0
 
 
-def test_forte2_exclusions_keep_contacts_with_external_geometry():
+def test_forte_exclusions_keep_contacts_with_external_geometry():
     spec = mujoco.MjSpec.from_file(str(ASSET))
     model = spec.compile()
     center = home_state(model).geom("upper_arm_capsule").xpos.copy()

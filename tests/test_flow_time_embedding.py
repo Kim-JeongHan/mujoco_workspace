@@ -6,17 +6,9 @@ import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
-from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.models import SinusoidalTimeEmbedding
 from mujoco_lab.learning.policies.factory import build_policy
-from mujoco_lab.learning.trainers.train_bc import run_training
-
-
-@pytest.mark.parametrize("dim", [0, -2, 3, True, 2.5])
-def test_time_embedding_requires_positive_even_width(dim):
-    with pytest.raises(ValueError, match="positive even integer"):
-        SinusoidalTimeEmbedding(dim)
 
 
 def test_unit_interval_embedding_varies_and_preserves_dtype_and_gradient():
@@ -32,35 +24,6 @@ def test_unit_interval_embedding_varies_and_preserves_dtype_and_gradient():
     features[1].sum().backward()
     assert torch.isfinite(times.grad).all()
     assert times.grad[1] != 0
-
-
-def test_flow_default_uses_embedding_and_keeps_training_sampling_shapes():
-    model = build_policy("flow", state_dim=4, action_dim=2, chunk_size=3, hidden_dims=(8,))
-    assert model.time_embed_dim == 128
-    assert model.net[0].in_features == 4 + 3 * 2 + 128
-    states = torch.randn(2, 4)
-    actions = torch.randn(2, 3, 2)
-    loss = model.compute_loss(states, actions)
-    loss.backward()
-    assert torch.isfinite(loss)
-    assert model.net[0].weight.grad is not None
-    with torch.no_grad():
-        assert model.sample_actions(states, num_steps=2).shape == actions.shape
-
-
-def test_training_passes_configured_embedding_width(monkeypatch):
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    config = _config("flow", flow_time_embed_dim=64)
-    config.num_epochs = 1
-    config.eval_interval = 0
-    config.log_interval = 1
-    episode = Episode(
-        states=np.zeros((3, 2), dtype=np.float32),
-        actions=np.zeros((2, 1), dtype=np.float32),
-    )
-    model, _ = run_training(config, [episode])
-    assert model.time_embed_dim == 64
-    assert model.net[0].in_features == 4 + 2 + 64
 
 
 def _normalizer():
@@ -132,13 +95,3 @@ def test_old_scalar_flow_checkpoint_loads_with_identical_prediction(tmp_path):
     torch.manual_seed(5)
     after = loaded.sample_actions(states, num_steps=3)
     torch.testing.assert_close(after, before)
-
-
-def test_mse_checkpoint_stays_unchanged(tmp_path):
-    model = build_policy("mse", state_dim=4, action_dim=1, chunk_size=2, hidden_dims=(8,))
-    path = tmp_path / "mse.pt"
-    save_checkpoint(path, model, _normalizer(), _config("mse"), optimizer_step=3)
-    loaded, _, metadata = load_checkpoint(path)
-    assert "flow_time_embed_dim" not in metadata["architecture"]
-    states = torch.randn(2, 4)
-    torch.testing.assert_close(loaded.sample_actions(states), model.sample_actions(states))

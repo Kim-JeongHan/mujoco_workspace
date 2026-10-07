@@ -11,15 +11,15 @@ from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors.book import BookTask, create_book_controller
 from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig
-from mujoco_lab.learning.datasets.replay import replay_action_repeat
+from mujoco_lab.learning.datasets.replay import require_width_actions
 from mujoco_lab.learning.envs.book import BookEnv
 
 
 @dataclass
 class BookEvalConfig(EvalConfig):
-    """Allow enough action steps for a complete book-insertion episode."""
+    """Allow enough simulated time for a complete book-insertion episode."""
 
-    rollout: RolloutConfig = field(default_factory=lambda: RolloutConfig(max_steps=18_000))
+    rollout: RolloutConfig = field(default_factory=lambda: RolloutConfig(max_seconds=180.0))
 
 
 def create_book_evaluation_env(
@@ -31,9 +31,10 @@ def create_book_evaluation_env(
 ) -> tuple[BookEnv, dict[str, Any]]:
     """Restore the recorded book, robot, controller tuning, and action cadence."""
     replay = metadata["dataset_metadata"]["replay"]
+    require_width_actions(replay)
     if replay["scene"] != "book_insertion" or replay["environment"] != "book_shelf":
         raise ValueError("Expected a recorded book-insertion scene in book_shelf")
-    repeat = replay_action_repeat(replay)
+    repeat = replay["physics_steps_per_action"]
     architecture_repeat = metadata.get("architecture", {}).get("physics_steps_per_action", repeat)
     if architecture_repeat != repeat:
         raise ValueError("Checkpoint action cadence differs from recorded book cadence")

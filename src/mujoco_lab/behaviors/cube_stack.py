@@ -40,10 +40,12 @@ class CubeMeasurements:
 
 
 def has_physical_grasp(robot, cube_index: int) -> bool:
-    """Return whether both physical finger pads touch the active cube."""
+    """Return whether every configured finger physically touches the active cube."""
+    if robot is None or robot.gripper is None:
+        return False
     model, data = robot.model, robot.data
     cube_geom = model.geom(f"cube{cube_index}/object_0").id
-    sides = set()
+    contacts = set()
     for contact in data.contact:
         if contact.geom1 == cube_geom:
             other = int(contact.geom2)
@@ -51,16 +53,8 @@ def has_physical_grasp(robot, cube_index: int) -> bool:
             other = int(contact.geom1)
         else:
             continue
-        if robot.robot_type == "forte":
-            for side in ("left", "right"):
-                if model.geom(other).name == f"{robot.name}/gripper_{side}_pad":
-                    sides.add(side)
-        else:
-            body = model.body(int(model.geom_bodyid[other])).name
-            for side in ("left", "right"):
-                if body == f"{robot.name}/panda_{side}finger":
-                    sides.add(side)
-    return sides == {"left", "right"}
+        contacts.add(other)
+    return robot.gripper.has_contact_on_all_fingers(contacts)
 
 
 def cube_touches_robot(robot, cube_index: int) -> bool:
@@ -115,7 +109,7 @@ class CubeStackTask:
         self._placed = np.zeros(cubes, dtype=bool)
 
     def has_grasp(self, cube_index: int) -> bool:
-        """Measure two-pad contact for the task's robot and active cube."""
+        """Measure finger contact for the task's robot and active cube."""
         return has_physical_grasp(self.robot, cube_index)
 
     def touches_robot(self, cube_index: int) -> bool:

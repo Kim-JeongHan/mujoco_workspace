@@ -9,13 +9,13 @@ enforces local consistency; composing many steps drives global coherence.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
 from itertools import pairwise
-from typing import cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+
+from mujoco_lab.learning.infrastructure.utils import build_mlp
 
 # ---------------------------------------------------------------------------
 # Time-step embedding
@@ -93,7 +93,7 @@ class ResidualTemporalBlock(nn.Module):
         # Projects time embedding → out_channels, broadcast over H.
         self.time_proj = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(embed_dim, out_channels),
+            *build_mlp(input_dim=embed_dim, output_dim=out_channels, hidden_layers=()),
         )
         # 1x1 projection for skip connection when channel sizes differ.
         self.skip = (
@@ -168,9 +168,12 @@ class TemporalUnet(nn.Module):
         time_embed_dim = dim * 4
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(dim),
-            nn.Linear(dim, time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, time_embed_dim),
+            *build_mlp(
+                input_dim=dim,
+                output_dim=time_embed_dim,
+                hidden_layers=(time_embed_dim,),
+                activation_fn=nn.SiLU,
+            ),
         )
 
         # Channel sizes at each U-Net level.
@@ -235,7 +238,8 @@ class TemporalUnet(nn.Module):
         t_emb = self.time_mlp(t)  # [B, time_embed_dim]
 
         skips: list[torch.Tensor] = []
-        for resnet1, resnet2, downsample in cast(Iterable[nn.ModuleList], self.downs):
+        # __init__ creates ModuleList stages; PyTorch types their elements as Module.
+        for resnet1, resnet2, downsample in self.downs:  # ty: ignore[not-iterable]
             x = resnet1(x, t_emb)
             x = resnet2(x, t_emb)
             skips.append(x)
@@ -244,7 +248,8 @@ class TemporalUnet(nn.Module):
         x = self.mid_block1(x, t_emb)
         x = self.mid_block2(x, t_emb)
 
-        for resnet1, resnet2, upsample in cast(Iterable[nn.ModuleList], self.ups):
+        # __init__ creates ModuleList stages; PyTorch types their elements as Module.
+        for resnet1, resnet2, upsample in self.ups:  # ty: ignore[not-iterable]
             skip = skips.pop()
             # Crop skip to match x if sizes differ (can happen with odd lengths).
             if skip.shape[-1] != x.shape[-1]:
@@ -321,7 +326,7 @@ class TemporalValueNet(nn.Module):
         # Head: global average pool over H, then linear to scalar.
         self.head = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(mid_dim, 1),
+            *build_mlp(input_dim=mid_dim, output_dim=1, hidden_layers=()),
         )
 
         # Register a learned constant to fill the time-embedding slot.
@@ -350,7 +355,8 @@ class TemporalValueNet(nn.Module):
         x, _ = self._pad_to_multiple(x)
         t_emb = self._get_t_emb(batch, device=x.device, dtype=x.dtype)
 
-        for resnet1, resnet2, downsample in cast(Iterable[nn.ModuleList], self.encoder):
+        # __init__ creates ModuleList stages; PyTorch types their elements as Module.
+        for resnet1, resnet2, downsample in self.encoder:  # ty: ignore[not-iterable]
             x = resnet1(x, t_emb)
             x = resnet2(x, t_emb)
             x = downsample(x)

@@ -6,7 +6,7 @@ from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
 from mujoco_lab.control.position import PositionController
 from mujoco_lab.control.target import ControlTarget
-from mujoco_lab.control.trajectory import JointTrajectory, demo_target_updater, min_jerk_target
+from mujoco_lab.control.trajectory import JointTrajectory, demo_target_updater, min_jerk
 
 __all__ = [
     "Controller",
@@ -17,5 +17,5 @@ __all__ = [
     "PositionController",
     "create_controller",
     "demo_target_updater",
-    "min_jerk_target",
+    "min_jerk",
 ]

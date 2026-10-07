@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from importlib.resources import files
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mujoco_lab.assets import RobotName
-from mujoco_lab.assets.robot.robot import MotionLimits
+from mujoco_lab.control.trajectory import MotionRatio
 
 STAGE_ORDER = (
     "approach",
@@ -24,13 +25,14 @@ STAGE_ORDER = (
 
 
 class StageRecipe(BaseModel):
-    """One named book stage with optional motion limit overrides."""
+    """One named book stage with motion ratios and physical grasp checks."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     name: str
-    arm: MotionLimits = Field(default_factory=MotionLimits)
-    gripper: MotionLimits = Field(default_factory=MotionLimits)
+    gripper_mode: Literal[0, 1]  # 1 closes; 0 opens.
+    arm: MotionRatio | None = None
+    gripper: MotionRatio | None = None
 
 
 class BookshelfRecipe(BaseModel):
@@ -38,8 +40,8 @@ class BookshelfRecipe(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    arm: MotionLimits = Field(default_factory=MotionLimits)
-    gripper: MotionLimits = Field(default_factory=MotionLimits)
+    arm: MotionRatio = (1.0, 1.0)
+    gripper: MotionRatio = (1.0, 1.0)
     waypoint_tolerance: float = Field(gt=0)
     arm_tolerance: float = Field(gt=0)
     stage_dwell_s: float = Field(ge=0)

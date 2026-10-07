@@ -1,15 +1,11 @@
-# 추가 구현 방향
-# 현재 MLP 기반 행동 회귀를 기본 BC baseline으로 사용한다.
-# 상태와 목표 행동의 shape을 확인하고 동일한 정규화 좌표계에서 MSE를 계산한다.
-# forward와 compute_loss의 gradient를 유지하고 평가 호출 측에서만 gradient 계산을 끈다.
-# 나중에 backbone을 공유할 필요가 생기면 MLP 구성을 models/로 옮긴다.
-# MSE→Gaussian PPO 초기화가 필요하면 평균 네트워크의 구조와 가중치 매핑을 맞춘다.
+"""Deterministic action-chunk regression using the shared MLP builder."""
 
 from __future__ import annotations
 
 import torch
 from torch import nn
 
+from mujoco_lab.learning.infrastructure.utils import build_mlp
 from mujoco_lab.learning.policies.base import BasePolicy
 
 
@@ -33,19 +29,11 @@ class MSEPolicy(BasePolicy):
         """
         super().__init__(state_dim, action_dim, chunk_size)
 
-        layers = []
-
-        input_dim = state_dim
-
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(input_dim, hidden_dim))
-            layers.append(nn.ReLU())
-
-            input_dim = hidden_dim
-
-        layers.append(nn.Linear(input_dim, action_dim * chunk_size))
-
-        self.net = nn.Sequential(*layers)
+        self.net = build_mlp(
+            input_dim=state_dim,
+            output_dim=action_dim * chunk_size,
+            hidden_layers=hidden_dims,
+        )
         self.criterion = nn.MSELoss()
 
     def compute_loss(

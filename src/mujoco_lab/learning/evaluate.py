@@ -13,12 +13,13 @@ import torch
 import tyro
 
 from mujoco_lab.learning.checkpoint import load_checkpoint
-from mujoco_lab.learning.config.config import EvalConfig
+from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig
 from mujoco_lab.learning.evaluation import (
     PolicyEvaluator,
     evaluation_log_metrics,
 )
 from mujoco_lab.learning.logging import Logger
+from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 
@@ -55,10 +56,28 @@ def create_evaluation_env(
     raise ValueError(f"Unsupported evaluation scene: {scene}")
 
 
+def create_rollout_env(
+    metadata: dict[str, Any], rollout: RolloutConfig
+) -> tuple[Any, dict[str, Any]]:
+    """Convert the rollout time limit using the checkpoint's recorded action cadence."""
+    replay = metadata["dataset_metadata"]["replay"]
+    repeat = metadata.get("architecture", {}).get(
+        "physics_steps_per_action", replay["physics_steps_per_action"]
+    )
+    max_steps = max_steps_for_seconds(rollout.max_seconds, replay["dt"] * repeat)
+    return create_evaluation_env(
+        metadata,
+        xy_range=rollout.xy_range,
+        min_gap=rollout.min_gap,
+        max_steps=max_steps,
+        cube_yaw_range_degrees=rollout.cube_yaw_range_degrees,
+        book_yaw_range_degrees=rollout.book_yaw_range_degrees,
+    )
+
+
 def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path, dict[str, Any]]:
-    """Load, validate, evaluate, and write one exclusive local run directory."""
+    """Load a checkpoint, evaluate it, and write one exclusive local run directory."""
     console = ConsoleLogger()
-    config.validate()
     rollout = config.rollout
     if config.device == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA requested but unavailable")
@@ -71,14 +90,7 @@ def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path,
     flow_num_steps = metadata["train_config"]["flow_num_steps"]
     if not isinstance(flow_num_steps, int) or flow_num_steps <= 0:
         raise ValueError("flow_num_steps must be a positive integer")
-    env, scene = create_evaluation_env(
-        metadata,
-        xy_range=rollout.xy_range,
-        min_gap=rollout.min_gap,
-        max_steps=rollout.max_steps,
-        cube_yaw_range_degrees=rollout.cube_yaw_range_degrees,
-        book_yaw_range_degrees=rollout.book_yaw_range_degrees,
-    )
+    env, scene = create_rollout_env(metadata, rollout)
     model.to(device)
 
     eval_seeds = list(range(rollout.seed, rollout.seed + rollout.num_episodes))

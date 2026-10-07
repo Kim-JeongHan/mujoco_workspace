@@ -60,10 +60,7 @@ class ValueModel(nn.Module):
             "model_class_path": "mujoco_lab.learning.models.diffusion.ValueModel",
         }
 
-    def forward(
-        self,
-        x: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Estimate the value of a trajectory.
 
         Args:

@@ -1,15 +1,11 @@
-# 추가 구현 방향
-# 분포 샘플과 평균 행동을 선택할 수 있게 하고 log_std의 허용 범위를 정한다.
-# PPO용으로 저장된 행동의 log_prob와 entropy를 재계산하는 메서드를 제공한다.
-# 행동 차원 축을 합산해 샘플별 값을 반환하고 초기 PPO는 chunk_size=1로 연결한다.
-# 행동을 tanh 등으로 변환한다면 확률 계산도 그 변환에 맞춰 처리한다.
-# BC 평균 가중치·정규화를 이어받고 탐색 표준편차 초기화는 명시적으로 설정한다.
+"""Gaussian action chunks with a shared MLP backbone and a separate mean head."""
 
 from __future__ import annotations
 
 import torch
 from torch import nn
 
+from mujoco_lab.learning.infrastructure.utils import build_mlp
 from mujoco_lab.learning.policies.base import BasePolicy
 
 
@@ -33,20 +29,14 @@ class GaussianPolicy(BasePolicy):
         """
         super().__init__(state_dim, action_dim, chunk_size)
 
-        layers = []
-        input_dim = state_dim
-
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(input_dim, hidden_dim))
-            layers.append(nn.ReLU())
-            input_dim = hidden_dim
-
-        self.net = nn.Sequential(*layers)
-
-        self.mean_head = nn.Linear(
-            input_dim,
-            action_dim * chunk_size,
+        mean_network = build_mlp(
+            input_dim=state_dim,
+            output_dim=action_dim * chunk_size,
+            hidden_layers=hidden_dims,
         )
+        # Retain the backbone/head names used by BC-to-PPO weight transfer.
+        self.net = mean_network[:-1]
+        self.mean_head = mean_network[-1]
 
         self.log_std = nn.Parameter(torch.zeros(chunk_size, action_dim))
 

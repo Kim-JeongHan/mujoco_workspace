@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import mujoco
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
-from mujoco_lab.assets.robot.robot import Constraints, MotionLimits
 from mujoco_lab.behaviors.cube_stack import CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import CubeStackRecipe, StageRecipe
 from mujoco_lab.behaviors.expert import Expert
+from mujoco_lab.behaviors.grasp import GraspMonitor
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
 from mujoco_lab.control import ControlTarget
-from mujoco_lab.control.trajectory import JointTrajectory
+from mujoco_lab.control.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
@@ -81,6 +81,7 @@ class CubeStackExpert(Expert):
             raise ValueError("Cube stacking execution requires panda or forte")
         self.gripper = robot.gripper
         self.recipe = recipe
+        self._grasp = GraspMonitor(recipe.lost_grasp_grace_s)
         self.planning = planning
         self.motion = MotionPlanner(self.robot, planning)
         self.reset()
@@ -98,7 +99,6 @@ class CubeStackExpert(Expert):
         self.goals = np.array(
             [self.simulator.data.body(f"cube{i}/object_target_0").xpos for i in range(self.cubes)]
         )
-        self.motion.reset()
         self._plan = (
             self.build_stages(self.starts, self.goals)
             if self.method == "sampling"
@@ -110,17 +110,26 @@ class CubeStackExpert(Expert):
         self.failure_reason = None
         self._transport_peak = float("-inf")
         self._release_checker: ManipulationCollisionChecker | None = None
+        self._grasp.reset()
 
     def get_stage_name(self):
         return self._plan[self.stage].name if self.stage < len(self._plan) else "settle"
 
     def _hold_action(self):
-        return np.r_[cast(ControlTarget, self.robot.target).position[:7], self.gripper.get_target()]
+        target = self.robot.target
+        if target is None:
+            raise RuntimeError("Trajectory expert requires a control target")
+        return np.r_[target.position[:7], self.gripper.get_target()]
 
-    def act(self, obs: Any = None) -> np.ndarray:
+    def act(self, obs: Any = None, *, dt: float = 0.0) -> np.ndarray:
         if self.failed or self.stage >= len(self._plan):
             return self._hold_action()
         now = self.simulator.data.time
+        stage = self._plan[self.stage]
+        reason = self._grasp_failure(stage, started=self.execution.trajectory is not None)
+        if reason is not None:
+            self.failed, self.failure_reason = True, reason
+            return self._hold_action()
         current = self.robot.state.snapshot().qpos[:7]
         if self.execution.trajectory is None:
             try:
@@ -136,8 +145,10 @@ class CubeStackExpert(Expert):
         if required_lift is not None:
             height = self.simulator.data.body(f"cube{stage.cube_index}/object_0").xpos[2]
             self._transport_peak = max(self._transport_peak, float(height))
-        action, complete = self.execution.sample(now, current, self.recipe.arm_tolerance)
-        trajectory = cast(JointTrajectory, self.execution.trajectory)
+        next_act, complete = self.execution.sample(now, current, self.recipe.arm_tolerance, dt=dt)
+        trajectory = self.execution.trajectory
+        if trajectory is None:
+            raise RuntimeError("Trajectory expert has no active trajectory")
         if (
             complete
             and required_lift is not None
@@ -145,13 +156,13 @@ class CubeStackExpert(Expert):
         ):
             self.failed = True
             self.failure_reason = f"Insufficient physical lift during {stage.name}"
-            return action
-        if self._advance_stage(current, float(action[7]), path_complete=complete):
-            return action
+            return next_act
+        if self._advance_stage(current, float(next_act[7]), path_complete=complete):
+            return next_act
         timeout = self._plan[self.stage].settle_timeout
         if timeout is not None and now - self.execution.start_time > trajectory.duration + timeout:
             self.failed, self.failure_reason = True, f"Timed out executing {self.get_stage_name()}"
-        return action
+        return next_act
 
     def update(self, simulator) -> None:
         if simulator is not self.simulator:
@@ -175,15 +186,15 @@ class CubeStackExpert(Expert):
         finger_close = abs(stage.gripper_target - finger_target) < self.recipe.gripper_tolerance
         if not (path_complete and close_enough and finger_close):
             return False
-        physical_ready = True
-        if stage.recipe.require_grasp:
-            physical_ready = self.task.has_grasp(stage.cube_index)
+        physical_ready = self._grasp.ready(
+            stage.recipe.gripper_mode, self.task.has_grasp(stage.cube_index)
+        )
         if stage.recipe.name == "release":
             physical_ready = physical_ready and not self.task.touches_robot(stage.cube_index)
             if self.method == "sampling":
                 # Retract planning freezes the fingers at their measured opening.
                 physical_ready = physical_ready and (
-                    abs(self.gripper.get_position() - stage.gripper_target)
+                    abs(self.gripper.get_width() - stage.gripper_target)
                     < self.recipe.gripper_tolerance
                 )
             if physical_ready and self.method == "sampling":
@@ -203,8 +214,19 @@ class CubeStackExpert(Expert):
             self.stage += 1
             self.execution.trajectory = None
             self._release_checker = None
+            self._grasp.reset()
             return True
         return False
+
+    def _grasp_failure(self, stage: PlannedStage, *, started: bool) -> str | None:
+        return self._grasp.failure(
+            mode=stage.recipe.gripper_mode,
+            hold=stage.recipe.name in ("close", "release"),
+            started=started,
+            grasped=self.task.has_grasp(stage.cube_index),
+            now=self.simulator.data.time,
+            stage_name=stage.name,
+        )
 
     START_STAGES = frozenset(("above_pick", "pick", "close", "lift"))
 
@@ -235,8 +257,10 @@ class CubeStackExpert(Expert):
         nominal_rotation = (
             rotation if isinstance(rotation, Rotation) else Rotation.from_matrix(rotation)
         )
+        rotated = yaw_rotation * nominal_rotation
+        # Both operands are Rotations; SciPy's annotation also includes NotImplemented.
         return Transform(
-            rotation=cast(Rotation, yaw_rotation * nominal_rotation),
+            rotation=rotated,  # ty: ignore[invalid-argument-type]
             translation=reference + yaw_rotation.apply(stage.offset_xyz_m),
         )
 
@@ -246,14 +270,11 @@ class CubeStackExpert(Expert):
         """Own cube workflow semantics; the planner receives only motion inputs."""
         robot = self.robot
         phase = stage.recipe.name
-        reason = None
+        reason = self._grasp_failure(stage, started=False)
         if phase == "pick":
             actual = robot.data.body(f"cube{stage.cube_index}/object_0").xpos
             if np.linalg.norm(actual - planned_start) > 0.01:
                 reason = f"cube{stage.cube_index} moved more than 1 cm from its planned pick pose"
-        elif phase == "place":
-            if not self.task.has_grasp(stage.cube_index):
-                reason = f"No two-finger physical grasp for {stage.name}"
         hold = phase in ("close", "release")
         waypoints = stage.waypoints
         if phase == "place" and reason is None:
@@ -265,12 +286,14 @@ class CubeStackExpert(Expert):
                 ),
                 *waypoints,
             )
+        arm_ratio, gripper_ratio = self.stage_ratios(stage)
         return MotionRequest(
             name=stage.name,
             mode="hold" if hold else "sampling",
             waypoints=waypoints,
             gripper_target=stage.gripper_target,
-            constraints=self.stage_constraints(stage),
+            arm_ratio=arm_ratio,
+            gripper_ratio=gripper_ratio,
             checker=None if hold else self.collision_checker(stage.cube_index, phase),
             failure_reason=reason,
         )
@@ -303,32 +326,44 @@ class CubeStackExpert(Expert):
             else self.heuristic_trajectory(stage)
         )
 
-    def forte_heuristic_ik_candidates(self, pose, reference, checker):
-        """Return nearby checked IK branches for a requested Forte grasp pose."""
-        seeds = [reference]
-        # Forearm/wrist roll seeds escape folded wrist branches without
+    def forte_heuristic_ik_candidates(
+        self, pose, reference_q, checker
+    ) -> tuple[list[np.ndarray], np.ndarray | None]:
+        """Return checked branches and the unchecked reference/current solution.
+
+        Own retries here so the current posture is attempted at most once.
+        Keep the reference/current solution for deferred collision failures.
+        """
+        references = [reference_q]
+        # Forearm/wrist reference postures escape folded wrist branches without
         # changing the requested grasp pose or using a sampling path planner.
         for sign in (-1, 1):
             for wrist_sign in (-1, 1):
-                seed = reference.copy()
-                seed[4] += sign * np.pi / 2
-                seed[6] += wrist_sign * np.pi / 2
-                seeds.append(seed)
-        continuous = ~self.simulator.model.jnt_limited[self.robot.state.joint_ids[:7]].astype(bool)
+                candidate_reference_q = reference_q.copy()
+                candidate_reference_q[4] += sign * np.pi / 2
+                candidate_reference_q[6] += wrist_sign * np.pi / 2
+                references.append(candidate_reference_q)
+        current = self.robot.state.snapshot().qpos[:7].copy()
+        current_scheduled = any(
+            np.array_equal(candidate_reference_q, current) for candidate_reference_q in references
+        )
         candidates = []
-        for seed in seeds:
+        unchecked = None
+        for candidate_reference_q in references:
             try:
-                q = self.motion.solve_ik(pose, seed)
+                q = self.motion.solve_ik(pose, candidate_reference_q, retry_current=False)
             except IKError:
+                if not current_scheduled:
+                    references.append(current)
+                    current_scheduled = True
                 continue
-            q[continuous] = (
-                reference[continuous]
-                + (q[continuous] - reference[continuous] + np.pi) % (2 * np.pi)
-                - np.pi
-            )
+            if np.array_equal(candidate_reference_q, reference_q) or (
+                unchecked is None and np.array_equal(candidate_reference_q, current)
+            ):
+                unchecked = q
             if checker.is_collision_free(q):
                 candidates.append(q)
-        return sorted(candidates, key=lambda q: np.linalg.norm(q - reference))
+        return sorted(candidates, key=lambda q: np.linalg.norm(q - reference_q)), unchecked
 
     def build_stages(self, starts: np.ndarray, goals: np.ndarray) -> list[PlannedStage]:
         """Compute ordered targets from (cube_count, 3) poses; defer live paths."""
@@ -336,7 +371,7 @@ class CubeStackExpert(Expert):
         # Keep heuristic IK near the measured posture after joint-reference changes.
         state = self.robot.state
         reference = state.snapshot().qpos[:7].copy()
-        seed = (
+        reference_q = (
             self.simulator.model.qpos0[state.qpos_indices[:7]].copy()
             if self.robot.robot_type == "forte" and self.method == "sampling"
             else reference
@@ -360,22 +395,28 @@ class CubeStackExpert(Expert):
                 pose = self.stage_pose(stage, int(index), starts, goals, rotation)
                 # Independent Forte poses share the same posture reference so a
                 # pickup-side null-space drift cannot carry into place or the next cube.
-                if checker is not None:
-                    candidates = self.forte_heuristic_ik_candidates(pose, reference, checker)
+                if checker is not None and stage.name in ("close", "release"):
+                    # These gripper-only stages reuse the preceding pick/place arm pose.
+                    reference_q = stages[-1].waypoints[-1]
+                elif checker is not None:
+                    candidates, unchecked = self.forte_heuristic_ik_candidates(
+                        pose, reference, checker
+                    )
                     # Let execution report a blocked pose as an expected route
                     # failure, so collectors can save it and continue to the next episode.
-                    seed = (
-                        candidates[0]
-                        if candidates
-                        else self.motion.solve_ik(pose, reference, wrap_angles=True)
-                    )
+                    if candidates:
+                        reference_q = candidates[0]
+                    elif unchecked is not None:
+                        reference_q = unchecked
+                    else:
+                        raise IKError(f"Unreachable IK pose for {self.robot.name}/grasp")
                 else:
-                    seed = self.motion.solve_ik(pose, seed)
+                    reference_q = self.motion.solve_ik(pose, reference_q)
                 stages.append(
                     PlannedStage(
                         f"cube{index}:{stage.name}",
-                        (seed.copy(),),
-                        stage.gripper_target_m,
+                        (reference_q.copy(),),
+                        self.gripper.target_for_mode(stage.gripper_mode),
                         stage,
                         int(index),
                         12.0 if self.method == "sampling" else None,
@@ -383,11 +424,11 @@ class CubeStackExpert(Expert):
                 )
         return stages
 
-    def stage_constraints(self, stage: PlannedStage) -> Constraints:
-        """Bind recipe and stage requests to trajectory joints before final capping."""
-        return self.motion.stage_constraints(
-            self.recipe.arm.override(stage.recipe.arm),
-            self.recipe.gripper.override(stage.recipe.gripper),
+    def stage_ratios(self, stage: PlannedStage) -> tuple[MotionRatio, MotionRatio]:
+        """Use stage ratio pairs when supplied, otherwise inherit recipe defaults."""
+        return (
+            self.recipe.arm if stage.recipe.arm is None else stage.recipe.arm,
+            self.recipe.gripper if stage.recipe.gripper is None else stage.recipe.gripper,
         )
 
     def group_stages(self, starts: np.ndarray, goals: np.ndarray) -> list[PlannedStage]:
@@ -398,25 +439,17 @@ class CubeStackExpert(Expert):
 
         def motion(stages: dict[str, PlannedStage], final: str, *transit: str) -> PlannedStage:
             members = [stages[name] for name in (*transit, final)]
-            limits = [self.stage_constraints(member) for member in members]
-
-            def combined(group: slice) -> MotionLimits:
-                return MotionLimits(
-                    **{
-                        field: np.min([getattr(limit, field)[group] for limit in limits], axis=0)
-                        .astype(float)
-                        .tolist()
-                        for field in ("velocity_limit", "acceleration_limit")
-                    }
-                )
-
-            recipe = stages[final].recipe.model_copy(
-                update={
-                    "arm": combined(slice(None, -1)),
-                    "gripper": combined(slice(-1, None)),
-                    "require_grasp": any(member.recipe.require_grasp for member in members),
-                }
+            ratios = [self.stage_ratios(member) for member in members]
+            # A merged continuous motion uses the strictest member ratios.
+            arm: MotionRatio = (
+                min(pair[0][0] for pair in ratios),
+                min(pair[0][1] for pair in ratios),
             )
+            gripper: MotionRatio = (
+                min(pair[1][0] for pair in ratios),
+                min(pair[1][1] for pair in ratios),
+            )
+            recipe = stages[final].recipe.model_copy(update={"arm": arm, "gripper": gripper})
             return replace(
                 stages[final],
                 recipe=recipe,
@@ -440,30 +473,71 @@ class CubeStackExpert(Expert):
     def heuristic_trajectory(
         self, stage: PlannedStage
     ) -> tuple[JointTrajectory | None, str | None]:
-        target = cast(ControlTarget, self.robot.target)
+        reason = self._grasp_failure(stage, started=False)
+        if reason is not None:
+            return None, reason
+        target = self.robot.target
+        if target is None:
+            raise RuntimeError("Trajectory expert requires a control target")
         arm_path = np.vstack(
             (
                 target.position[:7],
                 *stage.waypoints,
             )
         )
+        arm_ratio, gripper_ratio = self.stage_ratios(stage)
         if stage.recipe.name in ("close", "release") or (
             self.robot.robot_type != "forte" and len(stage.waypoints) == 1
         ):
             if self.robot.robot_type == "forte" and stage.recipe.name in ("close", "release"):
                 arm_path = np.repeat(target.position[None, :7], 2, axis=0)
             return self.motion.trajectory(
-                arm_path, stage.gripper_target, self.stage_constraints(stage)
+                arm_path,
+                stage.gripper_target,
+                arm_ratio=arm_ratio,
+                gripper_ratio=gripper_ratio,
             ), None
         checker = self.collision_checker(stage.cube_index, stage.recipe.name)
+        if self.robot.robot_type == "forte":
+            arm_path = self.forte_heuristic_orientation_path(arm_path)
         trajectory = self.motion.trajectory(
-            arm_path, stage.gripper_target, self.stage_constraints(stage), checker
+            arm_path,
+            stage.gripper_target,
+            checker,
+            arm_ratio=arm_ratio,
+            gripper_ratio=gripper_ratio,
         )
         if trajectory is None and self.robot.robot_type == "forte":
             trajectory = self.forte_heuristic_branch_path(stage, target.position[:7], checker)
         if trajectory is None:
             return None, f"No checked heuristic route for {stage.name}"
         return trajectory, None
+
+    def forte_heuristic_orientation_path(self, path):
+        """Keep the grasp orientation between recipe poses near its Cartesian interpolation."""
+        model = self.simulator.model
+        data = mujoco.MjData(model)
+        mujoco.mj_copyData(data, model, self.simulator.data)
+        slots = self.robot.state.qpos_indices[:7]
+        site = self.robot.state.site_id("grasp")
+        refined = [path[0]]
+        for start, end in zip(path[:-1], path[1:], strict=True):
+            positions, rotations = [], []
+            for q in (start, end):
+                data.qpos[slots] = q
+                mujoco.mj_kinematics(model, data)
+                positions.append(data.site_xpos[site].copy())
+                rotations.append(data.site_xmat[site].reshape(3, 3).copy())
+            interpolation = Slerp([0, 1], Rotation.from_matrix(rotations))
+            for fraction in (1 / 3, 2 / 3):
+                pose = Transform(
+                    rotation=interpolation(fraction),
+                    translation=positions[0] + fraction * (positions[1] - positions[0]),
+                )
+                reference_q = start + fraction * (end - start)
+                refined.append(self.motion.solve_ik(pose, reference_q))
+            refined.append(end)
+        return np.asarray(refined)
 
     def forte_heuristic_branch_path(self, stage, start, checker):
         """Connect recipe poses through a bounded set of checked IK branches."""
@@ -480,7 +554,7 @@ class CubeStackExpert(Expert):
                 rotation=data.site_xmat[site].reshape(3, 3).copy(),
                 translation=data.site_xpos[site].copy(),
             )
-            candidates = self.forte_heuristic_ik_candidates(pose, start, checker)
+            candidates, _ = self.forte_heuristic_ik_candidates(pose, start, checker)
             routes = [
                 (*route, candidate)
                 for route in routes
@@ -491,9 +565,18 @@ class CubeStackExpert(Expert):
                 return None
             routes.sort(key=lambda route: np.linalg.norm(np.diff(route, axis=0), axis=1).sum())
             routes = routes[:5]
+        arm_ratio, gripper_ratio = self.stage_ratios(stage)
         for route in routes:
+            try:
+                path = self.forte_heuristic_orientation_path(np.asarray(route))
+            except IKError:
+                continue
             trajectory = self.motion.trajectory(
-                np.asarray(route), stage.gripper_target, self.stage_constraints(stage), checker
+                path,
+                stage.gripper_target,
+                checker,
+                arm_ratio=arm_ratio,
+                gripper_ratio=gripper_ratio,
             )
             if trajectory is not None:
                 return trajectory

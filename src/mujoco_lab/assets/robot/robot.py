@@ -5,44 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import radians
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Literal, Self
 
 import mujoco
 import yaml
-from dacite import from_dict
-from pydantic import ConfigDict, Field
+from dacite import Config, from_dict
 
 # dacite requires a runtime Literal alias rather than a PEP 695 alias.
 ControllerType = Literal["none", "pd", "position", "osc"]  # noqa: UP040
-
-LimitValue = Annotated[float, Field(gt=0)]
-
-
-@dataclass(kw_only=True)
-class MotionLimits:
-    """Optional velocity and acceleration limits in the controlled joints' units.
-
-    Scalars apply to every joint; lists follow the resolved joint order.
-    An omitted value inherits the corresponding robot or recipe limit.
-    """
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid", allow_inf_nan=False)
-
-    velocity_limit: LimitValue | list[LimitValue] | None = None
-    acceleration_limit: LimitValue | list[LimitValue] | None = None
-
-    def override(self, other: MotionLimits) -> MotionLimits:
-        """Use explicitly supplied limits from another layer, inheriting omissions."""
-        return MotionLimits(
-            velocity_limit=(
-                self.velocity_limit if other.velocity_limit is None else other.velocity_limit
-            ),
-            acceleration_limit=(
-                self.acceleration_limit
-                if other.acceleration_limit is None
-                else other.acceleration_limit
-            ),
-        )
 
 
 @dataclass(frozen=True)
@@ -91,26 +61,44 @@ class Constraints:
 
 @dataclass
 class PoseConfig:
-    """Named arm poses in radians, followed by a gripper position in meters.
+    """Default and optional zero arm poses, with gripper opening width in meters.
 
     Robots without a configured gripper contain only arm joint positions.
-    Values follow asset joint order, omitting dependent equality joints.
-    RobotConfig.load converts YAML arm angles from degrees to radians.
+    Arm values follow asset joint order, excluding the configured finger joints.
+    Direct construction uses radians; from_yaml converts YAML arm angles from degrees.
     """
 
     default: list[float]
-    presets: dict[str, list[float]] = field(default_factory=dict, kw_only=True)
+    zero: list[float] | None = None
+
+    @classmethod
+    def from_yaml(cls, data: dict[str, list[float] | None], *, has_gripper: bool) -> Self:
+        """Read default and optional zero poses, converting only arm angles to radians."""
+        pose = from_dict(data_class=cls, data=data, config=Config(strict=True))
+
+        def convert(values: list[float]) -> list[float]:
+            arm_count = len(values) - int(has_gripper)
+            return [*[radians(value) for value in values[:arm_count]], *values[arm_count:]]
+
+        return cls(
+            default=convert(pose.default),
+            zero=None if pose.zero is None else convert(pose.zero),
+        )
 
     def named_poses(self) -> dict[str, list[float]]:
-        """Return the default pose and additional poses by their YAML names."""
-        return {"default": self.default, **self.presets}
+        """Return the default pose and the zero pose when configured."""
+        poses = {"default": self.default}
+        if self.zero is not None:
+            poses["zero"] = self.zero
+        return poses
 
 
 @dataclass
 class GripperConfig:
     actuator: str
-    velocity_limit: float = field(default=0.2, kw_only=True)  # Gripper joint speed in m/s.
-    acceleration_limit: float = field(default=1.0, kw_only=True)  # Joint acceleration in m/s^2.
+    joints: list[str]  # Zero-based slide fingers sharing a 1:1 position target.
+    velocity_limit: float = field(default=0.4, kw_only=True)  # Opening-width speed in m/s.
+    acceleration_limit: float = field(default=2.0, kw_only=True)  # Width acceleration in m/s^2.
 
 
 @dataclass
@@ -134,33 +122,21 @@ class RobotConfig:
     controller: ControllerConfig
     constraints: Constraints | None = None
     gripper: GripperConfig | None = None
-    pose: PoseConfig | None = field(default=None, kw_only=True)
+    pose: PoseConfig = field(kw_only=True)
     model_info: RobotModelInfo = RobotModelInfo()
 
     @classmethod
     def load(cls, path: str | Path) -> Self:
         """Load YAML settings, converting arm poses and angular bounds to radians."""
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        if data.get("pose") is not None:
-            poses = data["pose"]
-            data["pose"] = {
-                "default": poses["default"],
-                "presets": {name: values for name, values in poses.items() if name != "default"},
-            }
+        data["pose"] = PoseConfig.from_yaml(
+            data["pose"], has_gripper=data.get("gripper") is not None
+        )
         config = from_dict(data_class=cls, data=data)
         if config.constraints is not None:
             config.constraints.position_limit = [
                 [radians(value) for value in bounds] for bounds in config.constraints.position_limit
             ]
-        if config.pose is not None:
-            poses = {}
-            for name, values in config.pose.named_poses().items():
-                arm_count = len(values) - int(config.gripper is not None)
-                poses[name] = [
-                    *[radians(value) for value in values[:arm_count]],
-                    *values[arm_count:],
-                ]
-            config.pose = PoseConfig(default=poses.pop("default"), presets=poses)
         return config
 
     def update_model_info(self, spec: mujoco.MjSpec) -> None:

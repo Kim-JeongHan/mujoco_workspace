@@ -9,7 +9,8 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.randomization import sample_cube_positions
 from mujoco_lab.behaviors import CubeStackTask
-from mujoco_lab.learning.datasets.replay import cube_stack_metadata
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
+from mujoco_lab.learning.datasets.replay import capture_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
 
@@ -74,30 +75,6 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
         env.reset(seed=11)
 
 
-def test_zero_yaw_keeps_legacy_xy_draws_and_home_quaternion():
-    simulator = Simulator(
-        create_cube_stack(2),
-        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
-    )
-    env = CubeStackEnv(CubeStackTask(simulator, 2))
-    expected_xy = sample_cube_positions(
-        env._home_xy,
-        env._cube_half_sizes,
-        np.random.default_rng(11),
-        env.xy_range,
-        env.min_gap,
-        100,
-    )
-    obs, info = env.reset(seed=11)
-    assert info["cube_yaws_degrees"] == [0.0, 0.0]
-    for adr, xy, home in zip(env._cube_qpos, expected_xy, env._home_quat, strict=True):
-        np.testing.assert_array_equal(simulator.data.qpos[adr : adr + 2], xy)
-        np.testing.assert_array_equal(simulator.data.qpos[adr + 3 : adr + 7], home)
-    assert np.isfinite(obs).all()
-    with pytest.raises(ValueError, match="cube_yaw_range_degrees"):
-        CubeStackEnv(CubeStackTask(simulator, 2), cube_yaw_range_degrees=float("nan"))
-
-
 @pytest.mark.parametrize("recorded_ranges", [False, True])
 def test_evaluation_restores_recorded_randomization(recorded_ranges):
     metadata = {
@@ -105,6 +82,7 @@ def test_evaluation_restores_recorded_randomization(recorded_ranges):
             "replay": {
                 "robot": "forte",
                 "robot_name": "forte",
+                "gripper_action_units": "opening_width_m",
                 "cubes": 2,
                 "environment": "table_shelf",
                 "dt": 0.002,
@@ -121,13 +99,15 @@ def test_evaluation_restores_recorded_randomization(recorded_ranges):
     assert env.min_gap == scene["min_gap"] == (0.02 if recorded_ranges else 0.01)
     assert env.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 45.0
     assert max(map(abs, env.reset(seed=11)[1]["cube_yaws_degrees"])) > 0
-    recorded = cube_stack_metadata(
+    recorded = capture_metadata(
         env.simulator,
-        cubes=2,
-        robot="forte",
-        xy_range=env.xy_range,
-        min_gap=env.min_gap,
-        cube_yaw_range_degrees=env.cube_yaw_range_degrees,
+        CubeStackReplayConfig(
+            cubes=2,
+            robot="forte",
+            xy_range=env.xy_range,
+            min_gap=env.min_gap,
+            cube_yaw_range_degrees=env.cube_yaw_range_degrees,
+        ),
     )
     assert recorded["xy_range"] == scene["xy_range"]
     assert recorded["min_gap"] == scene["min_gap"]

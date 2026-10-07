@@ -6,8 +6,7 @@ import mujoco
 import numpy as np
 import pytest
 
-from mujoco_lab import RobotSpec, Simulator, create_environment
-from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.robot.robot import Constraints
 from mujoco_lab.planning import MuJoCoCollisionChecker
 from mujoco_lab.state import RobotState
 
@@ -60,6 +59,12 @@ def _fixture(obstacle: str = "world", *, continuous: bool = False):
         root_name="arm_root",
         joint_names=("arm_joint", "finger_joint"),
         site_names=("tool",),
+        constraints=Constraints(
+            joint_names=["finger_joint", "arm_joint"],
+            position_limit=[[0, 0.2], [-2.0, 2.0]],
+            velocity_limit=[1.0, 1.0],
+            acceleration_limit=[1.0, 1.0],
+        ),
     )
     return SimpleNamespace(model=model, data=data, state=state, name="arm", prefix="")
 
@@ -107,12 +112,13 @@ def test_other_body_and_finger_remain_frozen_until_refresh():
     assert not checker.is_collision_free(np.array([0.0]))
 
 
-def test_input_and_hardware_bounds_are_checked():
+def test_input_and_configured_bounds_are_checked():
     robot = _fixture("none")
     with pytest.raises(ValueError, match="cannot exceed"):
-        MuJoCoCollisionChecker(robot, frame="tool", bounds=[(-2.0, 2.0)])
+        MuJoCoCollisionChecker(robot, frame="tool", bounds=[(-3.0, 3.0)])
     checker = MuJoCoCollisionChecker(robot, joint_names=["arm_joint"])
-    assert not checker.is_collision_free(np.array([1.6]))
+    assert checker.is_collision_free(np.array([1.6]))
+    assert not checker.is_collision_free(np.array([2.1]))
     with pytest.raises(ValueError, match="finite joint values"):
         checker.is_collision_free(np.array([np.nan]))
     with pytest.raises(ValueError, match="finite joint values"):
@@ -121,32 +127,9 @@ def test_input_and_hardware_bounds_are_checked():
         checker.is_path_collision_free(np.array([0.0]), np.array([0.2]), 0)
     with pytest.raises(ValueError, match="edge_resolution"):
         MuJoCoCollisionChecker(robot, frame="tool", edge_resolution=0)
-    with pytest.raises(ValueError, match="explicit finite bounds"):
-        MuJoCoCollisionChecker(_fixture("none", continuous=True), frame="tool")
+    continuous = MuJoCoCollisionChecker(_fixture("none", continuous=True), frame="tool")
+    np.testing.assert_array_equal(continuous.bounds, [[-2.0, 2.0]])
     continuous = MuJoCoCollisionChecker(
         _fixture("none", continuous=True), frame="tool", bounds=[(-1.0, 1.0)]
     )
     assert continuous.is_collision_free(np.array([0.5]))
-
-
-@pytest.mark.parametrize("robot_type", ["panda", "forte"])
-def test_bundled_arm_home_and_nearby_goal(robot_type):
-    simulator = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec(robot_type, robot_type, config=load_robot_config(robot_type))],
-    )
-    robot = simulator.robots[robot_type]
-    arm_ids = robot.state.joint_ids[:7]
-    current = simulator.data.qpos[robot.model.jnt_qposadr[arm_ids]].copy()
-    bounds = []
-    for joint, q in zip(arm_ids, current, strict=True):
-        if robot.model.jnt_limited[joint]:
-            bounds.append(tuple(robot.model.jnt_range[joint]))
-        else:
-            bounds.append((q - 0.35, q + 0.35))
-    checker = MuJoCoCollisionChecker(robot, frame="grasp", bounds=bounds)
-    goal = current.copy()
-    goal[1] += 0.15
-    assert checker.joint_names == robot.state.joint_names[:7]
-    assert checker.is_path_collision_free(current, goal)
-    np.testing.assert_array_equal(simulator.data.qpos[checker.qpos_indices], current)

@@ -1,14 +1,12 @@
 """View randomized cube placements: uv run python examples/randomized_cubes.py."""
 
 from dataclasses import dataclass
-from typing import cast
 
 import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.control import create_controller
-from mujoco_lab.gripper import Gripper
 
 
 @dataclass
@@ -42,7 +40,10 @@ def main() -> None:
     simulator = Simulator(scene, robots=[RobotSpec("forte", "forte", config=robot_config)])
     robot = simulator.robots["forte"]
     robot.change_controller(create_controller(robot, robot_config.controller))
-    cast(Gripper, robot.gripper).set_target(0.0)
+    gripper = robot.gripper
+    if gripper is None:
+        raise ValueError("Randomized cube preview requires a gripper")
+    gripper.set_target(float(gripper.get_control_limits()[1]))
 
     name = "randomized_cubes"
     if config.headless:

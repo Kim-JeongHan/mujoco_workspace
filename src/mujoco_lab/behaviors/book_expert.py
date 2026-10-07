@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import numpy as np
 
 from mujoco_lab.behaviors.book import BookTask, center_grasp_pose
 from mujoco_lab.behaviors.bookshelf_recipe import STAGE_ORDER, BookshelfRecipe
 from mujoco_lab.behaviors.expert import Expert
+from mujoco_lab.behaviors.grasp import GraspMonitor
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
 from mujoco_lab.control import ControlTarget
-from mujoco_lab.control.trajectory import JointTrajectory
 from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
@@ -27,7 +27,6 @@ class BookInsertionExpert(Expert):
     """
 
     STAGES = STAGE_ORDER
-    CARRY = frozenset(("lift", "preinsert", "insert", "lower"))
 
     def __init__(
         self,
@@ -57,13 +56,11 @@ class BookInsertionExpert(Expert):
 
         self.gripper = robot.gripper
         self.recipe = recipe
+        self._grasp = GraspMonitor(recipe.lost_grasp_grace_s)
         self.motion = MotionPlanner(self.robot, planning)
-        limits = self.gripper.get_control_limits()
-        self.open, self.closed = float(limits[1]), float(limits[0])
         self.reset()
 
     def reset(self, initial_obs: Any = None, info: dict[str, Any] | None = None) -> None:
-        self.motion.reset()
         data = self.simulator.data
         self.pick_pose = center_grasp_pose(
             data.xpos[self.task.body].copy(),
@@ -74,12 +71,15 @@ class BookInsertionExpert(Expert):
         self.execution = TrajectoryExecution(data.time)
         self.failed = False
         self.failure_reason = None
-        self._lost_grasp_since = None
+        self._grasp.reset()
 
     def _hold_action(self):
-        return np.r_[cast(ControlTarget, self.robot.target).position[:7], self.gripper.get_target()]
+        target = self.robot.target
+        if target is None:
+            raise RuntimeError("Trajectory expert requires a control target")
+        return np.r_[target.position[:7], self.gripper.get_target()]
 
-    def act(self, obs: Any = None) -> np.ndarray:
+    def act(self, obs: Any = None, *, dt: float = 0.0) -> np.ndarray:
         if self.failed or self.stage >= len(self.STAGES):
             return self._hold_action()
         reason = self._execution_failure()
@@ -99,17 +99,17 @@ class BookInsertionExpert(Expert):
                 self.failed, self.failure_reason = True, reason
                 return self._hold_action()
             self.execution.start(trajectory, now)
-        action, complete = self.execution.sample(now, current, self.recipe.waypoint_tolerance)
-        trajectory = cast(JointTrajectory, self.execution.trajectory)
-        reason = self._execution_failure()
-        if reason is not None:
-            self.failed, self.failure_reason = True, reason
-            return action
+        next_act, complete = self.execution.sample(
+            now, current, self.recipe.waypoint_tolerance, dt=dt
+        )
+        trajectory = self.execution.trajectory
+        if trajectory is None:
+            raise RuntimeError("Trajectory expert has no active trajectory")
         if self._advance_stage(current, path_complete=complete):
-            return action
+            return next_act
         if now - self.execution.start_time > trajectory.duration + self.recipe.stage_timeout_s:
             self.failed, self.failure_reason = True, f"Timed out executing {self.get_stage_name()}"
-        return action
+        return next_act
 
     def update(self, simulator) -> None:
         if simulator is not self.simulator:
@@ -125,64 +125,69 @@ class BookInsertionExpert(Expert):
         return self.STAGES[self.stage] if self.stage < len(self.STAGES) else "settle"
 
     def _execution_failure(self) -> str | None:
-        phase, now = self.get_stage_name(), self.simulator.data.time
-        if phase in self.CARRY and not self.task.has_grasp():
-            if self.execution.trajectory is None:
-                return f"No two-pad physical grasp for {phase}"
-            if self._lost_grasp_since is None:
-                self._lost_grasp_since = now
-            elif now - self._lost_grasp_since > self.recipe.lost_grasp_grace_s:
-                return f"Lost two-pad grasp during {phase}"
-        else:
-            self._lost_grasp_since = None
-        return None
+        if self.stage >= len(self.recipe.stages):
+            self._grasp.reset()
+            return None
+        stage = self.recipe.stages[self.stage]
+        return self._grasp.failure(
+            mode=stage.gripper_mode,
+            hold=self._motion_mode(stage.name) == "hold",
+            started=self.execution.trajectory is not None,
+            grasped=self.task.has_grasp(),
+            now=self.simulator.data.time,
+            stage_name=stage.name,
+        )
 
     def _advance_stage(self, current, *, path_complete: bool) -> bool:
         phase, now = self.get_stage_name(), self.simulator.data.time
-        trajectory = cast(JointTrajectory, self.execution.trajectory)
+        trajectory = self.execution.trajectory
+        if trajectory is None:
+            raise RuntimeError("Trajectory expert has no active trajectory")
         reached = np.max(np.abs(current - trajectory.path[-1, :7])) < self.recipe.arm_tolerance
-        ready = True
-        if phase == "close":
-            ready = self.task.has_grasp()
-        elif phase == "lift":
-            ready = (
+        ready = self._grasp.ready(
+            self.recipe.stages[self.stage].gripper_mode, self.task.has_grasp()
+        )
+        if phase == "lift":
+            ready = ready and (
                 self.simulator.data.xpos[self.task.body, 2]
                 > self.task.start_center[2] + self.recipe.min_lift_height_m
             )
         elif phase == "release":
-            ready = not self.task.status().touching_robot
+            ready = ready and not self.task.status().touching_robot
+        dwell = self.recipe.stage_dwell_s
+        if self.method == "heuristic" and phase not in ("close", "release"):
+            dwell = 0.0
         if (
             path_complete
             and reached
             and ready
-            and now - self.execution.start_time >= trajectory.duration + self.recipe.stage_dwell_s
+            and now - self.execution.start_time >= trajectory.duration + dwell
         ):
             self.stage += 1
             self.execution.trajectory = None
+            self._grasp.reset()
             return True
         return False
+
+    def _motion_mode(self, phase: str) -> Literal["hold", "cartesian", "sampling"]:
+        if phase in ("close", "release"):
+            return "hold"
+        if self.method == "heuristic" or phase in ("pick", "lift", "insert", "lower", "retract"):
+            return "cartesian"
+        return "sampling"
 
     def motion_request(self, phase: str, pick_pose: Transform) -> MotionRequest:
         """Own book stage meanings, poses, gripper commands, and contact policy."""
         stage = self.recipe.stages[self.STAGES.index(phase)]
-        if phase in ("close", "release"):
-            mode = "hold"
-        elif self.method == "heuristic" or phase in ("pick", "lift", "insert", "lower", "retract"):
-            mode = "cartesian"
-        else:
-            mode = "sampling"
-        limits = self.gripper.get_control_limits()
-        grip = limits[1] if phase in ("approach", "pick", "release", "retract") else limits[0]
+        mode = self._motion_mode(phase)
         return MotionRequest(
             name=phase,
             mode=mode,
             waypoints=(self.destination(phase, pick_pose),),
-            gripper_target=float(grip),
-            wrap_angles=True,
-            constraints=self.motion.stage_constraints(
-                self.recipe.arm.override(stage.arm),
-                self.recipe.gripper.override(stage.gripper),
-            ),
+            gripper_target=self.gripper.target_for_mode(stage.gripper_mode),
+            shape_preserving=self.method == "heuristic" and phase == "approach",
+            arm_ratio=self.recipe.arm if stage.arm is None else stage.arm,
+            gripper_ratio=self.recipe.gripper if stage.gripper is None else stage.gripper,
             checker=None if mode == "hold" else self.collision_checker(phase),
         )
 
@@ -193,17 +198,11 @@ class BookInsertionExpert(Expert):
             "insert": "place",
             "lower": "place",
         }.get(phase, phase)
-        bounds = self.robot.state.get_joint_limits(list(range(7)))
-        current = self.robot.state.snapshot().qpos[:7]
-        for index in range(7):
-            if not np.isfinite(bounds[index]).all():
-                bounds[index] = [current[index] - 2 * np.pi, current[index] + 2 * np.pi]
         return ManipulationCollisionChecker(
             self.robot,
             f"book:{mapped}",
             object_body="book",
             target_site="book_target",
-            bounds=bounds,
             edge_resolution=0.025,
             support_geom="large_shelf/shelf_1" if mapped == "place" else None,
             departure_support_geom="table/box" if mapped == "place" else None,

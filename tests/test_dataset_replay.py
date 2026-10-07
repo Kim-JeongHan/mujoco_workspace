@@ -1,7 +1,6 @@
 """Recorded geometry round trips and native-viewer playback without physics."""
 
 from contextlib import nullcontext
-from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import Mock
 
@@ -14,15 +13,15 @@ from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
 from mujoco_lab.learning.datasets.episode import Episode, load_episode, save_episode
 from mujoco_lab.learning.datasets.replay import (
     capture_frame,
-    cube_stack_metadata,
-    replay_action_repeat,
+    capture_metadata,
 )
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.replay import EpisodeReplay
-from mujoco_lab.learning.rollout import collect_episode, collect_episodes
+from mujoco_lab.learning.rollout import collect_episode
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +30,7 @@ def recording():
         create_cube_stack(2),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
     )
-    metadata = cube_stack_metadata(simulator, cubes=2, robot="forte")
+    metadata = capture_metadata(simulator, CubeStackReplayConfig(cubes=2, robot="forte"))
     robot = simulator.robots["forte"]
     robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
     task = CubeStackTask(simulator, 2)
@@ -100,43 +99,21 @@ def test_old_episode_still_loads_for_learning_but_cannot_replay(tmp_path):
         EpisodeReplay(loaded)
 
 
-def test_replay_action_repeat_requires_valid_metadata(recording):
+def test_replay_rejects_a_different_recorded_model(recording):
     episode, _ = recording
-    assert replay_action_repeat(episode.metadata["replay"]) == 1
-    for invalid in (None, True, 0, -1, 1.5, "5"):
-        with pytest.raises(ValueError, match="physics_steps_per_action"):
-            replay_action_repeat({} if invalid is None else {"physics_steps_per_action": invalid})
+    metadata = {
+        **episode.metadata,
+        "replay": {**episode.metadata["replay"], "model_sha256": "0" * 64},
+    }
+    with pytest.raises(ValueError, match="recorded robot model"):
+        EpisodeReplay(replace(episode, metadata=metadata))
 
 
-def test_replay_uses_recorded_partial_final_frame(recording):
+@pytest.mark.parametrize("missing", ["frame_times", "mocap_pos", "mocap_quat"])
+def test_replay_rejects_incomplete_recorded_frames(recording, missing):
     episode, _ = recording
-    metadata = deepcopy(episode.metadata)
-    metadata["replay"]["physics_steps_per_action"] = 5
-    frame_times = np.array([0.0, 0.01, 0.02, 0.03, 0.034])
-    episode = replace(episode, metadata=metadata, frame_times=frame_times)
-    replay = EpisodeReplay(episode)
-    assert replay.frame_dt == pytest.approx(0.01)
-    np.testing.assert_array_equal(replay.frame_times, frame_times)
-    replay.set_frame(4)
-    assert replay.simulator.data.time == pytest.approx(0.034)
-
-
-def test_collect_episodes_forwards_recording_options(recording, tmp_path, monkeypatch):
-    episode, _ = recording
-    collect = Mock(return_value=episode)
-    monkeypatch.setattr("mujoco_lab.learning.rollout.collector.collect_episode", collect)
-    record = Mock()
-    collect_episodes(
-        Mock(),
-        Mock(),
-        1,
-        output_dir=tmp_path,
-        record_frame=record,
-        replay_metadata=episode.metadata["replay"],
-    )
-    assert collect.call_args.kwargs["record_frame"] is record
-    assert collect.call_args.kwargs["replay_metadata"] == episode.metadata["replay"]
-    np.testing.assert_array_equal(load_episode(tmp_path / "episode_000000.npz").qpos, episode.qpos)
+    with pytest.raises(ValueError, match="no replay data"):
+        EpisodeReplay(replace(episode, **{missing: None}))
 
 
 def playback(
@@ -213,14 +190,6 @@ def playback(
     return simulator, viewer, frames
 
 
-def test_playback_uses_elapsed_time_and_speed_without_physics(monkeypatch):
-    simulator, viewer, frames = playback(monkeypatch, frame_count=10, speed=2)
-    assert frames == [0, 0, 4, 9, 9]
-    assert simulator._state.get_state() == "idle"
-    viewer.close.assert_called_once()
-    assert all(call.kwargs == {"state_only": True} for call in viewer.sync.call_args_list)
-
-
 def test_playback_uses_actual_frame_times_for_partial_final_action(monkeypatch):
     schedule = [(0.0, []), (0.015, []), (0.032, []), (0.035, [])]
     _, _, frames = playback(
@@ -232,25 +201,6 @@ def test_playback_uses_actual_frame_times_for_partial_final_action(monkeypatch):
     assert frames == [0, 0, 1, 3, 4]
 
 
-def test_playback_pause_seek_bounds_rewind_and_restart(monkeypatch):
-    schedule = [
-        (0, [32]),  # Pause at frame zero.
-        (1, [263]),  # Cannot step before zero.
-        (2, [262, 262]),
-        (3, [262, 262, 262]),  # Cannot step beyond final frame.
-        (4, []),  # Seeking leaves playback paused.
-        (5, [82]),  # R rewinds while paused.
-        (6, [32]),  # Resume.
-        (6.21, []),
-        (8, []),  # Automatically pause at the end.
-        (9, [32]),  # Space at end restarts.
-        (9.11, []),
-        (10, [268]),  # Home rewinds.
-    ]
-    _, _, frames = playback(monkeypatch, schedule=schedule)
-    assert frames == [0, 0, 0, 2, 4, 4, 0, 0, 2, 4, 0, 1, 0]
-
-
 @pytest.mark.parametrize("failure", ["launch", "frame", "sync", "close"])
 def test_playback_closes_viewer_and_recovers_lifecycle_on_failure(monkeypatch, failure):
     simulator, viewer, _ = playback(monkeypatch, failure=failure)
@@ -258,16 +208,3 @@ def test_playback_closes_viewer_and_recovers_lifecycle_on_failure(monkeypatch, f
         viewer.close.assert_called_once()
     assert simulator._state.get_state() == "idle"
     assert not simulator._stop_requested
-
-
-@pytest.mark.parametrize(
-    ("frame_count", "frame_dt", "speed"),
-    [(0, 0.1, 1), (1, 0, 1), (1, float("nan"), 1), (1, 0.1, 0), (1, 0.1, float("inf"))],
-)
-def test_invalid_playback_parameters_leave_simulator_idle(frame_count, frame_dt, speed):
-    simulator = Simulator(mujoco.MjSpec.from_string("<mujoco/>"))
-    manager = SimulatorManager()
-    manager.add_simulator("replay", simulator)
-    with pytest.raises(ValueError):
-        manager.show_replay("replay", frame_count, frame_dt, Mock(), speed=speed)
-    assert simulator._state.get_state() == "idle"

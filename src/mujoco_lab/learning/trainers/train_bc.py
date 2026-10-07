@@ -2,7 +2,6 @@
 
 from collections.abc import Callable, Sequence
 from time import perf_counter
-from typing import cast
 
 import numpy as np
 import torch
@@ -17,26 +16,6 @@ from mujoco_lab.learning.infrastructure.utils import set_seed
 from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.policies.base import BasePolicy
 from mujoco_lab.learning.policies.factory import build_policy
-
-
-def _observation_rotation_indices(episode: Episode, frame_dim: int) -> list[int]:
-    """Read rotation indices from explicit observation layout metadata."""
-    if "observation" not in episode.metadata:
-        return []
-    observation = episode.metadata["observation"]
-    if not isinstance(observation, dict):
-        raise ValueError("Observation metadata must be an object")
-    recorded_dim = observation.get("frame_dim")
-    if type(recorded_dim) is not int or recorded_dim != frame_dim:
-        raise ValueError("Observation frame dimension does not match episode states")
-    indices = observation.get("rotation_indices")
-    if (
-        not isinstance(indices, list)
-        or any(type(index) is not int or not 0 <= index < frame_dim for index in indices)
-        or len(set(indices)) != len(indices)
-    ):
-        raise ValueError("Observation rotation_indices must be unique in-range integers")
-    return sorted(indices)
 
 
 def run_training(
@@ -55,19 +34,26 @@ def run_training(
     State statistics are fitted on raw training frames and applied to each frame before
     history flattening. An optional callback evaluates the current in-memory model.
     Flow validation loss is a sampled flow-matching objective, not task success.
-    Callers supplying episodes directly must validate their arrays and cadence first.
+    Callers supplying episodes directly must validate their arrays, observation metadata,
+    and cadence first.
     """
-    config.validate()
+    if config.num_epochs <= 0:
+        raise ValueError("num_epochs must be positive")
+    if not 1 <= config.execution_horizon <= config.chunk_size:
+        raise ValueError("execution_horizon must be between 1 and chunk_size")
+    if config.ema_decay is not None and not 0 <= config.ema_decay < 1:
+        raise ValueError("ema_decay must be None or in [0, 1)")
     if not train_episodes:
         raise ValueError("Training requires at least one episode")
     set_seed(config.seed)
     frame_dim = train_episodes[0].states.shape[1]
     action_dim = train_episodes[0].actions.shape[1]
-    rotation_indices = _observation_rotation_indices(train_episodes[0], frame_dim)
+    rotation_indices = train_episodes[0].rotation_indices
+    rotation_layout = set(rotation_indices)
     for episode in (*train_episodes, *validation_episodes):
         if (episode.states.shape[1], episode.actions.shape[1]) != (frame_dim, action_dim):
             raise ValueError("Training and validation episode feature dimensions must match")
-        if _observation_rotation_indices(episode, frame_dim) != rotation_indices:
+        if set(episode.rotation_indices) != rotation_layout:
             raise ValueError("Training and validation observation layouts must match")
 
     train_states = np.concatenate([episode.states[:-1] for episode in train_episodes])
@@ -110,7 +96,10 @@ def run_training(
         averaged = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(config.ema_decay))
         averaged.module.requires_grad_(False)
         averaged.module.eval()
-    evaluation_model = model if averaged is None else cast(BasePolicy, averaged.module)
+    # AveragedModel copies our BasePolicy but exposes its module as the base Module type.
+    evaluation_model: BasePolicy = (  # ty: ignore[invalid-assignment]
+        model if averaged is None else averaged.module
+    )
 
     @torch.compile(options={"fallback_random": True})
     def train_step(state, action_chunk):

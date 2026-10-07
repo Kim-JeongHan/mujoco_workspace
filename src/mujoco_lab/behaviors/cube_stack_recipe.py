@@ -9,28 +9,25 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mujoco_lab.assets import RobotName
-from mujoco_lab.assets.robot.robot import MotionLimits
+from mujoco_lab.control.trajectory import MotionRatio
 
 STAGE_ORDER = ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
 
 
 class StageRecipe(BaseModel):
-    """One named pose and its execution limits, applied once per cube."""
+    """One named pose and its execution ratios, applied once per cube."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     name: str
     offset_xyz_m: tuple[float, float, float]
-    gripper_target_m: float
-    arm: MotionLimits = Field(default_factory=MotionLimits)
-    gripper: MotionLimits = Field(default_factory=MotionLimits)
-    require_grasp: bool = False
+    gripper_mode: Literal[0, 1]  # 1 closes; 0 opens.
+    arm: MotionRatio | None = None
+    gripper: MotionRatio | None = None
     min_lift_height_m: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def validate_physical_checks(self) -> StageRecipe:
-        if self.require_grasp and self.name not in ("close", "lift", "above_place", "place"):
-            raise ValueError("require_grasp is only valid for close and carry stages")
         if self.min_lift_height_m is not None and self.name != "lift":
             raise ValueError("min_lift_height_m is only valid for the lift stage")
         return self
@@ -43,10 +40,11 @@ class CubeStackRecipe(BaseModel):
 
     euler_xyz_degrees: tuple[float, float, float] | None = None
     frame: Literal["grasp"]
-    arm: MotionLimits = Field(default_factory=MotionLimits)
-    gripper: MotionLimits = Field(default_factory=MotionLimits)
+    arm: MotionRatio = (1.0, 1.0)
+    gripper: MotionRatio = (1.0, 1.0)
     arm_tolerance: float = Field(gt=0)
     gripper_tolerance: float = Field(gt=0)
+    lost_grasp_grace_s: float = Field(ge=0)
     stages: tuple[StageRecipe, ...]
 
     @model_validator(mode="after")

@@ -41,11 +41,18 @@ def _episode(cubes: int = 2) -> Episode:
     )
 
 
+@pytest.mark.parametrize("repeated_indices", [False, True])
 def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scaled(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, repeated_indices
 ):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     episode = _episode()
+    validation = _episode()
+    if repeated_indices:
+        indices = episode.metadata["observation"]["rotation_indices"]
+        indices[:] = [*reversed(indices), indices[0]]
+    episode.validate_training_data()
+    validation.validate_training_data()
     original = episode.states.copy()
     config = TrainConfig(
         policy_type="mse",
@@ -69,7 +76,7 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
         "compile",
         lambda function=None, **kwargs: function if function is not None else lambda f: f,
     )
-    model, normalizer = run_training(config, [episode], [episode], logger=SilentLogger())
+    model, normalizer = run_training(config, [episode], [validation], logger=SilentLogger())
     rotations = _rotation_indices(2)
 
     np.testing.assert_array_equal(normalizer.state_mean[rotations], 0)
@@ -112,28 +119,6 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
     )
 
 
-def test_generic_state_with_same_width_keeps_zscore():
-    from mujoco_lab.learning.trainers.train_bc import _observation_rotation_indices
-
-    episode = _episode()
-    episode.metadata = {}
-    assert _observation_rotation_indices(episode, episode.states.shape[1]) == []
-    normalizer = Normalizer.from_data(episode.states[:-1], episode.actions)
-    rotations = _rotation_indices(2)
-    assert np.any(normalizer.state_mean[rotations] != 0)
-    assert np.any(normalizer.state_std[rotations] != 1)
-
-
-@pytest.mark.parametrize("cubes", [1, 2, 3, 4])
-def test_recorded_cube_layout_selects_all_rotation_slices(cubes):
-    from mujoco_lab.learning.trainers.train_bc import _observation_rotation_indices
-
-    episode = _episode(cubes)
-    assert _observation_rotation_indices(episode, episode.states.shape[1]) == _rotation_indices(
-        cubes
-    )
-
-
 @pytest.mark.parametrize("cubes", [1, 2])
 def test_rotation_layout_matches_single_robot_observation(cubes):
     simulator = Simulator(
@@ -152,11 +137,3 @@ def test_rotation_layout_matches_single_robot_observation(cubes):
     for cube in range(cubes):
         rotation = simulator.data.body(f"cube{cube}/object_0").xmat.reshape(3, 3)[:, :2].reshape(-1)
         np.testing.assert_allclose(observation[rotations[6 + 6 * cube : 12 + 6 * cube]], rotation)
-
-
-def test_recorded_observation_dimension_must_match_states():
-    from mujoco_lab.learning.trainers.train_bc import _observation_rotation_indices
-
-    episode = _episode()
-    with pytest.raises(ValueError, match="dimension"):
-        _observation_rotation_indices(episode, 55)

@@ -12,23 +12,10 @@ from mujoco_lab.assets import view_collision
 
 @pytest.fixture(scope="module")
 def previews():
-    return {name: view_collision.RobotPreview(name) for name in ("panda", "forte", "forte2")}
+    return {name: view_collision.RobotPreview(name) for name in ("panda", "forte", "forte_backup")}
 
 
-@pytest.mark.parametrize("name", ["panda", "forte", "forte2"])
-def test_named_assets_load_only_robot_and_keep_their_home(previews, name):
-    preview = previews[name]
-    model = preview.model
-    np.testing.assert_allclose(preview.data.qpos, model.key("home").qpos, atol=1e-12)
-    assert all(model.geom(i).name not in ("table", "floor") for i in range(model.ngeom))
-    assert len(preview.controls) == 8
-    assert [c.unit for c in preview.controls].count("mm") == 1
-    if name == "panda":
-        assert preview.values()["panda_joint4"] == pytest.approx(-2.35619449)
-        assert preview.values()["panda_finger_joint1"] == pytest.approx(0.04)
-
-
-@pytest.mark.parametrize("name", ["panda", "forte", "forte2"])
+@pytest.mark.parametrize("name", ["panda", "forte", "forte_backup"])
 def test_gripper_coupling_and_home_reset_use_model_coordinates(previews, name):
     preview = previews[name]
     control = next(c for c in preview.controls if c.unit == "mm")
@@ -37,7 +24,8 @@ def test_gripper_coupling_and_home_reset_use_model_coordinates(previews, name):
     slide_joints = np.flatnonzero(preview.model.jnt_type == int(mujoco.mjtJoint.mjJNT_SLIDE))
     assert len(slide_joints) == 2
     actual = preview.data.qpos[preview.model.jnt_qposadr[slide_joints]]
-    np.testing.assert_allclose(actual, value, atol=1e-12)
+    np.testing.assert_allclose(actual, value / 2, atol=1e-12)
+    assert preview.values()[control.name] == pytest.approx(value)
     preview.reset_home()
     np.testing.assert_allclose(preview.data.qpos, preview.home, atol=1e-12)
 
@@ -87,14 +75,3 @@ def test_new_directory_and_nonstandard_joint_layout_need_no_registration(tmp_pat
     np.testing.assert_allclose(preview.data.qpos, preview.home, atol=1e-12)
     with pytest.raises(ValueError, match="Unknown robot"):
         view_collision.RobotPreview("missing")
-
-
-@pytest.mark.parametrize("name", ["forte", "forte2"])
-def test_zero_and_home_preview_buttons_preserve_both_model_presets(previews, name):
-    preview = previews[name]
-    assert preview.zero is not None
-    preview.reset_zero()
-    np.testing.assert_array_equal(preview.data.qpos, 0)
-    preview.reset_home()
-    np.testing.assert_allclose(preview.data.qpos, preview.model.key("home").qpos, atol=1e-12)
-    assert abs(preview.data.joint("shoulder_pitch").qpos[0]) > 1

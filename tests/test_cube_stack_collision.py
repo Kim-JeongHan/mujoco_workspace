@@ -149,14 +149,6 @@ def test_refresh_uses_new_live_obstacle_and_cube_pose():
     assert np.isclose(checker._relative_pos[1], 0.3)
 
 
-def test_carried_cube_rejects_other_cube_contact():
-    robot = _robot(other_cube=True)
-    robot.data.qpos[robot.model.joint("obstacle_joint").qposadr] = -1.0
-    mujoco.mj_forward(robot.model, robot.data)
-    checker = _checker(robot, "cube0:above_place")
-    assert not checker.is_collision_free(np.array([0.0]))
-
-
 def test_place_allows_only_expected_cube_support():
     robot = _robot(other_cube=True, obstacle_z=-0.08)
     robot.data.qpos[robot.model.joint("obstacle_joint").qposadr] = -1.0
@@ -170,14 +162,6 @@ def test_place_allows_only_expected_cube_support():
     )
     assert supported.is_collision_free(np.array([0.0]))
     assert not supported.is_collision_free(np.array([0.03]))
-
-
-def test_tiny_physical_joint_limit_overshoot_does_not_widen_planning_bounds():
-    robot = _robot()
-    checker = _checker(robot, "cube0:above_pick")
-    assert checker.bounds[0, 1] == 2.0
-    assert checker.is_collision_free(np.array([2.0 + 5e-7]))
-    assert not checker.is_collision_free(np.array([2.0 + 1e-4]))
 
 
 def test_numerical_self_contact_is_tolerated_but_deeper_collision_is_rejected():
@@ -213,26 +197,18 @@ def test_carry_allows_only_tiny_contact_with_pad_body_hull():
     assert not _checker(shallow, "cube0:close").is_collision_free(np.array([0.0]))
 
 
-def test_support_allowance_is_stage_and_depth_limited():
-    robot = _robot(support_height=-0.045)
-    assert _checker(robot, "cube0:lift", support_penetration=0.01).is_collision_free(
-        np.array([0.0])
+def test_configured_finger_meshes_share_the_grasp_penetration_allowance():
+    robot = _robot(finger_hull_penetration=0.002)
+    robot.gripper = SimpleNamespace(
+        finger_geom_ids=(
+            frozenset(robot.model.geom(name).id for name in ("left_pad", "left_hull")),
+            frozenset({robot.model.geom("right_pad").id}),
+        )
     )
-    assert not _checker(robot, "cube0:lift", support_penetration=0.001).is_collision_free(
-        np.array([0.0])
-    )
-    assert not _checker(robot, "cube0:above_place").is_collision_free(np.array([0.0]))
-    assert _checker(
-        robot, "cube0:place", support_geom="table/box", support_penetration=0.01
-    ).is_collision_free(np.array([0.0]))
-    # The same shallow table contact is forbidden after sweeping away from the
-    # lift start or the intended placement point.
-    assert not _checker(robot, "cube0:lift", support_penetration=0.01).is_collision_free(
-        np.array([0.03])
-    )
-    assert not _checker(
-        robot, "cube0:place", support_geom="table/box", support_penetration=0.01
-    ).is_collision_free(np.array([0.03]))
+    checker = ManipulationCollisionChecker(robot, "cube0:place", grasp_penetration=0.003)
+    assert checker.is_collision_free(np.array([0.0]))
+    strict = ManipulationCollisionChecker(robot, "cube0:place", grasp_penetration=0.001)
+    assert not strict.is_collision_free(np.array([0.0]))
 
 
 def test_place_allows_shallow_support_contact_only_at_departure_or_destination():

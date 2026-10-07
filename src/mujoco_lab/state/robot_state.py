@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
 
 import mujoco
 import numpy as np
@@ -49,11 +48,13 @@ class RobotState:
         joint_names: tuple[str, ...],
         site_names: tuple[str, ...],
         constraints: Constraints | None = None,
+        ik_frame: str = "grasp",
     ) -> None:
         self.model, self.data = model, data
         self.name, self.prefix = name, prefix
         self.joint_names = joint_names
         self.constraints = constraints
+        self.ik_frame = ik_frame
         self.root_body_id = model.body(prefix + root_name).id
         bodies = _descendants(model, self.root_body_id)
         self.joint_ids = [model.joint(prefix + name).id for name in joint_names]
@@ -87,11 +88,22 @@ class RobotState:
         )
 
     def get_joint_limits(self, slots: list[int]) -> np.ndarray:
-        """Return physical limits for selected robot joints; unbounded joints use infinities."""
-        joints = np.asarray(self.joint_ids, dtype=int)[slots]
-        limits = self.model.jnt_range[joints].copy()
-        limits[self.model.jnt_limited[joints] == 0] = (-np.inf, np.inf)
-        return limits
+        """Return configured position limits in the selected robot joint order."""
+        constraints = self.constraints
+        if constraints is None:
+            raise ValueError("Joint limits require configured constraints")
+        limits = np.asarray(constraints.position_limit, dtype=float)
+        if (
+            limits.shape != (len(constraints.joint_names), 2)
+            or not np.isfinite(limits).all()
+            or np.any(limits[:, 0] >= limits[:, 1])
+        ):
+            raise ValueError("Configured position limits must be finite with lower < upper")
+        try:
+            indices = [constraints.joint_names.index(self.joint_names[slot]) for slot in slots]
+        except ValueError as error:
+            raise ValueError("Position limits must include every selected joint") from error
+        return limits[indices].copy()
 
     def site_id(self, frame: str) -> int:
         """Resolve a local site name belonging to this robot."""
@@ -150,36 +162,43 @@ class RobotState:
     def solve_ik(
         self,
         target_pose: Transform,
+        reference_q: ArrayLike,
         *,
-        frame: str,
-        seed: ArrayLike | None = None,
+        retry_current: bool = True,
     ) -> np.ndarray:
         """Solve a world-space site pose without modifying shared simulation data.
 
         Only this robot's hinge/slide joints on the site's ancestor chain are
         optimized; descendant gripper joints and other robots remain fixed.
-        Returned positions and an optional seed follow their joint_names order.
-        Limited joints keep a 1e-4 margin; continuous joints are unbounded.
+        The configured ik_frame selects the site to match. Returned positions
+        and the required reference_q follow the ancestor joints' joint_names order.
+        YAML position limits bound every IK joint with a 1e-4 margin.
 
-        The supplied seed is tried first, then the current selected positions.
+        The reference posture is tried first. Unless retry_current is False, a
+        distinct current posture is tried after an unreachable reference. Callers
+        comparing multiple reference postures can disable this internal retry.
         Rotation-vector errors have weight 0.18 in the least-squares residual,
         with acceptance at 8 mm position error and 0.06 weighted rotation error
-        (1/3 rad). Raise ValueError if neither attempt meets these tolerances.
+        (1/3 rad). Raise ValueError if no attempt meets these tolerances.
         The result is not collision-checked. An unreachable target raises
         IKError, a ValueError subclass; configuration errors remain distinct.
         """
+        frame = self.ik_frame
         site = self.site_id(frame)
-        joints = [self.joint_ids[slot] for slot in self.get_frame_joint_slots(frame)]
+        slots = self.get_frame_joint_slots(frame)
+        joints = [self.joint_ids[slot] for slot in slots]
         indices = self.model.jnt_qposadr[joints]
-        limited = self.model.jnt_limited[joints]
-        ranges = self.model.jnt_range[joints]
-        lower = np.where(limited, ranges[:, 0] + 1e-4, -np.inf)
-        upper = np.where(limited, ranges[:, 1] - 1e-4, np.inf)
+        limits = self.get_joint_limits(slots)
+        lower = limits[:, 0] + 1e-4
+        upper = limits[:, 1] - 1e-4
         if self._ik_data is None:
             self._ik_data = mujoco.MjData(self.model)
         data = self._ik_data
         mujoco.mj_copyData(data, self.model, self.data)
         current = data.qpos[indices].copy()
+        reference = np.asarray(reference_q, dtype=float)
+        if reference.shape != current.shape or not np.isfinite(reference).all():
+            raise ValueError("reference_q must contain one finite position per IK joint")
         position = target_pose.as_translation()
         target_rotation = target_pose.as_rotation()
 
@@ -187,14 +206,21 @@ class RobotState:
             data.qpos[indices] = q
             mujoco.mj_kinematics(self.model, data)
             rotation = Rotation.from_matrix(data.site_xmat[site].reshape(3, 3))
-            angle = cast(Rotation, target_rotation * rotation.inv()).as_rotvec()
+            relative_rotation = target_rotation * rotation.inv()
+            # SciPy includes NotImplemented in the result type even for two Rotations.
+            angle = relative_rotation.as_rotvec()  # ty: ignore[unresolved-attribute]
             return np.r_[data.site_xpos[site] - position, angle * 0.18]
 
-        candidates = (current,) if seed is None else (seed, current)
+        initial = np.clip(reference, lower, upper)
+        candidates = [initial]
+        if retry_current:
+            current = np.clip(current, lower, upper)
+            if not np.array_equal(initial, current):
+                candidates.append(current)
         for candidate in candidates:
             result = least_squares(
                 residual,
-                np.clip(candidate, lower, upper),
+                candidate,
                 bounds=(lower, upper),
                 max_nfev=180,
                 ftol=1e-7,

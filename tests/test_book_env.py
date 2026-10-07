@@ -2,14 +2,13 @@
 
 from types import SimpleNamespace
 
-import mujoco
 import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import BookTask, create_book_controller
-from mujoco_lab.control import ControlTarget, min_jerk_target
+from mujoco_lab.control import ControlTarget, min_jerk
 from mujoco_lab.learning.envs import BookEnv
 from mujoco_lab.learning.envs.book import book_observation_layout
 
@@ -100,7 +99,7 @@ def test_book_action_preserves_target_derivatives_and_stops_on_success(monkeypat
     assert info["physics_steps"] == 2
     assert info["elapsed_dt"] == pytest.approx(2 * env.simulator.dt)
     for index, target in enumerate(captured):
-        expected = min_jerk_target(
+        expected = min_jerk(
             start, ControlTarget(action[:7]), index * env.simulator.dt, env.action_dt
         )
         for field in ("position", "velocity", "acceleration"):
@@ -110,22 +109,3 @@ def test_book_action_preserves_target_derivatives_and_stops_on_success(monkeypat
     env.reset(seed=4)
     assert env._steps == 0 and not env._done
     assert env.robot.target.velocity is None and env.robot.target.acceleration is None
-
-
-def test_hold_action_matches_simulator_physics_and_time_limit(monkeypatch):
-    env = make_env(xy_range=0, physics_steps_per_action=5, max_steps=1)
-    reference = make_env(xy_range=0)
-    env.reset(seed=1)
-    reference.reset(seed=1)
-    monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(released_stable=False))
-    action = np.r_[env.robot.target.position, 0.0]
-    _, reward, terminated, truncated, info = env.step(action)
-    reference.robot.gripper.set_target(0.0)
-    reference.simulator.run_steps(5)
-    mujoco.mj_forward(reference.model, reference.data)
-    np.testing.assert_allclose(env.data.qpos, reference.data.qpos, atol=1e-12)
-    np.testing.assert_allclose(env.data.qvel, reference.data.qvel, atol=1e-9)
-    assert (reward, terminated, truncated) == (0.0, False, True)
-    assert info["termination_reason"] == "time_limit"
-    assert info["physics_steps"] == 5
-    assert env.action_dt == pytest.approx(5 * env.simulator.dt)

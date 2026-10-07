@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import Any, Literal
 
 import numpy as np
+from dotenv import load_dotenv
 
 from mujoco_lab.utils import Logger as ConsoleLogger
 
@@ -33,6 +34,7 @@ class Logger:
         wandb_entity: str | None = None,
         wandb_group: str | None = None,
     ) -> None:
+        load_dotenv(".env", override=False)
         mode = wandb_mode if wandb_mode is not None else os.getenv("WANDB_MODE", "online")
         if mode not in ("online", "disabled"):
             raise ValueError("wandb_mode must be online or disabled")

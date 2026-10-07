@@ -6,11 +6,9 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal
 
 import numpy as np
-
-from mujoco_lab.learning.datasets.replay import replay_action_repeat
 
 
 @dataclass
@@ -33,8 +31,13 @@ class Episode:
     def __len__(self) -> int:
         return len(self.actions)
 
+    @property
+    def rotation_indices(self) -> list[int]:
+        """Read rotation columns after training-data validation."""
+        return self.metadata["observation"]["rotation_indices"]
+
     def validate_training_data(self) -> tuple[int, int]:
-        """Check observation and action arrays and return their feature dimensions."""
+        """Check training arrays and observation metadata; return feature dimensions."""
         if (
             self.states.ndim != 2
             or self.actions.ndim != 2
@@ -45,13 +48,24 @@ class Episode:
             raise ValueError("states/actions must have shapes (T+1, S)/(T, A) with T,S,A > 0")
         if not np.isfinite(self.states).all() or not np.isfinite(self.actions).all():
             raise ValueError("states/actions must be finite")
+        observation = self.metadata.get("observation")
+        if not isinstance(observation, dict):
+            raise ValueError("Observation metadata must be an object")
+        frame_dim = self.states.shape[1]
+        if observation.get("frame_dim") != frame_dim:
+            raise ValueError("Observation frame dimension does not match episode states")
+        indices = observation.get("rotation_indices")
+        if not isinstance(indices, list) or any(
+            type(index) is not int or not 0 <= index < frame_dim for index in indices
+        ):
+            raise ValueError("Observation rotation_indices must be in-range integers")
         return self.states.shape[1], self.actions.shape[1]
 
     def check_physics_step_consistency(
         self, physics_steps_per_action: int, *, simulation_dt: float | None = None
     ) -> None:
-        replay = self.metadata.get("replay") or {}
-        repeat = replay_action_repeat(replay)
+        replay = self.metadata["replay"]
+        repeat = replay["physics_steps_per_action"]
         if repeat != physics_steps_per_action:
             raise ValueError(
                 f"physics_steps_per_action={repeat} differs from config "
@@ -70,9 +84,23 @@ class Episode:
             )
 
 
+type EpisodeArrayName = Literal[
+    "states",
+    "actions",
+    "metadata",
+    "rewards",
+    "terminated",
+    "truncated",
+    "qpos",
+    "frame_times",
+    "mocap_pos",
+    "mocap_quat",
+]
+
+
 def save_episode(path: str | Path, episode: Episode) -> None:
     """Save one episode as compressed NPZ without replacing an existing file."""
-    arrays: dict[str, np.ndarray | str] = {
+    arrays: dict[EpisodeArrayName, np.ndarray | str] = {
         "states": episode.states,
         "actions": episode.actions,
         "metadata": json.dumps(episode.metadata),
@@ -96,7 +124,7 @@ def save_episode(path: str | Path, episode: Episode) -> None:
             mode="wb", prefix=f".{target.name}.", suffix=".tmp", dir=target.parent, delete=False
         ) as file:
             temporary = Path(file.name)
-            np.savez_compressed(file, **cast(dict[str, Any], arrays))
+            np.savez_compressed(file, **arrays)
         os.link(temporary, target)
     finally:
         if temporary is not None:
@@ -122,7 +150,7 @@ def load_episode(path: str | Path) -> Episode:
 
 
 def load_episodes(data_dir: str | Path, *, success_only: bool = True) -> list[Episode]:
-    """Load sorted top-level NPZ episodes with a common training shape.
+    """Load sorted top-level NPZ episodes with validated observation metadata and shape.
 
     By default only episodes whose metadata has ``success is True`` are kept.
     Failed and unlabeled attempts remain available with ``success_only=False``.

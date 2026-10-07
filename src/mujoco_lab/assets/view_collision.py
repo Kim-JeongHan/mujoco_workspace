@@ -1,7 +1,7 @@
 """Inspect a named robot's collision model in Viser without an environment.
 
 Run from the workspace root:
-    uv run --extra viewer python -m mujoco_lab.assets.view_collision --robot forte2
+    uv run --extra viewer python -m mujoco_lab.assets.view_collision --robot forte
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import mujoco
 import numpy as np
@@ -22,7 +21,7 @@ from mujoco_lab.assets.robot.robot import RobotConfig
 from mujoco_lab.utils.transform_utils import Transform
 
 ROBOT_PATH = Path(__file__).parent / "robot"
-CAPSULE_COLOR = (255, 0, 0)
+COLLISION_COLOR = (255, 0, 0)
 
 
 def local_name(name):
@@ -86,6 +85,7 @@ class RobotPreview:
                 f"Unknown robot {name!r}; available robots: {', '.join(robot_names())}"
             )
         self.name = name
+        self.finger_joint_ids = ()
         self.model = mujoco.MjModel.from_xml_path(str(ROBOT_PATH / name / "robot.xml"))
         self.data = mujoco.MjData(self.model)
         model = self.model
@@ -93,9 +93,6 @@ class RobotPreview:
         if home is not None:
             mujoco.mj_resetDataKeyframe(model, self.data, home)
         self.home = self.data.qpos.copy()
-        self.zero = next(
-            (i for i in range(model.nkey) if local_name(model.key(i).name) == "zero"), None
-        )
         # MuJoCo joint equality: q1-q1_ref = poly(q2-q2_ref). Controls expose
         # drivers only; dependent coordinates follow even in kinematic preview.
         pending = [
@@ -141,18 +138,23 @@ class RobotPreview:
         config_path = ROBOT_PATH / name / "robot.yaml"
         if config_path.exists():
             config = RobotConfig.load(config_path)
-            if config.pose is not None:
-                self.poses = {}
-                for preset, values in config.pose.named_poses().items():
-                    if len(values) != len(self.controls):
-                        raise ValueError(
-                            f"Robot {name!r} pose {preset!r} must contain "
-                            f"{len(self.controls)} independent joint positions"
-                        )
-                    qpos = self.home.copy()
-                    for control, value in zip(self.controls, values, strict=True):
-                        qpos[model.jnt_qposadr[control.joint]] = value
-                    self.poses[preset] = qpos
+            if config.gripper is not None:
+                self.finger_joint_ids = tuple(
+                    model.joint(name).id for name in config.gripper.joints
+                )
+            self.poses = {}
+            for preset, values in config.pose.named_poses().items():
+                if len(values) != len(self.controls):
+                    raise ValueError(
+                        f"Robot {name!r} pose {preset!r} must contain "
+                        f"{len(self.controls)} independent joint positions"
+                    )
+                qpos = self.home.copy()
+                for control, value in zip(self.controls, values, strict=True):
+                    if control.joint in self.finger_joint_ids:
+                        value /= len(self.finger_joint_ids)
+                    qpos[model.jnt_qposadr[control.joint]] = value
+                self.poses[preset] = qpos
         if not self.poses:
             self.poses = {"default": self.home.copy()}
         self.default_pose = (
@@ -165,6 +167,21 @@ class RobotPreview:
         self.selected_pose = self.default_pose
         self.apply_pose(self.default_pose)
         self.home = self.data.qpos.copy()
+        if self.finger_joint_ids:
+            maximum = min(
+                model.jnt_range[joint, 1] if model.jnt_limited[joint] else np.inf
+                for joint in self.finger_joint_ids
+            ) * len(self.finger_joint_ids)
+            if not np.isfinite(maximum):
+                maximum = max(
+                    0.1, sum(self.data.qpos[model.jnt_qposadr[list(self.finger_joint_ids)]])
+                )
+            self.controls = [
+                JointControl(control.joint, control.name, 1000.0, "mm", 0.0, maximum)
+                if control.joint in self.finger_joint_ids
+                else control
+                for control in self.controls
+            ]
         # Continuous-joint sliders must also reach every configured preset.
         self.controls = [
             JointControl(
@@ -181,16 +198,25 @@ class RobotPreview:
                     *(q[model.jnt_qposadr[control.joint]] for q in self.poses.values()),
                 ),
             )
-            if not model.jnt_limited[control.joint]
+            if not model.jnt_limited[control.joint] and control.joint not in self.finger_joint_ids
             else control
             for control in self.controls
         ]
         self.set_values({})
 
     def values(self):
-        """Return independent joint coordinates in native radians or meters."""
+        """Return arm coordinates and gripper opening width in radians or meters."""
         return {
-            control.name: float(self.data.qpos[self.model.jnt_qposadr[control.joint]])
+            control.name: (
+                max(
+                    0.0,
+                    float(
+                        self.data.qpos[self.model.jnt_qposadr[list(self.finger_joint_ids)]].sum()
+                    ),
+                )
+                if control.joint in self.finger_joint_ids
+                else float(self.data.qpos[self.model.jnt_qposadr[control.joint]])
+            )
             for control in self.controls
         }
 
@@ -199,7 +225,10 @@ class RobotPreview:
         model = self.model
         for control in self.controls:
             if control.name in values:
-                self.data.qpos[model.jnt_qposadr[control.joint]] = values[control.name]
+                value = values[control.name]
+                if control.joint in self.finger_joint_ids:
+                    value /= len(self.finger_joint_ids)
+                self.data.qpos[model.jnt_qposadr[control.joint]] = value
         for equality in self.relations:
             first, second = model.eq_obj1id[equality], model.eq_obj2id[equality]
             first_address = model.jnt_qposadr[first]
@@ -210,7 +239,7 @@ class RobotPreview:
             self.data.qpos[first_address] = model.qpos0[
                 first_address
             ] + np.polynomial.polynomial.polyval(displacement, model.eq_data[equality, :5])
-        mujoco.mj_forward(model, self.data)
+        mujoco.mj_kinematics(model, self.data)
 
     def reset_home(self):
         self.apply_pose(self.default_pose)
@@ -221,16 +250,6 @@ class RobotPreview:
         self.selected_pose = name
         self.set_values({})
 
-    def reset_zero(self):
-        """Restore a named zero preset when the asset defines one."""
-        if self.zero is None:
-            raise ValueError(f"Robot {self.name!r} has no zero preset")
-        if "zero" in self.poses:
-            self.apply_pose("zero")
-            return
-        mujoco.mj_resetDataKeyframe(self.model, self.data, self.zero)
-        self.set_values({})
-
 
 class ModelView:
     """Own one robot's scene handles and lazily loaded CAD details."""
@@ -238,6 +257,7 @@ class ModelView:
     def __init__(self, preview, server):
         self.preview = preview
         self.server = server
+        self.link_labels = {self.body_name(body): body for body in range(1, preview.model.nbody)}
         self.root_path = f"/models/{preview.name}"
         self.root = server.scene.add_frame(self.root_path, show_axes=False)
         self.frames = {
@@ -255,8 +275,9 @@ class ModelView:
             self.folder = folder
             for control in preview.controls:
                 value = preview.values()[control.name]
+                is_gripper = control.joint in preview.finger_joint_ids
                 self.sliders[control.name] = server.gui.add_slider(
-                    f"{control.name} ({control.unit})",
+                    "Gripper width (mm)" if is_gripper else f"{control.name} ({control.unit})",
                     float(control.lower * control.scale),
                     float(control.upper * control.scale),
                     0.1,
@@ -335,13 +356,19 @@ class ModelView:
             groups.setdefault((body, color), []).append(mesh)
         target = self.details if detail else self.visuals
         for index, ((body, color), meshes) in enumerate(groups.items()):
-            mesh = cast(trimesh.Trimesh, trimesh.util.concatenate(meshes))
+            # All inputs are Trimeshes; concatenate's return annotation is the wider Geometry.
+            combined_mesh: trimesh.Trimesh = (  # ty: ignore[invalid-assignment]
+                trimesh.util.concatenate(meshes)
+            )
             target.append(
-                self.server.scene.add_mesh_simple(
-                    f"{self.root_path}/body_{body}/{'detail' if detail else 'visual'}_{index}",
-                    mesh.vertices.astype(np.float32),
-                    mesh.faces.astype(np.uint32),
-                    color=color,
+                (
+                    body,
+                    self.server.scene.add_mesh_simple(
+                        f"{self.root_path}/body_{body}/{'detail' if detail else 'visual'}_{index}",
+                        combined_mesh.vertices.astype(np.float32),
+                        combined_mesh.faces.astype(np.uint32),
+                        color=color,
+                    ),
                 )
             )
 
@@ -355,18 +382,16 @@ class ModelView:
                 continue
             body = int(model.geom_bodyid[geom])
             mesh = geom_mesh(model, geom, convex=True)
-            is_capsule = int(model.geom_type[geom]) == mujoco.mjtGeom.mjGEOM_CAPSULE
-            color = CAPSULE_COLOR if is_capsule else (160, 170, 185)
             handle = self.server.scene.add_mesh_simple(
                 f"{self.root_path}/body_{body}/collision_{geom}",
                 mesh.vertices.astype(np.float32),
                 mesh.faces.astype(np.uint32),
-                color=color,
+                color=COLLISION_COLOR,
                 opacity=0.35,
                 position=model.geom_pos[geom],
                 wxyz=model.geom_quat[geom],
             )
-            self.collisions.append((geom, body, color, handle))
+            self.collisions.append((int(geom), body, handle))
 
 
 class CollisionViewer:
@@ -389,6 +414,7 @@ class CollisionViewer:
             )
             self.reset = self.server.gui.add_button("Reset pose")
             self.show_visual = self.server.gui.add_checkbox("CAD", True)
+            self.cad_opacity = self.server.gui.add_slider("CAD opacity", 0.0, 1.0, 0.05, 1.0)
             self.full_cad = self.server.gui.add_checkbox(
                 "Full CAD details", False, visible=self.current.has_details
             )
@@ -404,6 +430,7 @@ class CollisionViewer:
             self.focus = self.server.gui.add_dropdown("Collision body", self.body_options())
         for handle in (
             self.show_visual,
+            self.cad_opacity,
             self.full_cad,
             self.show_collision,
             self.opacity,
@@ -420,12 +447,7 @@ class CollisionViewer:
         self.update()
 
     def body_options(self):
-        return (
-            "All",
-            *dict.fromkeys(
-                self.current.body_name(body) for _, body, _, _ in self.current.collisions
-            ),
-        )
+        return ("All", *self.current.link_labels)
 
     def coordinate_options(self):
         return ("Off", "All", *self.current.coordinate_frames)
@@ -464,9 +486,6 @@ class CollisionViewer:
     def reset_home(self, _event=None):
         self.reset_pose(self.current.preview.default_pose)
 
-    def reset_zero(self, _event=None):
-        self.reset_pose("zero")
-
     def select_pose(self, _event=None):
         if not self.switching:
             self.reset_pose(self.pose.value)
@@ -497,15 +516,13 @@ class CollisionViewer:
                     for control in preview.controls
                 }
             )
-            penetrating = set()
-            for contact in data.contact:
-                if contact.dist >= -0.0001:
-                    continue
-                penetrating.update((int(contact.geom1), int(contact.geom2)))
             if self.full_cad.value and view.has_details and not view.detail_built:
                 view.build_visuals(detail=True)
                 view.detail_built = True
             with self.server.atomic():
+                selected_link = view.link_labels.get(self.focus.value)
+                cad_visible = self.show_visual.value and self.cad_opacity.value > 0.0
+                cad_opacity = None if self.cad_opacity.value >= 1.0 else self.cad_opacity.value
                 for cached in self.views.values():
                     cached.root.visible = cached is view
                     cached.folder.visible = cached is view
@@ -514,23 +531,24 @@ class CollisionViewer:
                     frame.position, frame.wxyz = pose[:3], pose[3:]
                 for name, frame in view.coordinate_frames.items():
                     frame.visible = self.show_coordinates.value in ("All", name)
-                for handle in view.visuals:
-                    handle.visible = self.show_visual.value
-                for handle in view.details:
-                    handle.visible = self.show_visual.value and self.full_cad.value
-                for geom, body, color, handle in view.collisions:
-                    selected = self.focus.value in ("All", view.body_name(body))
+                for _, handle in view.visuals:
+                    handle.visible = cad_visible
+                    handle.opacity = cad_opacity
+                for _, handle in view.details:
+                    handle.visible = cad_visible and self.full_cad.value
+                    handle.opacity = cad_opacity
+                for _, body, handle in view.collisions:
+                    selected = selected_link in (None, body)
                     handle.visible = self.show_collision.value and selected
                     handle.opacity = self.opacity.value
                     handle.wireframe = self.wireframe.value
-                    handle.color = CAPSULE_COLOR if geom in penetrating else color
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--robot", choices=robot_names(), default="forte2")
+    parser.add_argument("--robot", choices=robot_names(), default="forte")
     args = parser.parse_args()
     viewer = CollisionViewer(args.robot, host=args.host, port=args.port)
     print(f"Open http://{args.host}:{viewer.server.get_port()} to inspect the robot.")

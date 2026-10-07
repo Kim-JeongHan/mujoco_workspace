@@ -14,3 +14,4 @@ ur20
 ur30
 third_party/*
 /docs/
+.env

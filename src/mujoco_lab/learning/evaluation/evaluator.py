@@ -17,6 +17,7 @@ from mujoco_lab.learning.config.config import RolloutConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation.progress import BookProgressTracker, CubeProgressTracker
 from mujoco_lab.learning.policies.base import BasePolicy
+from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
 
@@ -97,6 +98,9 @@ class PolicyEvaluator:
     """
 
     def __init__(self, env: Any, config: RolloutConfig, device: torch.device):
+        if config.num_episodes <= 0:
+            raise ValueError("num_episodes must be positive")
+        self.max_steps = max_steps_for_seconds(config.max_seconds, env.action_dt)
         self.env = env
         self.config = config
         self.device = torch.device(device)
@@ -177,7 +181,7 @@ class PolicyEvaluator:
         """Run one fresh episode using the environment's physics timestep."""
         env = self.env
         env_seed = self.config.seed + index
-        max_steps = self.config.max_steps
+        max_steps = self.max_steps
         obs_horizon = metadata["architecture"]["obs_horizon"]
         execution_horizon = metadata["architecture"]["execution_horizon"]
         low = np.asarray(env.action_space.low, dtype=np.float64)
@@ -206,10 +210,11 @@ class PolicyEvaluator:
                 torch.manual_seed(env_seed)
                 while steps < max_steps:
                     physical = self._predict_actions(model, normalizer, history, flow_num_steps)
-                    for action in physical[:execution_horizon]:
-                        bounded = np.clip(action, low, high)
-                        clipped = bounded.astype(env.action_space.dtype, copy=False)
-                        next_obs, reward, terminated, truncated, info = env.step(clipped)
+                    for next_act in physical[:execution_horizon]:
+                        next_act = np.clip(next_act, low, high).astype(
+                            env.action_space.dtype, copy=False
+                        )
+                        next_obs, reward, terminated, truncated, info = env.step(next_act)
                         if progress is not None:
                             progress.observe()
                         steps += 1

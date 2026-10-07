@@ -23,5 +23,9 @@ class Expert(ABC):
         """Reset expert state after the caller resets its environment."""
 
     @abstractmethod
-    def act(self, obs: Any = None) -> np.ndarray:
-        """Return one physical action without applying it."""
+    def act(self, obs: Any = None, *, dt: float = 0.0) -> np.ndarray:
+        """Return the target dt seconds ahead without applying it.
+
+        Use the environment's action_dt for its next action endpoint, or zero
+        for a direct simulation callback requesting the current target.
+        """

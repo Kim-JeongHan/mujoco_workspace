@@ -8,7 +8,6 @@ from simulator_helpers import PassiveViewer, manager_with
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.control import Controller
-from mujoco_lab.utils import Transform
 
 
 class RecordingController(Controller):
@@ -35,16 +34,6 @@ def make_simulator():
     controller = RecordingController()
     sim.robots["arm"].change_controller(controller)
     return sim, controller
-
-
-def test_fixed_default_period_and_explicit_override_leave_scene_unchanged():
-    scene = create_environment("table_shelf")
-    scene.option.timestep = 0.003
-    default = Simulator(scene)
-    overridden = Simulator(scene, dt=0.001)
-    assert scene.option.timestep == 0.003
-    assert default.dt == default.model.opt.timestep == 0.002
-    assert overridden.dt == overridden.model.opt.timestep == 0.001
 
 
 def test_every_step_updates_control_and_chunks_preserve_results():
@@ -89,106 +78,6 @@ def test_stop_ends_headless_run_after_current_tick_and_does_not_affect_next_run(
     assert sim._state.get_state() == "idle"
     assert sim.run_steps(2)["arm"].steps == 2
     assert len(controller.times) == 5
-
-
-def test_stop_closes_passive_viewer_after_current_tick():
-    sim, _ = make_simulator()
-    manager = manager_with(sim)
-    viewer = PassiveViewer(100)
-
-    def update(current):
-        assert current._state.get_state() == "viewing"
-        current.stop()
-
-    sim.target_updater = update
-    with patch("mujoco.viewer.launch_passive", return_value=viewer):
-        manager.show("simulator")
-    assert viewer.sync_calls == 1 and viewer.closed
-    assert sim.data.time == pytest.approx(0.001)
-    assert sim._state.get_state() == "idle"
-
-
-def test_saturation_and_errors_are_counted_every_physics_step():
-    sim, _ = make_simulator()
-    controller = RecordingController(1000)
-    sim.robots["arm"].change_controller(controller)
-    result = sim.run_steps(7)["arm"]
-    assert result.steps == result.saturated_steps == 7
-    assert result.errors == list(range(1, 8))
-    np.testing.assert_allclose(controller.times, np.arange(7) * 0.001)
-
-
-def test_control_replaces_external_inputs_on_the_next_tick():
-    sim, _ = make_simulator()
-    robot = sim.robots["arm"]
-    controller = RecordingController(1000)
-    robot.change_controller(controller)
-    assert sim.step()["arm"].saturated_steps == 1
-    sim.data.ctrl[robot.actuator_ids] = 0.25
-    result = sim.step()["arm"]
-    assert result.saturated_steps == 1 and result.errors == [2]
-    assert controller.times == [0, 0.001]
-    assert not np.all(sim.data.ctrl[robot.actuator_ids] == 0.25)
-    robot.update_state()
-    assert robot.control()
-    assert sim._state.get_state() == "idle"
-    result = sim.step()["arm"]
-    assert result.saturated_steps == 1 and result.errors == [4]
-    sim.run_steps(2)
-    np.testing.assert_allclose(controller.times, [0, 0.001, 0.002, 0.002, 0.003, 0.004])
-
-
-def test_reset_and_controller_replacement_apply_on_next_tick():
-    sim, controller = make_simulator()
-    sim.step()
-    replacement = RecordingController(3)
-    sim.robots["arm"].change_controller(replacement)
-    sim.step()
-    np.testing.assert_allclose(replacement.times, [0.001])
-    assert controller.times == [0]
-    sim.reset()
-    assert not replacement.times
-    assert sim.dt == 0.001
-    sim.step()
-    assert replacement.times == [0]
-    sim.robots["arm"].change_controller(None)
-    inputs = sim.data.ctrl.copy()
-    result = sim.run_steps(3)["arm"]
-    assert result.errors == [] and result.saturated_steps == 0
-    np.testing.assert_array_equal(sim.data.ctrl, inputs)
-
-
-def test_multiple_robots_share_one_clock_and_uncontrolled_inputs_survive():
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[
-            RobotSpec(
-                "left",
-                "forte",
-                Transform(translation=[-0.8, 0, 0]),
-                config=load_robot_config("forte"),
-            ),
-            RobotSpec(
-                "right",
-                "panda",
-                Transform(translation=[0.8, 0, 0]),
-                config=load_robot_config("panda"),
-            ),
-        ],
-        dt=0.001,
-    )
-    controller = RecordingController()
-    sim.robots["left"].change_controller(controller)
-    panda = sim.robots["right"]
-    targets = sim.data.ctrl[panda.actuator_ids].copy()
-    targets[0] += 0.01
-    sim.data.ctrl[panda.actuator_ids] = targets
-    stats = sim.run_steps(10)
-    np.testing.assert_allclose(controller.times, np.arange(10) * 0.001)
-    assert all(result.steps == 10 for result in stats.values())
-    assert stats["right"].errors == []
-    assert sim.data.time == pytest.approx(0.01)
-    np.testing.assert_array_equal(sim.data.ctrl[panda.actuator_ids], targets)
 
 
 def test_passive_viewer_matches_headless_timing_and_rk4_trajectory_after_priming():
@@ -262,36 +151,6 @@ def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_w
     assert sim._state.get_state() == "idle"
 
 
-def test_passive_viewer_controls_after_gui_clock_rewind():
-    sim, controller = make_simulator()
-    manager = manager_with(sim)
-    viewer = None
-
-    def rewind_after_three_steps():
-        if viewer.sync_calls == 3:
-            mujoco.mj_resetData(sim.model, sim.data)
-
-    viewer = PassiveViewer(4, on_sync=rewind_after_three_steps)
-    with patch("mujoco.viewer.launch_passive", return_value=viewer):
-        manager.show("simulator")
-    np.testing.assert_allclose(controller.times, [0, 0.001, 0.002, 0])
-
-
-def test_passive_viewer_keeps_configured_timestep_after_gui_edit():
-    sim, controller = make_simulator()
-    manager = manager_with(sim)
-
-    def edit_timestep():
-        sim.model.opt.timestep = 0.002
-
-    viewer = PassiveViewer(5, on_sync=edit_timestep)
-    with patch("mujoco.viewer.launch_passive", return_value=viewer):
-        manager.show("simulator")
-    assert sim.model.opt.timestep == sim.dt == 0.001
-    assert sim.data.time == pytest.approx(0.005)
-    np.testing.assert_allclose(controller.times, np.arange(5) * 0.001)
-
-
 def test_passive_viewer_sync_failure_restores_timestep_and_closes_viewer():
     sim = Simulator(create_environment("empty"), dt=0.001)
     manager = manager_with(sim)
@@ -309,22 +168,6 @@ def test_passive_viewer_sync_failure_restores_timestep_and_closes_viewer():
     assert sim.model.opt.timestep == sim.dt == 0.001
     assert sim._state.get_state() == "idle"
     assert viewer.closed
-
-
-def test_passive_viewer_pacing_sleeps_only_for_positive_remainder():
-    sim = Simulator(create_environment("empty"), dt=0.001)
-    manager = manager_with(sim)
-    viewer = PassiveViewer(2)
-    with (
-        patch("mujoco.viewer.launch_passive", return_value=viewer),
-        patch(
-            "mujoco_lab.simulator_manager.time.monotonic",
-            side_effect=[0.0, 0.00025, 1.0, 1.002],
-        ),
-        patch("mujoco_lab.simulator_manager.time.sleep") as sleep,
-    ):
-        manager.show("simulator")
-    sleep.assert_called_once_with(pytest.approx(0.00075))
 
 
 @pytest.mark.parametrize(

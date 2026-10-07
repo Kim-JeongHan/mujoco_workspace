@@ -1,3 +1,7 @@
+pose:
+  # Seven arm angles in degrees, followed by the gripper opening width in meters (0 closed).
+  default: [0, -45, 0, -135, 0, 90, 45, 0.08]
+
 controller:
   name: position
   gravity_compensation: true
@@ -28,6 +32,7 @@ constraints:
 
 gripper:
   actuator: panda_finger_joint1
-  # Configured gripper motion limits.
-  velocity_limit: 0.2 # m/s
-  acceleration_limit: 1.0 # m/s^2
+  joints: [panda_finger_joint1, panda_finger_joint2]
+  # Opening-width motion limits; native joint motion is half this rate.
+  velocity_limit: 0.4 # m/s (opening width)
+  acceleration_limit: 2.0 # m/s^2 (opening width)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import mujoco
 import numpy as np
@@ -64,13 +64,18 @@ class Robot:
             joint_names=info.joint_names,
             site_names=info.site_names,
             constraints=config.constraints,
+            ik_frame=config.controller.frame,
         )
 
         # Actuator and gripper access.
         self.actuator_names = info.actuator_names
         self.actuator_ids = [self.model.actuator(prefix + name).id for name in info.actuator_names]
         self.num_actuators = len(self.actuator_ids)
-        self.gripper = Gripper(self, config.gripper.actuator) if config.gripper else None
+        self.gripper = (
+            Gripper(self, config.gripper.actuator, config.gripper.joints)
+            if config.gripper
+            else None
+        )
 
         # Arm actuator mapping and properties.
         self._arm_actuator_slots = np.asarray(
@@ -83,15 +88,14 @@ class Robot:
         )
         arm_ids = np.asarray(self.actuator_ids, dtype=int)[self._arm_actuator_slots]
         model = self.model
-        self._arm_transmissions = model.actuator_trntype[arm_ids]
+        transmissions = model.actuator_trntype[arm_ids]
         self._arm_joint_ids = model.actuator_trnid[arm_ids, 0]
         self._arm_gear = model.actuator_gear[arm_ids, 0].copy()
         self._arm_gain = model.actuator_gainprm[arm_ids, 0].copy()
-        self._arm_fixed_gain = model.actuator_gaintype[arm_ids] == mujoco.mjtGain.mjGAIN_FIXED
-        self._arm_scalar_gear = np.allclose(model.actuator_gear[arm_ids, 1:], 0)
         bias = model.actuator_biasprm[arm_ids]
         self._arm_position = (
-            (model.actuator_biastype[arm_ids] == mujoco.mjtBias.mjBIAS_AFFINE)
+            (transmissions == mujoco.mjtTrn.mjTRN_JOINT)
+            & (model.actuator_biastype[arm_ids] == mujoco.mjtBias.mjBIAS_AFFINE)
             & (self._arm_gain > 0)
             & np.isclose(bias[:, 0], 0)
             & np.isclose(bias[:, 1], -self._arm_gain)
@@ -99,22 +103,42 @@ class Robot:
         )
         self._arm_motor = model.actuator_biastype[arm_ids] == mujoco.mjtBias.mjBIAS_NONE
 
+        # Check the fixed model once; controller-free native inputs remain available.
+        joints = self._arm_joint_ids
+        self._arm_controller_error: str | None = None
+        if not len(arm_ids):
+            self._arm_controller_error = "Controller requires joint actuators"
+        elif not np.all(transmissions == mujoco.mjtTrn.mjTRN_JOINT):
+            self._arm_controller_error = "Controller requires direct joint transmissions"
+        elif self.gripper is not None and self.gripper.joint_id in joints:
+            self._arm_controller_error = (
+                "Arm actuators cannot also drive the configured gripper joint"
+            )
+        elif len(set(joints)) != len(joints) or any(j not in self.state.joint_ids for j in joints):
+            self._arm_controller_error = "Controller requires one actuator per robot-owned joint"
+        elif not np.all(model.actuator_gaintype[arm_ids] == mujoco.mjtGain.mjGAIN_FIXED):
+            self._arm_controller_error = "Controller requires fixed-gain actuators"
+        elif (
+            np.any(self._arm_gear == 0)
+            or np.any(self._arm_gain == 0)
+            or not np.allclose(model.actuator_gear[arm_ids, 1:], 0)
+        ):
+            self._arm_controller_error = (
+                "Controller requires nonzero scalar joint transmission gains"
+            )
+        elif not np.all(self._arm_position | self._arm_motor):
+            self._arm_controller_error = "Controller requires motor or position-servo actuators"
+
         # Arm joint-to-state mapping.
-        names, qpos_indices, joint_slots = [], [], []
-        for transmission, joint in zip(self._arm_transmissions, self._arm_joint_ids, strict=True):
-            joint = int(joint)
-            if transmission == mujoco.mjtTrn.mjTRN_JOINT and joint in self.state.joint_ids:
-                qpos_index = int(model.jnt_qposadr[joint])
-                names.append(self.state.joint_names[self.state.joint_ids.index(joint)])
-                qpos_indices.append(qpos_index)
-                joint_slots.append(self.state.joint_ids.index(joint))
-            else:
-                names.append("")
-                qpos_indices.append(-1)
-                joint_slots.append(-1)
-        self._arm_joint_names = tuple(names)
-        self._arm_qpos_indices = qpos_indices
-        self._arm_joint_slots = joint_slots
+        self._arm_joint_slots = (
+            [self.state.joint_ids.index(int(joint)) for joint in joints]
+            if self._arm_controller_error is None
+            else []
+        )
+        self._arm_joint_names = tuple(
+            self.state.joint_names[slot] for slot in self._arm_joint_slots
+        )
+        self._arm_qpos_indices = [self.state.qpos_indices[slot] for slot in self._arm_joint_slots]
 
         # Active controller joint mapping.
         self.control_joint_names: tuple[str, ...] = ()
@@ -129,28 +153,15 @@ class Robot:
         self.target: ControlTarget | None = None
 
     def _joint_actuators(self, output_kind: str) -> np.ndarray:
-        """Validate the requested joint controller and select arm actuator positions."""
+        """Select arm actuator positions for the requested controller output."""
         if output_kind not in ("position", "torque"):
             raise ValueError(f"Unknown joint controller output kind {output_kind!r}")
-        if not len(self._arm_actuator_slots):
-            raise ValueError("Controller requires joint actuators")
-        if not np.all(self._arm_transmissions == mujoco.mjtTrn.mjTRN_JOINT):
-            raise ValueError("Controller requires direct joint transmissions")
-        joints = self._arm_joint_ids
-        if self.gripper is not None and self.gripper.joint_id in joints:
-            raise ValueError("Arm actuators cannot also drive the configured gripper joint")
-        if len(set(joints)) != len(joints) or any(j not in self.state.joint_ids for j in joints):
-            raise ValueError("Controller requires one actuator per robot-owned joint")
-        if not np.all(self._arm_fixed_gain):
-            raise ValueError("Controller requires fixed-gain actuators")
-        if np.any(self._arm_gear == 0) or np.any(self._arm_gain == 0) or not self._arm_scalar_gear:
-            raise ValueError("Controller requires nonzero scalar joint transmission gains")
+        if self._arm_controller_error is not None:
+            raise ValueError(self._arm_controller_error)
         if output_kind == "position":
             if not np.all(self._arm_position):
                 raise ValueError("PositionController requires position-servo actuators")
-            return np.arange(len(joints))
-        if not np.all(self._arm_position | self._arm_motor):
-            raise ValueError("Controller requires motor or position-servo actuators")
+            return np.arange(len(self._arm_actuator_slots))
         selected = np.flatnonzero(self._arm_motor)
         if not len(selected):
             raise ValueError("PD/OSC requires torque/force actuators; use controller='position'")
@@ -163,20 +174,10 @@ class Robot:
         return self.joint_state.select(self.control_joint_slots)
 
     def get_arm_joint_mapping(self) -> tuple[tuple[str, ...], list[int]]:
-        """Return controlled joints, or valid unique arm actuator joints before binding."""
+        """Return controlled joints, or the validated arm mapping before binding."""
         if self.controller is not None:
             return self.control_joint_names, self.control_joint_slots.copy()
-        names, slots = [], []
-        seen = set()
-        for name, slot in zip(self._arm_joint_names, self._arm_joint_slots, strict=True):
-            if not name or slot < 0 or slot in seen:
-                continue
-            if self.gripper is not None and self.state.joint_ids[slot] == self.gripper.joint_id:
-                continue
-            names.append(name)
-            slots.append(slot)
-            seen.add(slot)
-        return tuple(names), slots
+        return self._arm_joint_names, self._arm_joint_slots.copy()
 
     def get_control_target_order(self, action_names: tuple[str, ...]) -> list[int]:
         """Map stored joint action order into the attached controller's order."""
@@ -187,74 +188,35 @@ class Robot:
         return [action_names.index(name) for name in self.control_joint_names]
 
     def _apply_initial_pose(self) -> None:
-        """Apply the YAML default pose, falling back to the asset home state."""
-        home = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, self.prefix + "home")
-        if home >= 0:
-            key = self.model.key(home)
-            self.data.qpos[self.state.qpos_indices] = key.qpos[self.state.qpos_indices]
-            self.data.qvel[self.state.dof_indices] = key.qvel[self.state.dof_indices]
-            self.data.ctrl[self.actuator_ids] = key.ctrl[self.actuator_ids]
-        if self.config.pose is None:
-            return
-
-        model, data = self.model, self.data
-        pending = [
-            index
-            for index in range(model.neq)
-            if model.eq_type[index] == mujoco.mjtEq.mjEQ_JOINT
-            and model.eq_active0[index]
-            and model.eq_obj1id[index] in self.state.joint_ids
-        ]
-        dependent = {int(model.eq_obj1id[index]) for index in pending}
-        joints = [joint for joint in self.state.joint_ids if joint not in dependent]
-        values = np.asarray(self.config.pose.default, dtype=float)
-        if values.shape != (len(joints),) or not np.isfinite(values).all():
+        """Initialize arm coordinates and delegate opening width to the gripper."""
+        gripper = self.gripper
+        fingers = gripper.finger_joint_ids if gripper is not None else ()
+        slots = [slot for slot, joint in enumerate(self.state.joint_ids) if joint not in fingers]
+        pose = np.asarray(self.config.pose.default, dtype=float)
+        expected = len(slots) + int(gripper is not None)
+        if pose.shape != (expected,) or not np.isfinite(pose).all():
             raise ValueError(
-                f"Robot {self.name!r} default pose must contain "
-                f"{len(joints)} finite joint positions"
+                f"Robot {self.name!r} default pose must contain {expected} finite values"
             )
-        slots = [self.state.joint_ids.index(joint) for joint in joints]
-        limits = self.state.get_joint_limits(slots)
-        if np.any(values < limits[:, 0]) or np.any(values > limits[:, 1]):
-            raise ValueError(f"Robot {self.name!r} default pose exceeds joint limits")
-        data.qpos[model.jnt_qposadr[joints]] = values
-        resolved = set(joints)
-        while pending:
-            ready = [
-                index
-                for index in pending
-                if model.eq_obj2id[index] < 0 or model.eq_obj2id[index] in resolved
-            ]
-            if not ready:
-                raise ValueError(f"Robot {self.name!r} has cyclic joint equality dependencies")
-            for index in ready:
-                first, second = int(model.eq_obj1id[index]), int(model.eq_obj2id[index])
-                address = model.jnt_qposadr[first]
-                displacement = (
-                    0.0
-                    if second < 0
-                    else data.qpos[model.jnt_qposadr[second]]
-                    - model.qpos0[model.jnt_qposadr[second]]
-                )
-                data.qpos[address] = model.qpos0[address] + np.polynomial.polynomial.polyval(
-                    displacement, model.eq_data[index, :5]
-                )
-                resolved.add(first)
-                pending.remove(index)
+        arm_pose = pose[: len(slots)]
+        if self.state.constraints is not None:
+            limits = self.state.get_joint_limits(slots)
+            if np.any(arm_pose < limits[:, 0]) or np.any(arm_pose > limits[:, 1]):
+                raise ValueError(f"Robot {self.name!r} default arm pose exceeds joint limits")
+        self.data.qpos[np.asarray(self.state.qpos_indices, dtype=int)[slots]] = arm_pose
+        self.data.qvel[self.state.dof_indices] = 0
+        self.data.ctrl[self.actuator_ids] = 0
+        self._initialize_actuator_inputs()
+        if gripper is not None:
+            gripper.apply_initial_width(float(pose[-1]))
 
-        data.qvel[self.state.dof_indices] = 0
-        data.ctrl[self.actuator_ids] = 0
-        for slot, joint, gear, position_servo in zip(
-            self._arm_actuator_slots,
-            self._arm_joint_ids,
-            self._arm_gear,
-            self._arm_position,
-            strict=True,
-        ):
-            if position_servo:
-                data.ctrl[self.actuator_ids[slot]] = data.qpos[model.jnt_qposadr[joint]] * gear
-        if self.gripper is not None:
-            data.ctrl[self.gripper.actuator_id] = self.gripper.get_position() * self.gripper.gear
+    def _initialize_actuator_inputs(self) -> None:
+        """Hold position-servo arm joints at their initialized coordinates."""
+        slots = self._arm_actuator_slots[self._arm_position]
+        joints = self._arm_joint_ids[self._arm_position]
+        gears = self._arm_gear[self._arm_position]
+        actuators = np.asarray(self.actuator_ids, dtype=int)[slots]
+        self.data.ctrl[actuators] = self.data.qpos[self.model.jnt_qposadr[joints]] * gears
 
     def change_controller(self, controller: Controller | None) -> None:
         """Bind and reset a replacement controller, or detach it with None."""
@@ -310,8 +272,11 @@ class Robot:
         """
         command = self.data.ctrl[self.actuator_ids].copy()
         if self.controller is not None:
+            target = self.target
+            if target is None:
+                raise RuntimeError("An attached controller requires a control target")
             values = np.asarray(
-                self.controller.compute(self.get_control_state(), cast(ControlTarget, self.target)),
+                self.controller.compute(self.get_control_state(), target),
                 dtype=float,
             )
             required = len(self.control_actuator_slots)
@@ -323,7 +288,7 @@ class Robot:
                 f"Robot {self.name!r} needs {self.num_actuators} finite actuator inputs"
             )
         if self.gripper is not None and self.gripper.is_active():
-            command[self.gripper.slot] = self.gripper.get_target() * self.gripper.gear
+            command[self.gripper.slot] = self.gripper.get_actuator_target()
         limits = self.model.actuator_ctrlrange[self.actuator_ids]
         limited = self.model.actuator_ctrllimited[self.actuator_ids]
         clipped = np.where(limited, np.clip(command, limits[:, 0], limits[:, 1]), command)

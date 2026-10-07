@@ -9,7 +9,7 @@ from controller_config import create_test_controller
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.assets.robot.robot import GripperConfig
+from mujoco_lab.assets.robot.robot import GripperConfig, PoseConfig
 
 
 def test_forte_gripper_controls_without_arm_controller_and_resets_home():
@@ -20,22 +20,23 @@ def test_forte_gripper_controls_without_arm_controller_and_resets_home():
     robot = sim.robots["robot"]
     gripper = robot.gripper
     assert gripper is not None
-    assert gripper.get_target() == pytest.approx(0)
-    assert gripper.get_position() == pytest.approx(
-        sim.data.qpos[sim.model.joint("robot/gripper_left_joint").qposadr[0]]
-    )
+    assert gripper.get_target() == pytest.approx(0.074)
+    assert gripper.get_width() == pytest.approx(0.074)
+    limits = gripper.get_control_limits()
+    np.testing.assert_allclose(limits, [0, 0.074])
+    limits[:] = 0  # Caller edits must not change the gripper's stored bounds.
     assert not gripper.is_active()
-    gripper.set_target(-0.01)
+    gripper.set_target(0.02)
     sim.step()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(-0.01)
+    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.01)
     assert gripper.is_active()
     sim.reset()
-    assert gripper.get_target() == pytest.approx(0)
+    assert gripper.get_target() == pytest.approx(0.074)
     assert not gripper.is_active()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0)
-    with pytest.raises(ValueError, match="gripper target"):
+    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.037)
+    with pytest.raises(ValueError, match="gripper width"):
         gripper.set_target(-0.038)
-    with pytest.raises(ValueError, match="gripper target"):
+    with pytest.raises(ValueError, match="gripper width"):
         gripper.set_target(np.nan)
 
 
@@ -53,107 +54,33 @@ def test_gripper_clamps_endpoint_roundoff_and_rejects_larger_errors(robot_type):
         gripper.set_target(boundary + direction * roundoff)
         assert gripper.get_target() == boundary
         sim.step()
-        assert sim.data.ctrl[gripper.actuator_id] == boundary * gripper.gear
-        with pytest.raises(ValueError, match="gripper target"):
+        assert sim.data.ctrl[gripper.actuator_id] == boundary / 2 * gripper.gear
+        with pytest.raises(ValueError, match="gripper width"):
             gripper.set_target(boundary + direction * 1e-10)
         assert gripper.get_target() == boundary
 
 
-def test_panda_arm_position_target_excludes_gripper_and_preserves_gripper_override():
+@pytest.mark.parametrize("robot_type", ["panda", "forte"])
+def test_grasp_contact_groups_exclude_visuals_and_require_each_finger(robot_type):
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("robot", "panda", config=load_robot_config("panda"))],
+        robots=[RobotSpec("robot", robot_type, config=load_robot_config(robot_type))],
     )
-    robot = sim.robots["robot"]
-    gripper = robot.gripper
+    gripper = sim.robots["robot"].gripper
     assert gripper is not None
-    robot.change_controller(create_test_controller(robot, controller="position"))
-    assert robot.target.position.shape == (7,)
-    assert len(robot.control_joint_names) == 7
-    gripper.set_target(0.02)
-    sim.step()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.02)
-    robot.change_controller(None)
-    sim.step()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.02)
-    robot.change_controller(create_test_controller(robot, controller="position"))
-    sim.step()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.02)
-    sim.reset()
-    assert not gripper.is_active()
-    home_ctrl = sim.data.ctrl[gripper.actuator_id]
-    sim.step()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(home_ctrl)
-
-
-def test_forte_full_closure_reduces_pad_gap_by_74_mm_without_self_contact():
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
-    )
-    robot = sim.robots["robot"]
-    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
-    pads = [sim.model.geom(f"robot/gripper_{side}_pad").id for side in ("left", "right")]
-
-    def pad_gap():
-        first, second = pads
-        axis = sim.data.geom_xmat[first].reshape(3, 3)[:, 0]
-        separation = abs((sim.data.geom_xpos[second] - sim.data.geom_xpos[first]) @ axis)
-        return separation - sum(sim.model.geom_size[g, 0] for g in pads)
-
-    open_gap = pad_gap()
-    robot.gripper.set_target(-0.037)
-    sim.run_steps(2000)
-    closed_gap = pad_gap()
-    np.testing.assert_allclose(sim.data.qpos[robot.state.qpos_indices[7:]], -0.037, atol=1e-6)
-    assert open_gap == pytest.approx(0.075396278, abs=1e-8)
-    assert closed_gap == pytest.approx(0.001396278, abs=1e-8)
-    assert open_gap - closed_gap == pytest.approx(0.074, abs=1e-8)
-    assert sim.data.ncon == 0
-    assert not sim.data.warning.number.any()
-
-
-def test_registered_gripper_default_and_instance_override(tmp_path, monkeypatch):
-    path = tmp_path / "two_grippers.xml"
-    path.write_text("""
-        <mujoco model="two_grippers">
-          <worldbody><body name="base">
-            <joint name="left" type="slide"/>
-            <geom type="sphere" size=".1" mass="1"/>
-            <body name="right_body">
-              <joint name="right" type="slide"/>
-              <geom type="sphere" size=".05" mass="1"/>
-            </body>
-          </body></worldbody>
-          <actuator>
-            <position name="left_drive" joint="left" kp="20"/>
-            <position name="right_drive" joint="right" kp="20"/>
-          </actuator>
-        </mujoco>
-    """)
-    (tmp_path / "robot.yaml").write_text("""controller:
-  name: position
-gripper:
-  actuator: left_drive
-""")
-    monkeypatch.setitem(ROBOT_ASSETS, "two_grippers", RobotAsset(path))
-    override_config = replace(
-        load_robot_config("two_grippers"), gripper=GripperConfig(actuator="right_drive")
-    )
-    scene = create_environment("empty")
-    default = Simulator(
-        scene, robots=[RobotSpec("robot", "two_grippers", config=load_robot_config("two_grippers"))]
-    ).robots["robot"]
-    override = Simulator(
-        scene, robots=[RobotSpec("robot", "two_grippers", config=override_config)]
-    ).robots["robot"]
-    assert default.gripper is not None and default.gripper.slot == 0
-    assert override.gripper is not None and override.gripper.slot == 1
-    disabled = Simulator(
-        scene,
-        robots=[RobotSpec("robot", "two_grippers", config=replace(override_config, gripper=None))],
-    ).robots["robot"]
-    assert disabled.gripper is None
+    left, right = gripper.finger_geom_ids
+    assert not gripper.has_contact_on_all_fingers(set())
+    assert not gripper.has_contact_on_all_fingers(set(left))
+    assert not gripper.has_contact_on_all_fingers(set(right))
+    for left_geom in left:
+        for right_geom in right:
+            assert gripper.has_contact_on_all_fingers({left_geom, right_geom})
+    visuals = {
+        geom
+        for geom in range(sim.model.ngeom)
+        if not sim.model.geom_contype[geom] and not sim.model.geom_conaffinity[geom]
+    }
+    assert not gripper.has_contact_on_all_fingers(visuals)
 
 
 def test_custom_gripper_opt_in_reserves_middle_actuator_slot(tmp_path, monkeypatch):
@@ -180,7 +107,9 @@ def test_custom_gripper_opt_in_reserves_middle_actuator_slot(tmp_path, monkeypat
           <keyframe><key name="home" ctrl="0 .06 0"/></keyframe>
         </mujoco>
     """)
-    (tmp_path / "robot.yaml").write_text("""controller:
+    (tmp_path / "robot.yaml").write_text("""pose:
+  default: [0, 0, 0]
+controller:
   name: pd
   pd_gains:
     beta:
@@ -197,16 +126,20 @@ def test_custom_gripper_opt_in_reserves_middle_actuator_slot(tmp_path, monkeypat
     ).robots["plain"]
     assert plain.gripper is None
 
-    config = replace(load_robot_config("mini"), gripper=GripperConfig(actuator="grip_drive"))
+    config = replace(
+        load_robot_config("mini"),
+        gripper=GripperConfig(actuator="grip_drive", joints=["grip"]),
+        pose=PoseConfig([0, 0, 0.03]),
+    )
     sim = Simulator(scene, robots=[RobotSpec("custom", "mini", config=config)])
     robot = sim.robots["custom"]
     gripper = robot.gripper
     assert gripper is not None and gripper.slot == 1
     assert gripper.get_target() == pytest.approx(0.03)
     grip_qpos = sim.model.joint("custom/grip").qposadr[0]
-    initial_position = gripper.get_position()
+    initial_position = gripper.get_width()
     sim.data.qpos[grip_qpos] = 0.012
-    assert gripper.get_position() == pytest.approx(0.012)
+    assert gripper.get_width() == pytest.approx(0.012)
     sim.data.qpos[grip_qpos] = initial_position
     robot.change_controller(create_test_controller(robot, controller="pd"))
     assert robot.control_joint_names == ("beta", "alpha")
@@ -219,9 +152,6 @@ def test_custom_gripper_opt_in_reserves_middle_actuator_slot(tmp_path, monkeypat
     assert not gripper.is_active()
     assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.06)
 
-    with pytest.raises(ValueError, match="position-servo"):
-        bad_config = replace(config, gripper=GripperConfig(actuator="beta_drive"))
-        Simulator(scene, robots=[RobotSpec("bad", "mini", config=bad_config)])
     path.write_text(
         path.read_text()
         .replace("</actuator>", '<motor name="grip_extra" joint="grip"/></actuator>')

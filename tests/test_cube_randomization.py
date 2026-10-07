@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
+from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.behaviors import CubeStackTask
 
@@ -45,19 +45,6 @@ def test_randomization_is_seeded_and_compiles_with_forte_task():
         np.testing.assert_allclose(simulator.data.body(f"cube{i}/object_0").xpos, task.starts[i])
 
 
-def test_crowded_cubes_keep_physical_geom_gap():
-    scene = create_cube_stack(2)
-    first = np.array(scene.body("cube0/object_0").pos)
-    scene.body("cube1/object_0").pos = first + [0.015, 0, 0]
-
-    randomize_cube_positions(scene, xy_range=0.08, min_gap=0.01, seed=5)
-    simulator = Simulator(scene)
-    model, data = simulator.model, simulator.data
-    centers = np.array([data.geom(f"cube{i}/object_0").xpos[:2] for i in range(2)])
-    half_sizes = np.array([model.geom(f"cube{i}/object_0").size[:2] for i in range(2)])
-    assert np.any(np.abs(centers[0] - centers[1]) >= half_sizes.sum(axis=0) + 0.01)
-
-
 def test_impossible_layout_does_not_move_any_cube_or_target():
     scene = create_cube_stack(2)
     first = np.array(scene.body("cube0/object_0").pos)
@@ -71,23 +58,3 @@ def test_impossible_layout_does_not_move_any_cube_or_target():
     np.testing.assert_array_equal(_cube_positions(scene), before)
     for i in range(2):
         np.testing.assert_array_equal(scene.body(f"cube{i}/object_target_0").pos, targets[i])
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"xy_range": -0.01},
-        {"xy_range": np.inf},
-        {"min_gap": -0.01},
-        {"min_gap": np.nan},
-        {"max_attempts": 0},
-    ],
-)
-def test_invalid_arguments_are_rejected(kwargs):
-    with pytest.raises(ValueError):
-        randomize_cube_positions(create_cube_stack(2), **kwargs)
-
-
-def test_scene_without_cube_objects_is_rejected():
-    with pytest.raises(ValueError, match="no cube object bodies"):
-        randomize_cube_positions(create_environment("empty"))

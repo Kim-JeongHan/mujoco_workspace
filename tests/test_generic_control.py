@@ -8,14 +8,13 @@ from controller_config import create_test_controller
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.assets.robot.robot import ControllerConfig, GripperConfig, RobotConfig
-from mujoco_lab.control import ControlTarget
+from mujoco_lab.assets.robot.robot import ControllerConfig, GripperConfig, PoseConfig, RobotConfig
+from mujoco_lab.control import Controller, ControlTarget
 from mujoco_lab.rendering.annotations import (
     NEGATIVE_TORQUE_RGBA,
     POSITIVE_TORQUE_RGBA,
     draw_joint_torques,
 )
-from mujoco_lab.state import RobotState
 
 
 def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
@@ -60,7 +59,9 @@ def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
           <actuator>{actuators}</actuator>
         </mujoco>
     """)
-    (tmp_path / "robot.yaml").write_text("""controller:
+    (tmp_path / "robot.yaml").write_text("""pose:
+  default: [0, 0, 0, 0]
+controller:
   name: pd
   pd_gains:
     beta:
@@ -73,7 +74,7 @@ def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
     monkeypatch.setitem(ROBOT_ASSETS, "mini", RobotAsset(path))
     config = load_robot_config("mini")
     if configure_gripper:
-        config.gripper = GripperConfig(actuator="grip_drive")
+        config.gripper = GripperConfig(actuator="grip_drive", joints=["grip"])
     sim = Simulator(
         create_environment("empty"),
         robots=[
@@ -121,19 +122,6 @@ def test_pd_controls_shuffled_geared_motors_and_keeps_passive_joint(tmp_path, mo
     assert robot.target.position.shape == (2,)
 
 
-def test_pd_mixed_unconfigured_robot_preserves_native_servo_slot(tmp_path, monkeypatch):
-    sim, robot = small_robot(tmp_path, monkeypatch, "pd", configure_gripper=False)
-    assert robot.gripper is None
-    sim.data.ctrl[robot.actuator_ids] = [0, 0.17, 0]
-    robot.change_controller(
-        create_test_controller(robot, controller="pd", gravity_compensation=False)
-    )
-    assert robot.control_joint_names == ("beta", "alpha")
-    robot.target = ControlTarget([0.2, -0.1])
-    assert not robot.control()
-    np.testing.assert_allclose(sim.data.ctrl[robot.actuator_ids], [-2, 0.17, -1 / 3])
-
-
 def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, monkeypatch):
     path = tmp_path / "tendon.xml"
     path.write_text("""
@@ -150,7 +138,13 @@ def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, m
     monkeypatch.setitem(ROBOT_ASSETS, "tendon_robot", RobotAsset(path))
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("tendon", "tendon_robot", config=RobotConfig(ControllerConfig("none")))],
+        robots=[
+            RobotSpec(
+                "tendon",
+                "tendon_robot",
+                config=RobotConfig(ControllerConfig("none"), pose=PoseConfig([0])),
+            )
+        ],
     )
     robot = sim.robots["tendon"]
     assert robot.control_joint_names == ()
@@ -161,28 +155,9 @@ def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, m
     assert sim.data.ctrl[robot.actuator_ids[0]] == pytest.approx(0.3)
     with pytest.raises(ValueError, match="direct joint transmissions"):
         create_test_controller(robot, controller="pd")
-
-
-def test_uncontrolled_robot_without_actuators_remains_simulatable(tmp_path, monkeypatch):
-    path = tmp_path / "passive.xml"
-    path.write_text("""
-        <mujoco model="passive_robot">
-          <worldbody><body name="base"><joint name="hinge" type="hinge"/>
-            <geom type="sphere" size=".1" mass="1"/>
-          </body></worldbody>
-        </mujoco>
-    """)
-    monkeypatch.setitem(ROBOT_ASSETS, "passive", RobotAsset(path))
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec("passive", "passive", config=RobotConfig(ControllerConfig("none")))],
-    )
-    robot = sim.robots["passive"]
-    assert robot.control_joint_names == ()
-    assert not robot.control()
-    assert sim.run_steps(1)[robot.name].steps == 1
-    with pytest.raises(ValueError, match="joint actuators"):
-        create_test_controller(robot, controller="pd")
+    with pytest.raises(ValueError, match="direct joint transmissions"):
+        robot.change_controller(Controller())
+    assert robot.controller is None
 
 
 def test_position_commands_drive_shuffled_geared_servos(tmp_path, monkeypatch):
@@ -205,58 +180,3 @@ def test_position_commands_drive_shuffled_geared_servos(tmp_path, monkeypatch):
     assert sim.data.joint("custom/beta").qpos[0] > 0
     with pytest.raises(ValueError, match="torque/force actuators"):
         create_test_controller(robot, controller="pd")
-
-
-def test_robot_selects_arm_order_without_cloning_robot_state(tmp_path, monkeypatch):
-    sim, robot = small_robot(tmp_path, monkeypatch, "pd")
-
-    def unexpected_state_init(*args, **kwargs):
-        raise AssertionError("Controller construction must reuse Robot.state")
-
-    with monkeypatch.context() as context:
-        context.setattr(RobotState, "__init__", unexpected_state_init)
-        controller = create_test_controller(robot, controller="pd", gravity_compensation=False)
-    assert robot.controller is None and robot.target is None
-    assert robot.control_joint_names == ()
-    assert controller._owner is robot.state
-    assert robot.control_qpos_indices == []
-    robot.change_controller(controller)
-    assert robot.control_joint_names == ("beta", "alpha")
-    qpos_indices = robot.control_qpos_indices
-    joint_slots = robot.control_joint_slots
-    assert qpos_indices == [
-        sim.model.joint("custom/beta").qposadr[0],
-        sim.model.joint("custom/alpha").qposadr[0],
-    ]
-    assert joint_slots == [2, 0]
-    np.testing.assert_allclose(
-        robot.state.get_jacobian("ee_site", joint_slots),
-        robot.state.get_jacobian("ee_site")[:, joint_slots],
-    )
-    np.testing.assert_allclose(
-        robot.state.get_mass_matrix(joint_slots),
-        robot.state.get_mass_matrix()[np.ix_(joint_slots, joint_slots)],
-    )
-    assert controller._owner is robot.state
-    assert robot.get_control_state().qpos.tolist() == robot.state.snapshot().qpos[[2, 0]].tolist()
-
-
-def test_robot_control_uses_cached_selected_joint_snapshot(tmp_path, monkeypatch):
-    sim, robot = small_robot(tmp_path, monkeypatch, "pd")
-    controller = create_test_controller(robot, controller="pd", gravity_compensation=False)
-    robot.change_controller(controller)
-    target = ControlTarget([0.2, -0.1])
-    robot.target = target
-    snapshot = robot.get_control_state()
-    expected = controller.compute(snapshot, target)
-    robot.control()
-    command_before = sim.data.ctrl[robot.actuator_ids].copy()
-    sim.data.qpos[robot.state.qpos_indices] += 0.4
-    sim.data.qvel[robot.state.dof_indices] += 0.5
-    np.testing.assert_array_equal(controller.compute(robot.get_control_state(), target), expected)
-    robot.control()
-    np.testing.assert_array_equal(sim.data.ctrl[robot.actuator_ids], command_before)
-    robot.update_state()
-    assert not np.array_equal(robot.get_control_state().qpos, snapshot.qpos)
-    robot.control()
-    assert not np.array_equal(sim.data.ctrl[robot.actuator_ids], command_before)

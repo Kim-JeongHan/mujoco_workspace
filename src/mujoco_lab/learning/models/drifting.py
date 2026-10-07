@@ -193,8 +193,10 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
+    from mujoco_lab.learning.infrastructure.utils import build_mlp
+
     parser = argparse.ArgumentParser(description="Train and visualize a small 2D drifting model.")
-    parser.add_argument("--steps", type=int, default=10000)
+    parser.add_argument("--steps", type=int, default=20000)
     parser.add_argument("--output", type=Path, default=Path("outputs/drifting_demo.png"))
     parser.add_argument("--show", action="store_true", help="Also open the plot window.")
     args = parser.parse_args()
@@ -209,19 +211,19 @@ if __name__ == "__main__":
         """Draw from four equally likely Gaussian clusters."""
         return centers[torch.randint(4, (count,))] + 0.25 * torch.randn(count, 2)
 
-    class ToyGenerator(nn.Module):
+    class Generator(nn.Module):
         """Learn a displacement from noise, keeping initial samples spread out."""
 
         def __init__(self) -> None:
             super().__init__()
-            self.net = nn.Sequential(
-                nn.Linear(2, 64), nn.SiLU(), nn.Linear(64, 64), nn.SiLU(), nn.Linear(64, 2)
+            self.net = build_mlp(
+                input_dim=2, output_dim=2, hidden_layers=[128, 128, 128], activation_fn=nn.SiLU
             )
 
         def forward(self, noise: Tensor) -> Tensor:
             return noise + self.net(noise)
 
-    generator = ToyGenerator()
+    generator = Generator()
     optimizer = torch.optim.Adam(generator.parameters(), lr=1e-3)
     loss_module = DriftingLoss()
     # Fixed evaluation noise shows how the same latent samples move during training.

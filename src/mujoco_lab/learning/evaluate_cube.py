@@ -11,6 +11,7 @@ from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.control import create_controller
 from mujoco_lab.learning.config.config import EvalConfig
+from mujoco_lab.learning.datasets.replay import require_width_actions
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 
 
@@ -24,6 +25,7 @@ def create_cube_evaluation_env(
 ) -> tuple[CubeStackEnv, dict[str, Any]]:
     """Build the cube-stack environment from recorded scene metadata."""
     replay = metadata["dataset_metadata"]["replay"]
+    require_width_actions(replay)
     action_repeat = (
         metadata["architecture"]["physics_steps_per_action"]
         if "architecture" in metadata
@@ -59,6 +61,7 @@ def create_cube_evaluation_env(
         physics_steps_per_action=action_repeat,
     )
     scene = {
+        "gripper_action_units": replay["gripper_action_units"],
         "robot": robot_type,
         "robot_name": robot_name,
         "cubes": cubes,

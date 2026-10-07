@@ -34,6 +34,8 @@ def collect_episode(
     remains ``None`` even if the environment terminates.
     An optional recorder returns copied ``qpos``, scalar ``frame_times``,
     ``mocap_pos``, and ``mocap_quat`` arrays after reset and every action.
+    Timed environments supply action_dt so expert targets refer to the next
+    action endpoint; untimed environments request the current target.
     """
     if max_steps <= 0:
         raise ValueError("max_steps must be positive")
@@ -42,6 +44,7 @@ def collect_episode(
     states = [obs.copy()]
     frames = [] if record_frame is None else [record_frame()]
     expert.reset(obs, dict(reset_info))
+    action_dt = getattr(env, "action_dt", 0.0)
     actions: list[np.ndarray] = []
     rewards: list[float] = []
     terminated_flags: list[bool] = []
@@ -50,10 +53,10 @@ def collect_episode(
     collector_timeout = False
 
     for step_index in range(max_steps):
-        action = expert.act(obs).astype(np.float32, copy=True)
-        if not np.isfinite(action).all():
+        next_act = expert.act(obs, dt=action_dt).astype(np.float32, copy=True)
+        if not np.isfinite(next_act).all():
             raise ValueError("Expert action must be finite")
-        next_obs, reward, terminated, truncated, info = env.step(action.copy())
+        next_obs, reward, terminated, truncated, info = env.step(next_act.copy())
         reward = float(reward)
         if not np.isfinite(reward):
             raise ValueError("Environment reward must be finite")
@@ -65,7 +68,7 @@ def collect_episode(
         states.append(next_obs.copy())
         if record_frame is not None:
             frames.append(record_frame())
-        actions.append(action)
+        actions.append(next_act)
         rewards.append(reward)
         terminated_flags.append(bool(terminated))
         truncated_flags.append(
@@ -120,6 +123,22 @@ def collect_episode(
 
 
 _EPISODE_NAME = re.compile(r"episode_(\d{6,})\.npz")
+_RESUME_SETTINGS = (
+    "scene",
+    "environment",
+    "robot",
+    "robot_name",
+    "gripper_action_units",
+    "dt",
+    "physics_steps_per_action",
+    "cubes",
+    "book",
+    "cube_yaw_range_degrees",
+    "book_yaw_range_degrees",
+    "xy_range",
+    "min_gap",
+    "model_sha256",
+)
 
 
 def _resume_index(
@@ -154,7 +173,7 @@ def _resume_index(
             recorded = metadata.get("replay")
             if not isinstance(recorded, dict):
                 raise ValueError(f"Episode {path} has different replay metadata")
-            if recorded != replay_metadata:
+            if any(recorded.get(key) != replay_metadata.get(key) for key in _RESUME_SETTINGS):
                 raise ValueError(f"Episode {path} has different replay metadata")
     return len(paths)
 
@@ -175,7 +194,8 @@ def iter_episodes(
     """Yield each attempt after saving it, without retaining earlier episodes.
 
     With ``resume=True``, ``count`` is the total target, and existing episodes
-    must form a valid prefix with the same seeds and replay metadata.
+    must form a valid prefix with the same seeds and core scene settings.
+    The compiled-model fingerprint must match; auxiliary metadata may differ.
     """
     if count <= 0:
         raise ValueError("count must be positive")
@@ -209,33 +229,3 @@ def iter_episodes(
             save_episode(directory / f"episode_{index:06d}.npz", episode)
         yield episode
         del episode
-
-
-def collect_episodes(
-    env: gym.Env,
-    expert: Expert,
-    count: int,
-    *,
-    seed: int | None = None,
-    max_steps: int = 30_000,
-    options: dict[str, Any] | None = None,
-    output_dir: str | Path | None = None,
-    resume: bool = False,
-    record_frame: Callable[[], dict[str, np.ndarray]] | None = None,
-    replay_metadata: dict[str, Any] | None = None,
-) -> list[Episode]:
-    """Collect attempts into a list for callers that need all episodes in memory."""
-    return list(
-        iter_episodes(
-            env,
-            expert,
-            count,
-            seed=seed,
-            max_steps=max_steps,
-            options=options,
-            output_dir=output_dir,
-            resume=resume,
-            record_frame=record_frame,
-            replay_metadata=replay_metadata,
-        )
-    )

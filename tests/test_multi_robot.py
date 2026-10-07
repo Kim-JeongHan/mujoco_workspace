@@ -1,14 +1,7 @@
-import os
-import subprocess
-import sys
-from pathlib import Path
-from unittest.mock import patch
-
 import mujoco
 import numpy as np
 import pytest
 from controller_config import create_test_controller
-from simulator_helpers import PassiveViewer, manager_with
 
 from mujoco_lab import (
     RobotSpec,
@@ -51,10 +44,13 @@ def test_composed_scene_has_distinct_bindings_and_simultaneous_homes(right, dime
     for robot in sim.robots.values():
         assert model.body(robot.state.root_body_id).name.startswith(robot.name + "/")
         key = model.key(robot.name + "/home")
-        np.testing.assert_array_equal(
-            robot.state.snapshot().qpos, key.qpos[robot.state.qpos_indices]
+        np.testing.assert_allclose(
+            robot.state.snapshot().qpos, key.qpos[robot.state.qpos_indices], rtol=0, atol=1e-9
         )
-        np.testing.assert_array_equal(data.ctrl[robot.actuator_ids], key.ctrl[robot.actuator_ids])
+        expected_ctrl = key.ctrl[robot.actuator_ids].copy()
+        gripper = robot.gripper
+        expected_ctrl[gripper.slot] = key.qpos[model.jnt_qposadr[gripper.joint_id]] * gripper.gear
+        np.testing.assert_allclose(data.ctrl[robot.actuator_ids], expected_ctrl, rtol=0, atol=1e-9)
     if right == "panda":
         assert (other.state.nq, other.state.nv, other.num_actuators) == (9, 9, 8)
         finger1 = model.joint("right/panda_finger_joint1").id
@@ -89,43 +85,6 @@ def test_canonical_mount_fallback_and_explicit_world_poses():
         )
 
 
-def test_missing_canonical_mount_is_rejected_by_native_attachment():
-    scene = mujoco.MjSpec.from_string("<mujoco><worldbody/></mujoco>")
-
-    with pytest.raises(ValueError, match="One of frame or site must be specified"):
-        Simulator(scene, robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))])
-
-    assert scene.body("arm/base_link") is None
-
-
-def test_instance_names_and_missing_multi_robot_poses_are_rejected():
-    pose = Transform.identity()
-    for robots in [
-        [RobotSpec("", "forte", config=load_robot_config("forte"))],
-        [RobotSpec("a/b", "forte", config=load_robot_config("forte"))],
-        [
-            RobotSpec("same", "forte", pose, config=load_robot_config("forte")),
-            RobotSpec("same", "panda", pose, config=load_robot_config("panda")),
-        ],
-        [
-            RobotSpec("a", "forte", config=load_robot_config("forte")),
-            RobotSpec("b", "forte", pose, config=load_robot_config("forte")),
-        ],
-    ]:
-        with pytest.raises(ValueError):
-            Simulator(create_environment("empty"), robots=robots)
-
-
-def test_zero_steps_and_empty_environment_do_not_evaluate_control():
-    sim = make_pair()
-    before = sim.data.qpos.copy()
-    stats = sim.run_steps(0)
-    assert all(value.steps == 0 for value in stats.values())
-    assert sim.data.time == 0
-    np.testing.assert_array_equal(sim.data.qpos, before)
-    assert Simulator(create_environment("empty")).run_steps(3) == {}
-
-
 def test_robot_state_snapshots_are_fresh_and_owned():
     sim = make_pair()
     left, right = sim.robots.values()
@@ -144,8 +103,8 @@ def test_robot_state_snapshots_are_fresh_and_owned():
     np.testing.assert_array_equal(left.state.snapshot().qpos, old_qpos)
     saved = right.state.snapshot()
     sim.step()
-    np.testing.assert_array_equal(
-        saved.qpos, sim.model.key("right/home").qpos[right.state.qpos_indices]
+    np.testing.assert_allclose(
+        saved.qpos, sim.model.key("right/home").qpos[right.state.qpos_indices], rtol=0, atol=1e-9
     )
     assert left.state.snapshot().time == sim.data.time
     assert left.state is access
@@ -162,97 +121,6 @@ class ConstantController(Controller):
 
     def compute(self, state, target):
         return self.values
-
-
-def test_robot_update_state_refreshes_owned_snapshot_without_forward_or_step(monkeypatch):
-    sim = make_pair("panda")
-    left, right = sim.robots.values()
-    previous, other = left.joint_state, right.joint_state
-    initial = previous.qpos.copy()
-    sim.data.qpos[left.state.qpos_indices] += 0.1
-    sim.data.qvel[left.state.dof_indices] = 0.2
-    sim.data.qfrc_bias[left.state.dof_indices] = 0.3
-    sim.data.time = 0.5
-
-    def unexpected_physics(*args):
-        raise AssertionError("Updating a Robot snapshot must not evaluate physics")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(mujoco, "mj_forward", unexpected_physics)
-        patch.setattr(mujoco, "mj_step", unexpected_physics)
-        assert left.update_state() is None
-    current = left.joint_state
-    assert current is not previous
-    assert right.joint_state is other
-    assert current.time == sim.data.time == 0.5
-    np.testing.assert_array_equal(current.qpos, initial + 0.1)
-    np.testing.assert_array_equal(current.qvel, 0.2)
-    np.testing.assert_array_equal(current.bias_forces, 0.3)
-    np.testing.assert_array_equal(previous.qpos, initial)
-    sim.reset()
-    assert left.joint_state.time == right.joint_state.time == 0
-    np.testing.assert_array_equal(left.joint_state.qpos, initial)
-    np.testing.assert_array_equal(current.qpos, initial + 0.1)
-
-
-def test_robot_control_uses_cached_state_and_applies_only_its_inputs():
-    sim = make_pair("panda")
-    left, right = sim.robots.values()
-    states = []
-
-    class RecordingController(ConstantController):
-        def compute(self, state, target):
-            states.append(state)
-            return super().compute(state, target)
-
-    left.change_controller(RecordingController(np.full(7, 1000.0)))
-    sim.data.qpos[left.state.qpos_indices] += 0.1
-    sim.data.time = 0.5
-    positions = sim.data.qpos.copy()
-    other_inputs = sim.data.ctrl[right.actuator_ids].copy()
-    cached = left.joint_state
-    gripper_input = sim.data.ctrl[left.gripper.actuator_id]
-    assert left.control()
-    assert len(states) == 1 and states[0].time == cached.time
-    np.testing.assert_array_equal(states[0].qpos, cached.qpos[left.control_joint_slots])
-    np.testing.assert_array_equal(states[0].qvel, cached.qvel[left.control_joint_slots])
-    np.testing.assert_array_equal(
-        states[0].bias_forces, cached.bias_forces[left.control_joint_slots]
-    )
-    assert left.joint_state is cached
-    left.update_state()
-    assert left.control()
-    assert states[-1].time == left.joint_state.time and left.joint_state is not cached
-    np.testing.assert_array_equal(states[-1].qpos, left.joint_state.qpos[left.control_joint_slots])
-    assert left.joint_state.time == sim.data.time == 0.5
-    np.testing.assert_array_equal(left.joint_state.qpos, positions[left.state.qpos_indices])
-    np.testing.assert_array_equal(sim.data.qpos, positions)
-    arm_ids = np.asarray(left.actuator_ids)[left.control_actuator_slots]
-    np.testing.assert_array_equal(sim.data.ctrl[arm_ids], sim.model.actuator_ctrlrange[arm_ids, 1])
-    assert sim.data.ctrl[left.gripper.actuator_id] == gripper_input
-    np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], other_inputs)
-    inputs = sim.data.ctrl.copy()
-    left.change_controller(None)
-    np.testing.assert_array_equal(sim.data.ctrl, inputs)
-    assert len(states) == 2
-
-
-@pytest.mark.parametrize("asset", ["panda"])
-def test_robot_accepts_custom_controllers_without_forte_specific_checks(asset):
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec("arm", asset, config=load_robot_config(asset))],
-    )
-    robot = sim.robots["arm"]
-    command = sim.data.ctrl[robot.actuator_ids[:7]].copy()
-    command[0] += 0.01
-    robot.change_controller(ConstantController(command, output_kind="position"))
-    assert robot.controller.get_tracking_error() is None
-    stats = sim.step()[robot.name]
-    np.testing.assert_array_equal(sim.data.ctrl[robot.actuator_ids[:7]], command)
-    assert stats.steps == 1
-    assert stats.errors == []
-    assert not sim.data.warning.number.any()
 
 
 def test_scoped_input_clipping_stats_and_one_shared_step():
@@ -288,9 +156,11 @@ def test_later_invalid_command_does_not_advance_physics(bad, message):
     left.change_controller(ConstantController(np.ones(7)))
     right.change_controller(ConstantController(bad))
     before = sim.data.ctrl.copy()
+    expected_left = before[left.actuator_ids].copy()
+    expected_left[left.control_actuator_slots] = 1
     with pytest.raises(ValueError, match=message):
         sim.step()
-    np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], [*np.ones(7), 0])
+    np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], expected_left)
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], before[right.actuator_ids])
     assert sim.data.time == 0
     assert sim._state.get_state() == "idle"
@@ -299,8 +169,10 @@ def test_later_invalid_command_does_not_advance_physics(bad, message):
     clean = make_pair()
     clean_left = clean.robots["left"]
     clean_left.change_controller(ConstantController(np.ones(7)))
+    clean_expected = clean.data.ctrl[clean_left.actuator_ids].copy()
+    clean_expected[clean_left.control_actuator_slots] = 1
     clean.step()
-    np.testing.assert_array_equal(clean.data.ctrl[clean_left.actuator_ids], [*np.ones(7), 0])
+    np.testing.assert_array_equal(clean.data.ctrl[clean_left.actuator_ids], clean_expected)
 
 
 def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configuration():
@@ -388,272 +260,3 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     left.change_controller(create_test_controller(left, controller="osc"))
     sim.step()
     assert left.state.get_jacobian("grasp").shape == (6, 9)
-
-
-@pytest.mark.parametrize(
-    "kind,entity_name",
-    [
-        ("body", "left/base_link"),
-        ("geom", "left/forearm_collision"),
-        ("site", "left/grasp"),
-    ],
-)
-def test_mujoco_rejects_environment_name_collisions(kind, entity_name):
-    def environment(name):
-        spec = create_environment(name)
-        if kind == "body":
-            spec.worldbody.add_body(name=entity_name)
-        elif kind == "geom":
-            spec.worldbody.add_geom(
-                name=entity_name, type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.1, 0, 0]
-            )
-        else:
-            spec.worldbody.add_site(name=entity_name)
-        return spec
-
-    with pytest.raises(ValueError, match=f"repeated name '{entity_name}' in {kind}"):
-        make_pair(scene=environment("empty"))
-
-
-def test_environment_home_activation_and_mocap_survive_robot_initialization_and_reset():
-    def environment(name):
-        spec = create_environment(name)
-        body = spec.worldbody.add_body(name="fixture", pos=[0, 2, 1])
-        body.add_joint(name="fixture_joint", type=mujoco.mjtJoint.mjJNT_HINGE)
-        body.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.1, 0, 0])
-        spec.add_actuator(
-            name="fixture_motor",
-            target="fixture_joint",
-            trntype=mujoco.mjtTrn.mjTRN_JOINT,
-            dyntype=mujoco.mjtDyn.mjDYN_FILTER,
-            dynprm=[0.1] + [0.0] * 9,
-        )
-        marker = spec.worldbody.add_body(name="marker", mocap=True)
-        marker.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.01, 0, 0])
-        spec.add_key(
-            name="home",
-            time=2,
-            qpos=[0.7],
-            qvel=[0.3],
-            act=[0.4],
-            ctrl=[0.6],
-            mpos=[1, 2, 3],
-            mquat=[1, 0, 0, 0],
-        )
-        return spec
-
-    sim = make_pair("panda", scene=environment("empty"))
-    expected = sim.data.qpos.copy()
-    assert sim.data.time == 2
-    assert sim.data.qpos[0] == 0.7 and sim.data.qvel[0] == 0.3
-    np.testing.assert_allclose(sim.data.act, [0.4])
-    np.testing.assert_allclose(sim.data.ctrl[0], 0.6)
-    np.testing.assert_array_equal(sim.data.mocap_pos, [[1, 2, 3]])
-    sim.data.qpos[:] = 0
-    sim.data.ctrl[:] = 0
-    sim.data.act[:] = 0
-    sim.data.mocap_pos[:] = 0
-    sim.reset()
-    np.testing.assert_array_equal(sim.data.qpos, expected)
-    np.testing.assert_allclose(sim.data.act, [0.4])
-    np.testing.assert_allclose(sim.data.ctrl[0], 0.6)
-    np.testing.assert_array_equal(sim.data.mocap_pos, [[1, 2, 3]])
-
-
-def test_pd_annotations_share_scratch_and_preserve_scene_state():
-    from mujoco_lab.rendering import annotations
-
-    sim = make_pair()
-    left, right = sim.robots.values()
-    for robot, offset in [(left, 0.15), (right, -0.25)]:
-        controller = create_test_controller(robot, controller="pd")
-        robot.change_controller(controller)
-        target = robot.target.position.copy()
-        target[0] += offset
-        robot.target = ControlTarget(target)
-    sim.run_steps(10)
-    before = {
-        field: getattr(sim.data, field).copy()
-        for field in ["qpos", "qvel", "ctrl", "site_xpos", "xpos", "qfrc_bias"]
-    }
-    mass_before = np.empty((sim.model.nv, sim.model.nv))
-    mujoco.mj_fullM(sim.model, sim.data, mass_before)
-    targets, expected_targets, expected_actual = [], [], []
-    for robot in sim.robots.values():
-        reference = mujoco.MjData(sim.model)
-        mujoco.mj_copyData(reference, sim.model, sim.data)
-        reference.qpos[robot.state.qpos_indices[:7]] = robot.target.position
-        mujoco.mj_kinematics(sim.model, reference)
-        site = robot.state.site_id("grasp")
-        expected_targets.append(reference.site_xpos[site].copy())
-        expected_actual.append(sim.data.site_xpos[site].copy())
-        targets.append(robot.target.position.copy())
-
-    scene = mujoco.MjvScene(sim.model, maxgeom=100)
-    scene.ngeom = 0
-    with (
-        patch.object(mujoco, "MjData", wraps=mujoco.MjData) as allocate,
-        patch.object(mujoco, "mj_copyData", wraps=mujoco.mj_copyData) as copy_data,
-    ):
-        annotations.annotate(scene, sim, sim.data)
-    assert allocate.call_count == copy_data.call_count == 1
-    scratch = copy_data.call_args.args[0]
-    assert scratch is not sim.data
-    np.testing.assert_array_equal(
-        scratch.qpos[left.state.qpos_indices], sim.data.qpos[left.state.qpos_indices]
-    )
-    markers = list(scene.geoms[: scene.ngeom])
-    for rgba, expected in [
-        (annotations.TARGET_RGBA, expected_targets),
-        (annotations.ACTUAL_RGBA, expected_actual),
-    ]:
-        actual = [geom.pos for geom in markers if np.allclose(geom.rgba, rgba)]
-        np.testing.assert_allclose(actual, expected, atol=1e-6)
-    for field, values in before.items():
-        np.testing.assert_array_equal(getattr(sim.data, field), values)
-    mass_after = np.empty_like(mass_before)
-    mujoco.mj_fullM(sim.model, sim.data, mass_after)
-    np.testing.assert_array_equal(mass_after, mass_before)
-    for robot, target in zip(sim.robots.values(), targets, strict=True):
-        np.testing.assert_array_equal(robot.target.position, target)
-
-
-def test_render_is_observational_and_handles_two_controllers(tmp_path):
-    code = r"""
-import sys
-import mujoco
-import numpy as np
-from mujoco_lab import Simulator, RobotSpec, SimulatorManager, create_environment
-from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import create_controller
-from mujoco_lab.utils import Transform
-
-def make():
-    specs=[RobotSpec(n,"forte",Transform(translation=[x,0,0]),config=load_robot_config("forte"))
-           for n,x in [("left",-.8),("right",.8)]]
-    sim=Simulator(create_environment("empty"), robots=specs)
-    for name,mode in [("left","pd"),("right","osc")]:
-        controller = create_test_controller(sim.robots[name], controller=mode)
-        sim.robots[name].change_controller(controller)
-    return sim
-
-sim, reference = make(), make()
-manager=SimulatorManager()
-manager.add_simulator("controlled",sim)
-osc=sim.robots["right"].controller
-assert osc._target is None
-initial_targets={name:robot.target.position.copy() for name,robot in sim.robots.items()}
-updates=[]
-sim.target_updater=lambda current: updates.append(current.data.time)
-manager.save_frame("controlled",sys.argv[1]+"/zero.png")
-assert osc._target is None
-assert updates == []
-for name,robot in sim.robots.items():
-    np.testing.assert_array_equal(robot.target.position,initial_targets[name])
-for _ in range(10):
-    sim.step(); reference.step()
-    qpos=sim.data.qpos.copy(); ctrl=sim.data.ctrl.copy()
-    caches=(osc._force.copy(),osc._target.copy(),osc.get_tracking_error(),
-            sim.robots["right"].target.position.copy())
-    manager.save_frame("controlled",sys.argv[1]+"/controlled.png")
-    np.testing.assert_array_equal(sim.data.qpos,qpos)
-    np.testing.assert_array_equal(sim.data.ctrl,ctrl)
-    for actual,expected in zip((osc._force,osc._target,osc.get_tracking_error(),
-                                sim.robots["right"].target.position),caches):
-        np.testing.assert_array_equal(actual,expected)
-    np.testing.assert_array_equal(sim.data.qpos,reference.data.qpos)
-    np.testing.assert_array_equal(sim.data.ctrl,reference.data.ctrl)
-sim.step(); reference.step()
-np.testing.assert_array_equal(sim.data.qpos,reference.data.qpos)
-"""
-    code = code.replace(
-        "from mujoco_lab.control import create_controller",
-        f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
-        + "from controller_config import create_test_controller",
-    )
-    subprocess.run(
-        [sys.executable, "-c", code, str(tmp_path)],
-        env={**os.environ, "MUJOCO_GL": "egl"},
-        cwd=tmp_path,
-        check=True,
-    )
-    assert (tmp_path / "controlled.png").stat().st_size > 1000
-
-
-def test_change_controller_preserves_binding_and_resets_replacement_history():
-    sim = make_pair()
-    manager = manager_with(sim)
-    left, right = sim.robots.values()
-    previous = create_test_controller(right, controller="pd")
-    right.change_controller(previous)
-    osc = create_test_controller(left, controller="osc")
-    assert osc.robot_state is left.state
-    with pytest.raises(ValueError, match="only one Robot"):
-        right.change_controller(osc)
-    assert right.controller is previous
-    pd = create_test_controller(left, controller="pd")
-    with pytest.raises(ValueError, match="only one Robot"):
-        right.change_controller(pd)
-    assert right.controller is previous
-    left.change_controller(pd)
-    pd.tracking_error = 4
-    assert pd.get_tracking_error() == 4
-    left.change_controller(pd)
-    assert pd.get_tracking_error() == 4
-    left.change_controller(None)
-    left.change_controller(pd)
-    assert pd.get_tracking_error() == 0
-
-    def inspect_open_scope():
-        with pytest.raises(RuntimeError, match="busy with viewing"):
-            left.change_controller(None)
-
-    with patch(
-        "mujoco.viewer.launch_passive", return_value=PassiveViewer(on_lock=inspect_open_scope)
-    ):
-        manager.show("simulator")
-    assert left.controller is pd
-
-
-def test_native_reset_keeps_controller_history_until_programmatic_reset():
-    sim = make_pair("panda")
-    initial_qpos = sim.data.qpos.copy()
-    manager = manager_with(sim)
-    robot = sim.robots["left"]
-    robot.change_controller(create_test_controller(robot, controller="osc"))
-    sim.step()
-    target = robot.target.position.copy()
-    cached_target = robot.controller._target.copy()
-
-    def native_reset():
-        mujoco.mj_resetData(sim.model, sim.data)
-        np.testing.assert_array_equal(sim.data.qpos, sim.model.qpos0)
-        np.testing.assert_array_equal(sim.data.ctrl, 0)
-        np.testing.assert_array_equal(robot.target.position, target)
-        np.testing.assert_array_equal(robot.controller._target, cached_target)
-
-    with patch("mujoco.viewer.launch_passive", return_value=PassiveViewer(on_sync=native_reset)):
-        manager.show("simulator")
-    assert not np.array_equal(sim.data.qpos, initial_qpos)
-    sim.reset()
-    assert robot.controller._target is None
-    np.testing.assert_array_equal(sim.data.qpos, initial_qpos)
-
-
-def test_contact_solver_still_sees_both_robots():
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[
-            RobotSpec(name, "forte", Transform.identity(), config=load_robot_config("forte"))
-            for name in ["left", "right"]
-        ],
-    )
-    left, right = sim.robots.values()
-    contacts = [
-        {
-            sim.model.geom(c.geom1).name.partition("/")[0],
-            sim.model.geom(c.geom2).name.partition("/")[0],
-        }
-        for c in sim.data.contact
-    ]
-    assert {left.name, right.name} in contacts

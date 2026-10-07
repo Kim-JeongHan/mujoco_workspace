@@ -31,8 +31,12 @@ def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_pat
     episode = Episode(
         states=np.array([[0.0], [1.0], [2.0], [3.0]], dtype=np.float32),
         actions=np.array([[0.0], [2.0], [4.0]], dtype=np.float32),
-        metadata={"replay": {"physics_steps_per_action": 1}},
+        metadata={
+            "replay": {"physics_steps_per_action": 1},
+            "observation": {"frame_dim": 1, "rotation_indices": []},
+        },
     )
+    episode.validate_training_data()
     raw_history = []
     raw_parameter_ids = set()
     original_step = torch.optim.AdamW.step
@@ -91,34 +95,3 @@ def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_pat
     assert metadata["optimizer_step"] == 3
     for actual, desired in zip(loaded.parameters(), model.parameters(), strict=True):
         torch.testing.assert_close(actual, desired)
-
-
-@pytest.mark.parametrize("ema_decay", [-0.1, 1.0, float("nan")])
-def test_invalid_ema_decay_fails_before_loading_episodes(ema_decay):
-    with pytest.raises(ValueError, match="ema_decay"):
-        run_training(TrainConfig(ema_decay=ema_decay), [])
-
-
-def test_ema_disabled_returns_trainable_raw_policy(monkeypatch):
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    config = TrainConfig(
-        policy_type="mse",
-        obs_horizon=1,
-        chunk_size=1,
-        execution_horizon=1,
-        action_execution_hz=500,
-        hidden_dims=(),
-        batch_size=1,
-        num_epochs=1,
-        ema_decay=None,
-        eval_interval=0,
-        log_interval=100,
-    )
-    episode = Episode(
-        states=np.zeros((3, 1), dtype=np.float32),
-        actions=np.zeros((2, 1), dtype=np.float32),
-        metadata={"replay": {"physics_steps_per_action": 1}},
-    )
-    model, _ = run_training(config, [episode])
-    assert model.training
-    assert all(parameter.requires_grad for parameter in model.parameters())

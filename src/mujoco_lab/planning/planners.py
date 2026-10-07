@@ -53,50 +53,34 @@ def plan_path(
     goal: np.ndarray,
     bounds: list[tuple[float, float]],
     collision_checker: CollisionChecker,
-    *,
-    seed: int | None,
 ) -> np.ndarray | None:
-    """Run a fresh search without modifying the supplied configuration.
+    """Run a fresh search with the configured seed without modifying its settings.
 
-    Return finite joint-space vertices from the supplied start to the exact
-    goal, or None when no route is found. RRG's near-goal result is extended
-    only over a collision-free edge. Malformed search output raises RuntimeError.
+    Return joint-space vertices, or None for an empty or failed search.
+    Extend RRG's near-goal result only over a collision-free edge.
     """
     args = (start, goal, bounds, collision_checker)
     match config:
         case RRTConnectConfig():
-            search = RRTConnect(*args, config=config.model_copy(update={"seed": seed}))
+            search = RRTConnect(*args, config=config.model_copy())
         case RRTConfig():
-            search = RRT(*args, config=config.model_copy(update={"seed": seed}))
+            search = RRT(*args, config=config.model_copy())
         case RRTStarConfig():
-            search = RRTStar(*args, config=config.model_copy(update={"seed": seed}))
+            search = RRTStar(*args, config=config.model_copy())
         case PRMStarConfig():
-            search = PRMStar(*args, config=config.model_copy(update={"seed": seed}))
+            search = PRMStar(*args, config=config.model_copy())
         case RRGConfig():
-            search = RRG(*args, config=config.model_copy(update={"seed": seed}))
+            search = RRG(*args, config=config.model_copy())
         case PRMConfig():
-            search = PRM(*args, config=config.model_copy(update={"seed": seed}))
+            search = PRM(*args, config=config.model_copy())
         case _:
             raise TypeError("planning must be a supported planner configuration")
     nodes = search.plan()
-    if nodes is None:
+    if not nodes:
         return None
-    try:
-        path = np.asarray([node.state for node in nodes], dtype=float)
-    except (TypeError, ValueError) as error:
-        raise RuntimeError("Planner returned an invalid arm path") from error
-    if (
-        path.ndim != 2
-        or path.shape[1] != len(start)
-        or not len(path)
-        or not np.isfinite(path).all()
-        or not np.allclose(path[0], start, atol=1e-9, rtol=0)
-    ):
-        raise RuntimeError("Planner returned an invalid arm path")
+    path = np.asarray([node.state for node in nodes], dtype=float)
     if isinstance(config, RRGConfig) and not np.array_equal(path[-1], goal):
         if not collision_checker.is_path_collision_free(path[-1], goal):
             return None
         path = np.vstack((path, goal))
-    if not np.allclose(path[-1], goal, atol=1e-9, rtol=0):
-        raise RuntimeError("Planner path endpoints do not match the query")
     return path

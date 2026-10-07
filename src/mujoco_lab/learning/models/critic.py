@@ -5,6 +5,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from mujoco_lab.learning.infrastructure.utils import build_mlp
+
 
 class ValueCritic(nn.Module):
     """Predict one scalar value per state with a randomly initialized MLP."""
@@ -23,13 +25,9 @@ class ValueCritic(nn.Module):
         if ob_dim <= 0 or n_layers < 0 or layer_size <= 0:
             raise ValueError("ob_dim and layer_size must be positive; n_layers must be nonnegative")
         self.state_dim = ob_dim
-        layers = []
-        input_dim = ob_dim
-        for _ in range(n_layers):
-            layers.extend((nn.Linear(input_dim, layer_size), nn.ReLU()))
-            input_dim = layer_size
-        layers.append(nn.Linear(input_dim, 1))
-        self.network = nn.Sequential(*layers).to(device)
+        self.network = build_mlp(
+            input_dim=ob_dim, output_dim=1, hidden_layers=[layer_size] * n_layers
+        ).to(device)
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:

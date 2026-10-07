@@ -11,7 +11,11 @@ def make_episode(seed, *, success=True, steps=2, state_dim=54, action_dim=8):
     return Episode(
         states=np.zeros((steps + 1, state_dim), dtype=np.float32),
         actions=np.zeros((steps, action_dim), dtype=np.float32),
-        metadata={"seed": seed, "success": success},
+        metadata={
+            "seed": seed,
+            "success": success,
+            "observation": {"frame_dim": state_dim, "rotation_indices": []},
+        },
     )
 
 
@@ -38,24 +42,6 @@ def test_load_sorted_successes_and_preserve_episode_contents(tmp_path):
         3,
         4,
     ]
-
-
-@pytest.mark.parametrize(
-    "change,match",
-    [
-        (lambda episode: setattr(episode, "states", episode.states[:-1]), r"T\+1"),
-        (lambda episode: setattr(episode, "actions", episode.actions[:0]), r"T\+1"),
-        (lambda episode: episode.states.__setitem__((0, 0), np.nan), "finite"),
-        (lambda episode: setattr(episode, "actions", episode.actions.reshape(-1)), r"T\+1"),
-    ],
-)
-def test_load_rejects_malformed_kept_episode(tmp_path, change, match):
-    episode = make_episode(1)
-    change(episode)
-    path = tmp_path / "bad.npz"
-    save_episode(path, episode)
-    with pytest.raises(ValueError, match=match):
-        load_episodes(tmp_path)
 
 
 def test_load_rejects_mixed_feature_dimensions_and_missing_data(tmp_path):

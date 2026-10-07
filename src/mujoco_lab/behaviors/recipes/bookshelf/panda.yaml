@@ -1,12 +1,7 @@
-# yaml-language-server: $schema=./schema.json
-# Preserve the previous Panda defaults; physical insertion is not yet validated.
-# Gripper open/closed targets come from the live robot's MJCF limits.
-arm:
-  velocity_limit: 0.35 # rad/s; task tuning, not a motor rating
-  acceleration_limit: 1.0 # rad/s^2
-gripper:
-  velocity_limit: 0.025 # m/s
-  acceleration_limit: 0.1 # m/s^2
+# [velocity ratio, acceleration ratio] of configured robot limits.
+# Arm ratios keep every joint below the previous absolute task limits.
+arm: [0.134, 0.05]
+gripper: [0.125, 0.1]
 waypoint_tolerance: 0.02
 arm_tolerance: 0.025
 stage_dwell_s: 0.4
@@ -21,13 +16,21 @@ preinsert_clearance_m: 0.03 # Keep the entire book in front of the opening.
 retract_distance_m: 0.18
 stages:
   - name: approach
-    arm:
-      velocity_limit: 0.6
+    gripper_mode: 0
+    arm: [0.2298, 0.05]
   - name: pick
+    gripper_mode: 0
   - name: close
+    gripper_mode: 1
   - name: lift
+    gripper_mode: 1
   - name: preinsert
+    gripper_mode: 1
   - name: insert
+    gripper_mode: 1
   - name: lower
+    gripper_mode: 1
   - name: release
+    gripper_mode: 0
   - name: retract
+    gripper_mode: 0

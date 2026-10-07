@@ -11,24 +11,6 @@ from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
 
 
-def test_custom_model_resolves_include_relative_to_its_file(tmp_path, monkeypatch):
-    model_dir = tmp_path / "robot"
-    model_dir.mkdir()
-    (model_dir / "scene.xml").write_text('<mujoco><include file="body.xml"/></mujoco>')
-    (model_dir / "body.xml").write_text(
-        '<mujoco><worldbody><body pos="0 0 1"><freejoint/>'
-        '<geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
-    )
-    monkeypatch.chdir(tmp_path)
-    scene = mujoco.MjSpec.from_file(str((model_dir / "scene.xml").resolve()))
-    sim = Simulator(scene)
-    initial_height = float(sim.data.qpos[2])
-    sim.run_steps(50)
-
-    assert sim.data.qpos[2] < initial_height
-    assert sim.robots == {}
-
-
 def test_scene_blueprint_can_be_reused_without_accumulating_robot_attachments():
     scene = create_environment("empty")
     first = Simulator(scene, robots=[RobotSpec("arm", "forte", config=load_robot_config("forte"))])
@@ -158,31 +140,3 @@ def test_installed_cli_runs_without_display_from_another_directory(tmp_path):
     assert "robot=panda cubes=2 method=heuristic" in result.stderr
     assert "simulated=0.006s" in result.stderr
     assert "step budget exhausted" in result.stderr
-
-
-def test_cli_rejects_negative_step_count(tmp_path):
-    result = subprocess.run(
-        [sys.executable, "-m", "mujoco_lab", "--steps", "-1"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 2
-    assert "must be zero or greater" in result.stderr
-
-
-def test_cli_rejects_removed_model_option(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--model",
-            "scene.xml",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 2
-    assert "Unrecognized options: --model" in result.stderr

@@ -27,7 +27,7 @@ class Config:
 
     book: BookType = "medium"
     robot: RobotName = "forte"
-    method: Literal["sampling", "heuristic"] = "sampling"
+    method: Literal["sampling", "heuristic"] = "heuristic"
     planning: PlannerConfig = field(default_factory=default_planning)
     headless: bool = False
     steps: int = 60000

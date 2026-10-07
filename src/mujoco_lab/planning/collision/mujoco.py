@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
 
 import mujoco
 import numpy as np
@@ -36,26 +35,23 @@ class MuJoCoCollisionChecker(CollisionChecker):
         bounds: ArrayLike | None = None,
         edge_resolution: float = 0.1,
     ) -> None:
-        if (frame is None) == (joint_names is None):
-            raise ValueError("Choose exactly one of frame or joint_names")
         self.robot = robot
         self.model = robot.model
         self._live_data = robot.data
         state = robot.state
 
-        if frame is not None:
+        if frame is not None and joint_names is None:
             selected = [state.joint_ids[slot] for slot in state.get_frame_joint_slots(frame)]
-        else:
-            names = tuple(cast(Sequence[str], joint_names))
+        elif frame is None and joint_names is not None:
+            names = tuple(joint_names)
             if not names or len(names) != len(set(names)):
                 raise ValueError("joint_names must be nonempty and unique")
             unknown = set(names) - set(state.joint_names)
             if unknown:
                 raise ValueError(f"Joints do not belong to robot {robot.name!r}: {sorted(unknown)}")
             selected = [state.joint_ids[state.joint_names.index(name)] for name in names]
-
-        if not selected:
-            raise ValueError("No robot joints selected")
+        else:
+            raise ValueError("Choose exactly one of frame or joint_names")
         self.joint_ids = tuple(selected)
         self.joint_names = tuple(
             self.model.joint(j).name.removeprefix(robot.prefix) for j in selected
@@ -66,12 +62,9 @@ class MuJoCoCollisionChecker(CollisionChecker):
             raise ValueError("edge_resolution must be finite and positive")
         self.edge_resolution = float(edge_resolution)
 
-        limited = self.model.jnt_limited[selected]
-        hardware = self.model.jnt_range[selected]
+        configured = state.get_joint_limits([state.joint_ids.index(joint) for joint in selected])
         if bounds is None:
-            if not limited.all():
-                raise ValueError("Continuous joints require explicit finite bounds")
-            requested = hardware.copy()
+            requested = configured
         else:
             requested = np.asarray(bounds, dtype=float)
             if requested.shape != (len(selected), 2):
@@ -79,13 +72,10 @@ class MuJoCoCollisionChecker(CollisionChecker):
         if not np.isfinite(requested).all() or np.any(requested[:, 0] >= requested[:, 1]):
             raise ValueError("Each planning bound must be finite with lower < upper")
         if np.any(
-            limited
-            & (
-                (requested[:, 0] < hardware[:, 0] - 1e-9)
-                | (requested[:, 1] > hardware[:, 1] + 1e-9)
-            )
+            (requested[:, 0] < configured[:, 0] - 1e-9)
+            | (requested[:, 1] > configured[:, 1] + 1e-9)
         ):
-            raise ValueError("Planning bounds cannot exceed limited joint ranges")
+            raise ValueError("Planning bounds cannot exceed configured position limits")
         self.bounds = requested.copy()
 
         owned = np.zeros(self.model.nbody, dtype=bool)

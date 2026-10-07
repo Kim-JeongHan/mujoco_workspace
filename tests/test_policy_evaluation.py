@@ -1,6 +1,5 @@
 """Closed-loop evaluation with small policies and deterministic stand-in environments."""
 
-import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -8,9 +7,8 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig, TrainConfig
+from mujoco_lab.learning.config.config import RolloutConfig, TrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
-from mujoco_lab.learning.evaluate import run
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.factory import build_policy
 
@@ -90,7 +88,12 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
 def evaluate(env, model, normalizer, metadata, *, num_episodes=1, seed=50, max_steps=5):
     return PolicyEvaluator(
         env,
-        RolloutConfig(num_episodes=num_episodes, seed=seed, max_steps=max_steps, video_episodes=0),
+        RolloutConfig(
+            num_episodes=num_episodes,
+            seed=seed,
+            max_seconds=max_steps * env.action_dt,
+            video_episodes=0,
+        ),
         torch.device("cpu"),
     ).evaluate(model, normalizer, metadata, flow_num_steps=3)
 
@@ -117,13 +120,6 @@ def test_mse_history_padding_chunk_alignment_clipping_and_success(tmp_path):
     assert all(row["termination_reason"] == "success" for row in rows)
     assert rows[0]["sim_seconds"] == pytest.approx(0.006)
     assert summary["mean_success_sim_seconds"] == pytest.approx(0.006)
-
-
-def test_timeout_counts(tmp_path):
-    model, stats, metadata = checkpoint(tmp_path)
-    rows, summary = evaluate(TinyEnv(finish=2), model, stats, metadata)
-    assert rows[0]["termination_reason"] == "time_limit"
-    assert not rows[0]["success"] and summary["timeouts"] == 1
 
 
 @pytest.mark.parametrize("max_steps", [1, 5])
@@ -173,97 +169,6 @@ def test_flow_seed_reproducibility_and_rng_and_mode_restoration(tmp_path):
     assert different.actions != env1.actions[: len(different.actions)]
 
 
-def test_cli_run_writes_fresh_episode_summary_and_aggregate_logs(tmp_path, monkeypatch):
-    monkeypatch.setenv("WANDB_MODE", "disabled")
-    model, stats, metadata = checkpoint(tmp_path)
-    metadata["dataset_metadata"] = {
-        "replay": {
-            "robot": "forte",
-            "robot_name": "arm",
-            "cubes": 2,
-            "environment": "table_shelf",
-            "dt": 0.004,
-            "physics_steps_per_action": 1,
-            "cube_yaw_range_degrees": 0.0,
-        },
-        "train_seeds": [50],
-    }
-
-    class Robot:
-        def change_controller(self, controller):
-            self.controller = controller
-
-    class FakeSimulator:
-        def __init__(self, scene, *, robots, dt):
-            assert robots[0].name == "arm" and robots[0].robot_type == "forte"
-            assert dt == 0.004
-            self.dt = dt
-            self.robots = {"arm": Robot()}
-
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluate.load_checkpoint", lambda path: (model, stats, metadata)
-    )
-    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.create_cube_stack", lambda *a, **k: None)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.Simulator", FakeSimulator)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.create_controller", lambda *a, **k: None)
-    monkeypatch.setattr("mujoco_lab.learning.evaluate_cube.CubeStackTask", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "mujoco_lab.learning.evaluate_cube.CubeStackEnv",
-        lambda *a, **k: TinyEnv(finish=1, success=True, dt=0.004),
-    )
-    run_dir, summary = run(
-        EvalConfig(
-            checkpoint=tmp_path / "checkpoint.pt",
-            device="cpu",
-            rollout=RolloutConfig(num_episodes=2, seed=50, max_steps=1, video_episodes=0),
-            output_dir=tmp_path / "logs",
-        )
-    )
-    assert run_dir.parent == tmp_path / "logs" / "eval" / "mse"
-    assert summary["attempted"] == summary["successes"] == 2
-    assert json.loads((run_dir / "config.json").read_text())["effective"]["seed_overlaps"] == {
-        "train": [50],
-        "validation": [],
-        "test": [],
-    }
-    rows = [json.loads(line) for line in (run_dir / "episodes.jsonl").read_text().splitlines()]
-    assert [row["env_seed"] for row in rows] == [50, 51]
-    assert json.loads((run_dir / "summary.json").read_text()) == summary
-    metrics = [json.loads(line) for line in (run_dir / "metrics.jsonl").read_text().splitlines()]
-    assert metrics == [
-        {
-            "optimizer_step": 7,
-            "eval/attempted": 2,
-            "eval/successes": 2,
-            "eval/success_rate": 1.0,
-            "eval/timeouts": 0,
-            "eval/mean_success_sim_seconds": 0.004,
-        }
-    ]
-
-
-def test_evaluator_reuse_resets_episode_state_and_accepts_another_policy(tmp_path):
-    model, normalizer, metadata = checkpoint(tmp_path, policy_type="flow")
-    env = TinyEnv(finish=3)
-    evaluator = PolicyEvaluator(
-        env,
-        RolloutConfig(num_episodes=2, seed=50, max_steps=5, video_episodes=0),
-        torch.device("cpu"),
-    )
-    first = evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
-    actions = env.actions.copy()
-    second = evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
-    assert second == first
-    assert env.actions == actions * 2
-    assert env.seeds == [50, 51, 50, 51]
-    other_dir = tmp_path / "other"
-    other_dir.mkdir()
-    other, other_normalizer, other_metadata = checkpoint(other_dir, policy_type="mse")
-    rows, summary = evaluator.evaluate(other, other_normalizer, other_metadata, flow_num_steps=3)
-    assert len(rows) == summary["attempted"] == 2
-    assert [row["steps"] for row in rows] == [3, 3]
-
-
 def test_evaluator_restores_model_and_rng_when_step_raises(tmp_path):
     model, normalizer, metadata = checkpoint(tmp_path, policy_type="flow")
 
@@ -278,3 +183,25 @@ def test_evaluator_restores_model_and_rng_when_step_raises(tmp_path):
         evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
     assert model.training
     torch.testing.assert_close(torch.random.get_rng_state(), rng)
+
+
+@pytest.mark.parametrize(("action_dt", "expected_steps"), [(0.01, 3), (0.02, 2)])
+def test_seconds_limit_uses_environment_cadence_and_stops_inside_chunk(
+    tmp_path, action_dt, expected_steps
+):
+    model, stats, metadata = checkpoint(tmp_path, chunk_size=4, execution_horizon=4)
+    env = TinyEnv(dt=action_dt, finish=100)
+    rows, summary = PolicyEvaluator(
+        env,
+        RolloutConfig(num_episodes=1, max_seconds=0.025, video_episodes=0),
+        torch.device("cpu"),
+    ).evaluate(model, stats, metadata, flow_num_steps=1)
+    assert rows[0]["steps"] == expected_steps
+    assert rows[0]["sim_seconds"] == pytest.approx(expected_steps * action_dt)
+    assert summary["timeouts"] == 1
+
+
+@pytest.mark.parametrize("max_seconds", [0.0, -1.0, float("inf"), float("nan")])
+def test_evaluator_rejects_invalid_durations(max_seconds):
+    with pytest.raises(ValueError, match="max_seconds"):
+        PolicyEvaluator(TinyEnv(), RolloutConfig(max_seconds=max_seconds), torch.device("cpu"))

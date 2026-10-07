@@ -22,9 +22,9 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
     """
 
     _CARRY_STAGES = frozenset(("lift", "above_place", "place"))
-    _BOUND_EPS = 1e-5  # MuJoCo's soft joint limits permit tiny measured overshoots.
+    _BOUND_EPS = 1e-5  # Allow tiny measured joint-position overshoots.
     _SELF_CONTACT_EPS = 1e-5  # Ignore mesh tessellation contact at numerical scale.
-    _FINGER_HULL_EPS = 5e-4  # Allow tiny contact on the same bodies as physical pads.
+    _FINGER_HULL_EPS = 5e-4  # Allow tiny contact on other geoms of a selected finger body.
     _GRASP_STAGES = frozenset(("pick", "close", "lift", "above_place", "place", "release"))
     _STAGES = frozenset(
         ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
@@ -61,17 +61,6 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
         self._object_name = object_body
         self._target_site_name = target_site
         self._configured = False
-
-        if bounds is None:
-            model, state = robot.model, robot.state
-            selected = [state.joint_ids[slot] for slot in state.get_frame_joint_slots("grasp")]
-            bounds = []
-            for joint in selected:
-                if model.jnt_limited[joint]:
-                    bounds.append(tuple(model.jnt_range[joint]))
-                else:
-                    current = robot.data.qpos[model.jnt_qposadr[joint]]
-                    bounds.append((float(current - np.pi), float(current + np.pi)))
 
         super().__init__(robot, frame="grasp", bounds=bounds, edge_resolution=edge_resolution)
         self._site_id = robot.state.site_id("grasp")
@@ -161,29 +150,13 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
     def _resolve_grasp_geoms(self) -> frozenset[int]:
         if self._grasp_names is not None:
             ids = frozenset(self._geom_id(value) for value in self._grasp_names)
-        elif self.robot.robot_type == "panda":
-            finger_bodies = {
-                int(self.model.jnt_bodyid[joint])
-                for joint in self.robot.state.joint_ids
-                if self.model.joint(joint).name.endswith(
-                    ("panda_finger_joint1", "panda_finger_joint2")
-                )
-            }
-            ids = frozenset(
-                geom
-                for geom in range(self.model.ngeom)
-                if self.model.geom_bodyid[geom] in finger_bodies
-                and self.model.geom_contype[geom]
-                and self.model.geom_conaffinity[geom]
-            )
-        elif self.robot.robot_type == "forte":
-            ids = frozenset(
-                self._geom_id(f"{self.robot.name}/gripper_{side}_pad") for side in ("left", "right")
-            )
+        elif self.robot.gripper is not None:
+            ids = frozenset().union(*self.robot.gripper.finger_geom_ids)
         else:
-            raise ValueError("Cube stacking requires panda or forte, or explicit grasp_geoms")
-        if len(ids) != 2 or not all(self._owned_geoms[geom] for geom in ids):
-            raise ValueError("grasp_geoms must identify two robot finger or pad geoms")
+            raise ValueError("Manipulation requires a configured gripper or explicit grasp_geoms")
+        finger_bodies = {int(self.model.geom_bodyid[geom]) for geom in ids}
+        if len(finger_bodies) != 2 or not all(self._owned_geoms[geom] for geom in ids):
+            raise ValueError("grasp_geoms must identify collision geoms on two robot fingers")
         return ids
 
     def refresh(self, stage_name: str | None = None) -> None:

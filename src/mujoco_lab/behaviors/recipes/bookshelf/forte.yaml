@@ -1,17 +1,14 @@
-# yaml-language-server: $schema=./schema.json
-# Preserve the validated Medium/Forte insertion tuning.
-# Gripper open/closed targets come from the live robot's MJCF limits.
-arm:
-  velocity_limit: 0.35 # rad/s; task tuning, not a motor rating
-gripper:
-  velocity_limit: 0.025 # m/s
-  acceleration_limit: 0.1 # m/s^2
+# Centered Medium/Forte insertion tuning for the capsule collision model.
+# Gripper mode: 1 closes; 0 fully opens.
+# [velocity ratio, acceleration ratio] of configured robot limits.
+arm: [0.35, 1.0]
+gripper: [0.125, 0.1]
 waypoint_tolerance: 0.02
 arm_tolerance: 0.025
 stage_dwell_s: 0.4
 stage_timeout_s: 12.0
 lost_grasp_grace_s: 0.25
-approach_distance_m: 0.032 # Back off along the pickup grasp's tool axis.
+approach_distance_m: 0.05 # Finish reorienting before the finger hulls reach the book.
 lift_height_m: 0.06
 min_lift_height_m: 0.04
 insertion_clearance_m: 0.04 # Height above the final shelf placement.
@@ -20,13 +17,21 @@ preinsert_clearance_m: 0.03 # Keep the entire book in front of the opening.
 retract_distance_m: 0.18
 stages:
   - name: approach
-    arm:
-      velocity_limit: 0.6
+    gripper_mode: 0
+    arm: [0.6, 1.0]
   - name: pick
+    gripper_mode: 0
   - name: close
+    gripper_mode: 1
   - name: lift
+    gripper_mode: 1
   - name: preinsert
+    gripper_mode: 1
   - name: insert
+    gripper_mode: 1
   - name: lower
+    gripper_mode: 1
   - name: release
+    gripper_mode: 0
   - name: retract
+    gripper_mode: 0

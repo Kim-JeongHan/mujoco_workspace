@@ -1094,6 +1094,7 @@ dependencies = [
 [package.optional-dependencies]
 learning = [
     { name = "gymnasium" },
+    { name = "python-dotenv" },
     { name = "torch" },
     { name = "wandb", extra = ["media"] },
 ]
@@ -1120,6 +1121,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pyqt6", specifier = ">=6.11.0" },
+    { name = "python-dotenv", marker = "extra == 'learning'", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "scipy", specifier = ">=1.18.1" },
     { name = "torch", marker = "extra == 'learning'", specifier = "==2.14.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mujoco-lab", extra = "learning" } },

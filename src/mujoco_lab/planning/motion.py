@@ -1,17 +1,18 @@
 """Shared IK, sampling, and checked trajectory construction for manipulation."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import pairwise
 from math import ceil
-from typing import Literal, cast
+from typing import Literal
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from mujoco_lab.assets.robot.robot import Constraints, MotionLimits
-from mujoco_lab.control.trajectory import JointTrajectory
+from mujoco_lab.assets.robot.robot import Constraints
+from mujoco_lab.control.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.planning.collision.collision_checker import CollisionChecker
 from mujoco_lab.planning.planners import PlannerConfig, plan_path, planner_name
+from mujoco_lab.robot import Robot
 from mujoco_lab.utils import Transform
 
 
@@ -26,10 +27,11 @@ class MotionRequest:
     name: str  # Stage label used in failure messages.
     mode: Literal["hold", "sampling", "cartesian"]  # Select the path construction method.
     waypoints: tuple[Transform | np.ndarray, ...]  # Ordered world grasp poses or arm joints (rad).
-    gripper_target: float  # Desired gripper joint position (m).
-    constraints: Constraints | None = None  # Stage limits, capped at trajectory creation.
+    gripper_target: float  # Desired total gripper opening width (m).
+    arm_ratio: MotionRatio = (1.0, 1.0)  # Fractions of configured arm velocity/acceleration.
+    gripper_ratio: MotionRatio = (1.0, 1.0)  # Fractions of configured opening-width limits.
     checker: CollisionChecker | None = None  # Stage-specific collision checker.
-    wrap_angles: bool = False  # Keep continuous-joint sampling-goal IK angles near the seed.
+    shape_preserving: bool = False  # Keep smooth joint curves inside each waypoint interval.
     failure_reason: str | None = None  # Skip planning and return this failure reason when set.
 
 
@@ -49,13 +51,9 @@ class MotionPlanner:
     RuntimeError, and IKError propagates to the expert's execution boundary.
     """
 
-    def __init__(self, robot, planning: PlannerConfig | None = None) -> None:
+    def __init__(self, robot: Robot, planning: PlannerConfig | None = None) -> None:
         self.robot = robot
         self.planning = planning
-        self.planning_epoch = 0
-
-    def reset(self) -> None:
-        self.planning_epoch = 0
 
     def motion_constraints(self) -> Constraints:
         """Combine configured arm and gripper constraints in trajectory joint order."""
@@ -93,51 +91,6 @@ class MotionPlanner:
             ],
         )
 
-    def stage_constraints(self, arm: MotionLimits, gripper: MotionLimits) -> Constraints:
-        """Bind requested task limits to named joints; defer capping until trajectory creation."""
-        constraints = self.motion_constraints()
-        state = self.robot.state
-        arm_names = [state.joint_names[slot] for slot in state.get_frame_joint_slots("grasp")]
-        gripper_name = state.joint_names[state.joint_ids.index(self.robot.gripper.joint_id)]
-        groups = ((arm, arm_names), (gripper, [gripper_name]))
-        values = {}
-        for field in ("velocity_limit", "acceleration_limit"):
-            limits = list(getattr(constraints, field))
-            for requested, names in groups:
-                value = getattr(requested, field)
-                if value is None:
-                    continue
-                expanded = value if isinstance(value, list) else [value] * len(names)
-                if len(expanded) != len(names):
-                    raise ValueError(f"{field} must contain one value per controlled joint")
-                for name, limit in zip(names, expanded, strict=True):
-                    limits[constraints.joint_names.index(name)] = limit
-            values[field] = limits
-        return replace(constraints, **values)
-
-    def resolve_constraints(self, requested: Constraints | None = None) -> Constraints:
-        """Align task limits by joint name and cap them once at the configured robot limits."""
-        configured = self.motion_constraints()
-        if requested is None:
-            return configured
-        if len(set(requested.joint_names)) != len(requested.joint_names):
-            raise ValueError("Stage constraint joint names must be unique")
-        try:
-            indices = [requested.joint_names.index(name) for name in configured.joint_names]
-        except ValueError as error:
-            raise ValueError("Stage constraints must include every trajectory joint") from error
-        values = {}
-        for field in ("velocity_limit", "acceleration_limit"):
-            limits = np.asarray(getattr(requested, field), dtype=float)
-            if (
-                limits.shape != (len(requested.joint_names),)
-                or not np.isfinite(limits).all()
-                or np.any(limits <= 0)
-            ):
-                raise ValueError(f"Stage {field} must contain one positive finite value per joint")
-            values[field] = np.minimum(getattr(configured, field), limits[indices]).tolist()
-        return replace(configured, **values)
-
     def make_trajectory(self, request: MotionRequest):
         """Resolve motion, rebasing moving stages at the measured arm state."""
         if request.failure_reason is not None:
@@ -148,25 +101,27 @@ class MotionPlanner:
             )
         slots = self.robot.state.get_frame_joint_slots("grasp")
         current = self.robot.state.snapshot().qpos[slots].copy()
-        previous = self.robot.target.position.copy()
+        previous_target = self.robot.target
+        if previous_target is None:
+            raise ValueError("Motion planning requires a joint-target controller")
+        previous = previous_target.position.copy()
         checker = request.checker
         if request.mode == "hold":
             target = request.waypoints[-1]
             target = target if isinstance(target, np.ndarray) else previous
             path = np.vstack((previous, target))
         elif request.mode == "cartesian":
-            path = self.cartesian_path(cast(Transform, request.waypoints[-1]))
+            destination = request.waypoints[-1]
+            if not isinstance(destination, Transform):
+                raise TypeError("Cartesian motion requires a Transform waypoint")
+            path = self.cartesian_path(destination)
         else:
             if self.planning is None:
                 raise ValueError("A sampling planner configuration is required")
             waypoints = []
-            for index, waypoint in enumerate(request.waypoints):
+            for waypoint in request.waypoints:
                 if isinstance(waypoint, Transform):
-                    waypoint = (
-                        self.solve_ik(waypoint, current, wrap_angles=request.wrap_angles)
-                        if index == len(request.waypoints) - 1
-                        else self.solve_ik(waypoint, current)
-                    )
+                    waypoint = self.solve_ik(waypoint, current)
                 waypoints.append(waypoint)
             legs = []
             # The old arm target can collide in the new scene after release.
@@ -185,50 +140,51 @@ class MotionPlanner:
             not checker.is_path_collision_free(a, b) for a, b in pairwise(path)
         ):
             return None, f"Collision on {request.name} path"
-        trajectory = self.trajectory(path, request.gripper_target, request.constraints, checker)
+        trajectory = self.trajectory(
+            path,
+            request.gripper_target,
+            checker,
+            arm_ratio=request.arm_ratio,
+            gripper_ratio=request.gripper_ratio,
+            shape_preserving=request.shape_preserving,
+        )
         return trajectory, None if trajectory is not None else f"Collision on {request.name} path"
 
-    def solve_ik(self, pose: Transform, seed: np.ndarray, *, wrap_angles: bool = False):
-        q = self.robot.state.solve_ik(pose, frame="grasp", seed=seed)
-        if wrap_angles:
-            limits = self.robot.state.get_joint_limits(list(range(len(q))))
-            for index in range(len(q)):
-                if not np.isfinite(limits[index]).all():
-                    q[index] = seed[index] + (q[index] - seed[index] + np.pi) % (2 * np.pi) - np.pi
-        return q
-
-    def site_pose(self) -> Transform:
-        return grasp_pose(self.robot)
+    def solve_ik(
+        self,
+        pose: Transform,
+        reference_q: np.ndarray,
+        *,
+        retry_current: bool = True,
+    ):
+        return self.robot.state.solve_ik(pose, reference_q, retry_current=retry_current)
 
     def cartesian_path(self, destination: Transform, *, resolution: float = 0.01) -> np.ndarray:
-        measured = self.site_pose()
+        measured = grasp_pose(self.robot)
         start = measured.as_translation()
         goal = destination.as_translation()
         start_rotation = measured.as_rotation()
-        delta_rotation = cast(
-            Rotation, destination.as_rotation() * start_rotation.inv()
-        ).as_rotvec()
+        relative_rotation = destination.as_rotation() * start_rotation.inv()
+        # SciPy includes NotImplemented in the result type even for two Rotations.
+        delta_rotation = relative_rotation.as_rotvec()  # ty: ignore[unresolved-attribute]
         slots = self.robot.state.get_frame_joint_slots("grasp")
         vertices = [self.robot.state.snapshot().qpos[slots].copy()]
         steps = max(2, int(np.ceil(np.linalg.norm(goal - start) / resolution)) + 1)
         for fraction in np.linspace(0, 1, steps)[1:]:
+            rotation = Rotation.from_rotvec(delta_rotation * fraction) * start_rotation
+            # Both operands are Rotations; retain the original composition operation.
             pose = Transform(
-                rotation=cast(
-                    Rotation, Rotation.from_rotvec(delta_rotation * fraction) * start_rotation
-                ),
+                rotation=rotation,  # ty: ignore[invalid-argument-type]
                 translation=start + fraction * (goal - start),
             )
-            vertices.append(self.solve_ik(pose, vertices[-1], wrap_angles=True))
+            vertices.append(self.solve_ik(pose, vertices[-1]))
         return np.asarray(vertices)
 
     def plan_arm_path(self, start: np.ndarray, goal: np.ndarray, checker) -> np.ndarray | None:
         if self.planning is None:
             raise ValueError("A sampling planner configuration is required")
-        seed = self.planning.seed
-        seed = seed + self.planning_epoch if seed is not None else None
-        self.planning_epoch += 1
         vertices = plan_path(
-            self.planning, start, goal, [tuple(row) for row in checker.bounds], checker, seed=seed
+            self.planning, start, goal, [tuple(row) for row in checker.bounds], checker
         )
         if vertices is None:
             return None
@@ -268,24 +224,37 @@ class MotionPlanner:
         return True
 
     def trajectory(
-        self, arm_path, gripper_target, constraints: Constraints | None = None, checker=None
+        self,
+        arm_path,
+        gripper_target,
+        checker=None,
+        *,
+        arm_ratio: MotionRatio = (1.0, 1.0),
+        gripper_ratio: MotionRatio = (1.0, 1.0),
+        shape_preserving: bool = False,
     ):
-        """Cap stage motion limits, then time and check the resulting trajectory.
+        """Pass configured limits and stage ratios to the checked joint trajectory.
 
         Position bounds belong to IK and collision checking. This method uses
         only velocity and acceleration limits for timing and smoothing checks.
         """
-        resolved = self.resolve_constraints(constraints)
+        resolved = self.motion_constraints()
+        robot_gripper = self.robot.gripper
+        if robot_gripper is None:
+            raise ValueError("Motion planning requires a configured gripper")
         velocity = np.asarray(resolved.velocity_limit, dtype=float)
         acceleration = np.asarray(resolved.acceleration_limit, dtype=float)
         gripper = np.full((len(arm_path), 1), gripper_target)
-        gripper[0, 0] = self.robot.gripper.get_target()
+        gripper[0, 0] = robot_gripper.get_target()
         path = np.column_stack((arm_path, gripper))
-        trajectory = JointTrajectory(path, velocity, acceleration)
+        ratios = np.array([*[arm_ratio] * (len(resolved.joint_names) - 1), gripper_ratio])
+        trajectory = JointTrajectory(
+            path, velocity, acceleration, ratio=ratios, shape_preserving=shape_preserving
+        )
         if checker is not None and not self.smooth_path_collision_free(
-            checker, trajectory, velocity[:-1]
+            checker, trajectory, trajectory.max_velocity[:-1]
         ):
             if any(not checker.is_path_collision_free(a, b) for a, b in pairwise(arm_path)):
                 return None
-            return JointTrajectory(path, velocity, acceleration, smooth=False)
+            return JointTrajectory(path, velocity, acceleration, ratio=ratios, smooth=False)
         return trajectory

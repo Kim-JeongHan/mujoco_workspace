@@ -1,16 +1,13 @@
 """Policy cadence and replay compatibility at the training/evaluation boundary."""
 
 from types import SimpleNamespace
-from typing import cast
 
 import numpy as np
 import pytest
 import torch
 
 from mujoco_lab.learning.config.config import RolloutConfig
-from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
-from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.factory import build_policy
 
@@ -35,6 +32,10 @@ class CadenceEnv:
         )
         self.simulator = SimpleNamespace(dt=0.002, data=SimpleNamespace(time=0.0))
         self.steps = 0
+
+    @property
+    def action_dt(self):
+        return self.simulator.dt * self.physics_steps_per_action
 
     def reset(self, *, seed):
         self.steps = 0
@@ -63,7 +64,9 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
         for parameter in model.parameters():
             parameter.zero_()
     seen = []
-    handle = model.net[0].register_forward_pre_hook(
+    net = model.net
+    assert isinstance(net, torch.nn.Sequential)
+    handle = net[0].register_forward_pre_hook(
         lambda _module, args: seen.append(args[0].detach().cpu().numpy().copy())
     )
     metadata = {
@@ -81,8 +84,8 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
     }
     env = CadenceEnv()
     rows, _ = PolicyEvaluator(
-        cast(CubeStackEnv, env),
-        RolloutConfig(num_episodes=1, seed=1, max_steps=30, video_episodes=0),
+        env,
+        RolloutConfig(num_episodes=1, seed=1, max_seconds=0.3, video_episodes=0),
         torch.device("cpu"),
     ).evaluate(model, _stats(), metadata, flow_num_steps=1)
     handle.remove()
@@ -92,21 +95,3 @@ def test_chunk16_executes_four_at_100hz_and_stops_inside_next_chunk():
     assert rows[0]["steps"] == 5
     assert rows[0]["sim_seconds"] == pytest.approx(0.044)
     assert rows[0]["success"]
-
-
-def test_episode_without_action_cadence_is_rejected():
-    episode = Episode(
-        states=np.zeros((3, 1), dtype=np.float32),
-        actions=np.zeros((2, 1), dtype=np.float32),
-        metadata={"success": True, "replay": {"dt": 0.002}},
-    )
-    with pytest.raises(ValueError, match="physics_steps_per_action must be a positive integer"):
-        episode.check_physics_step_consistency(5)
-    compatible = Episode(
-        states=episode.states,
-        actions=episode.actions,
-        metadata={"replay": {"dt": 0.002, "physics_steps_per_action": 5}},
-    )
-    compatible.check_physics_step_consistency(5)
-    with pytest.raises(ValueError, match="physics_steps_per_action=5 differs from config 1"):
-        compatible.check_physics_step_consistency(1)

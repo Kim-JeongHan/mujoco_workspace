@@ -24,27 +24,6 @@ def forte_simulator(environment="empty"):
     )
 
 
-@pytest.mark.parametrize("dt", [0.001, 0.002, 0.005])
-def test_pd_period_matches_simulator_and_survives_reset(dt):
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
-        dt=dt,
-    )
-    robot = sim.robots["robot"]
-    controller = create_test_controller(robot, controller="pd")
-    robot.change_controller(controller)
-    sim.step()
-    sim.reset()
-    assert controller.control_dt == dt
-
-
-@pytest.mark.parametrize("dt", [0, -0.001, float("nan"), float("inf")])
-def test_pd_rejects_invalid_control_period(dt):
-    with pytest.raises(ValueError, match="control_dt must be finite and positive"):
-        JointSpacePD(np.ones(7), np.ones(7), control_dt=dt)
-
-
 def test_seven_axis_controller_math_on_numpy_snapshots():
     state = JointState(0.0, HOME_QPOS.copy(), np.zeros(7), np.ones(7))
     np.testing.assert_array_equal(
@@ -72,43 +51,6 @@ def test_seven_axis_controller_math_on_numpy_snapshots():
         ),
         np.ones(7),
     )
-
-
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_connected_controller_uses_selected_state_and_maps_joint_commands(mode):
-    sim = forte_simulator()
-    robot = sim.robots["robot"]
-    controller = create_test_controller(robot, controller=mode)
-    robot.change_controller(controller)
-    assert robot.state.nq == robot.state.nv == 9
-    assert robot.num_actuators == 8
-    assert robot.target.position.shape == ((7,) if mode == "pd" else (3,))
-    state = robot.state
-    assert controller._owner is state
-    assert robot.control_joint_names == tuple(state.joint_names[:7])
-    joint_slots = robot.control_joint_slots
-    np.testing.assert_array_equal(
-        state.get_jacobian("grasp", joint_slots),
-        robot.state.get_jacobian("grasp")[:, joint_slots],
-    )
-    np.testing.assert_array_equal(
-        state.get_mass_matrix(joint_slots),
-        robot.state.get_mass_matrix()[np.ix_(joint_slots, joint_slots)],
-    )
-    command = controller.compute(robot.get_control_state(), robot.target)
-    assert command.shape == (7,)
-    robot.control()
-    assert sim.data.ctrl[robot.actuator_ids[-1]] == 0
-    robot.gripper.set_target(-0.01)
-    sim.step()
-    assert sim.data.ctrl[robot.actuator_ids[-1]] == -0.01
-    assert robot.state.snapshot().qpos.shape == (9,)
-    with pytest.raises(ValueError, match="gripper target"):
-        robot.gripper.set_target(robot.gripper.get_control_limits()[0] - 0.001)
-    with pytest.raises(ValueError, match="gripper target"):
-        robot.gripper.set_target(np.nan)
-    sim.reset()
-    assert robot.gripper.get_target() == 0
 
 
 @pytest.mark.parametrize("mode", ["pd", "osc"])

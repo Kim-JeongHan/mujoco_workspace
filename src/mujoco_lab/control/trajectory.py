@@ -1,7 +1,10 @@
 """Time-based joint trajectories and bundled robot demo references."""
 
+from typing import Annotated
+
 import numpy as np
-from scipy.interpolate import CubicHermiteSpline
+from pydantic import Field
+from scipy.interpolate import CubicHermiteSpline, PchipInterpolator
 
 from mujoco_lab.control.target import ControlTarget
 
@@ -9,16 +12,11 @@ CIRCLE_RADIUS = 0.025
 CIRCLE_PERIOD = 5.0
 LEAD_IN = 2.0
 
-
-def min_jerk(fraction: float) -> tuple[float, float]:
-    """Minimum-jerk blend and its derivative."""
-    u = float(np.clip(fraction, 0.0, 1.0))
-    blend = 10 * u**3 - 15 * u**4 + 6 * u**5
-    slope = 30 * u**2 - 60 * u**3 + 30 * u**4
-    return blend, slope
+# A plain pair: fractions of the configured velocity and acceleration limits.
+type MotionRatio = tuple[Annotated[float, Field(gt=0, le=1)], Annotated[float, Field(gt=0, le=1)]]
 
 
-def min_jerk_target(
+def min_jerk(
     start: ControlTarget,
     end: ControlTarget,
     elapsed: float,
@@ -65,6 +63,9 @@ class JointTrajectory:
     """Time a C1 joint curve, with an exact stop-at-waypoints polyline fallback.
 
     Smooth segments may leave the polyline, and acceleration may jump at knots.
+    Shape-preserving smoothing keeps each joint inside its waypoint intervals.
+    Ratio pairs scale the supplied limits, uniformly or once per joint. Each
+    fraction must be in (0, 1]; both interpolation modes use the scaled limits.
     """
 
     def __init__(
@@ -73,40 +74,44 @@ class JointTrajectory:
         max_velocity: float | np.ndarray,
         max_acceleration: float | np.ndarray,
         *,
+        ratio: MotionRatio | np.ndarray = (1.0, 1.0),
         smooth: bool = True,
+        shape_preserving: bool = False,
     ) -> None:
         waypoints = np.array(path, dtype=float, copy=True)
         if waypoints.ndim != 2 or not all(waypoints.shape) or not np.isfinite(waypoints).all():
             raise ValueError("path must be a nonempty finite 2D array of joint positions")
+        ratios = np.array(ratio, dtype=float, copy=True)
+        if ratios.shape not in ((2,), (waypoints.shape[1], 2)):
+            raise ValueError("ratio must be a velocity/acceleration pair or one pair per joint")
+        if not np.all((ratios > 0) & (ratios <= 1)):
+            raise ValueError("ratio fractions must be finite and in (0, 1]")
+        ratios.flags.writeable = False
+        self.ratio = np.broadcast_to(ratios, (waypoints.shape[1], 2))
         limits = []
-        for name, value in (
-            ("max_velocity", max_velocity),
-            ("max_acceleration", max_acceleration),
+        for index, (name, value) in enumerate(
+            (
+                ("max_velocity", max_velocity),
+                ("max_acceleration", max_acceleration),
+            )
         ):
-            try:
-                limit = np.broadcast_to(np.asarray(value, dtype=float), (waypoints.shape[1],))
-            except ValueError as exc:
-                raise ValueError(f"{name} must be scalar or one value per joint") from exc
-            if not np.isfinite(limit).all() or np.any(limit <= 0):
-                raise ValueError(f"{name} must contain positive finite values")
+            limit = np.broadcast_to(value, (waypoints.shape[1],))
+            limit = limit * self.ratio[:, index]
+            if not np.all(np.isfinite(limit) & (limit > 0)):
+                raise ValueError(f"scaled {name} must contain positive finite values")
+            limit.flags.writeable = False
             limits.append(limit)
         velocity, acceleration = limits
+        self.max_velocity = velocity
+        self.max_acceleration = acceleration
         distance = np.abs(np.diff(waypoints, axis=0))
-        durations = (
-            np.maximum(
-                np.max((15 / 8) * distance / velocity, axis=1),
-                np.max(np.sqrt((10 / np.sqrt(3)) * distance / acceleration), axis=1),
-            )
-            if len(waypoints) > 1
-            else np.empty(0)
+        durations = np.maximum(
+            np.max((15 / 8) * distance / velocity, axis=1),
+            np.max(np.sqrt((10 / np.sqrt(3)) * distance / acceleration), axis=1),
         )
-        if not np.isfinite(durations).all():
-            raise ValueError("path and limits must yield finite segment durations")
         self.path = waypoints
         self.path.flags.writeable = False
         self.waypoint_times = np.r_[0.0, np.cumsum(durations)]
-        if not np.isfinite(self.waypoint_times).all():
-            raise ValueError("path and limits must yield a finite total duration")
         self.smooth = smooth
         self._coefficients = None
         if smooth and self.waypoint_times[-1] > 0:
@@ -117,9 +122,14 @@ class JointTrajectory:
             secants = np.diff(knots, axis=0) / span
             slopes = np.zeros_like(knots)
             if len(knots) > 2:
-                slopes[1:-1] = (secants[:-1] * span[1:] + secants[1:] * span[:-1]) / (
-                    span[:-1] + span[1:]
-                )
+                if shape_preserving:
+                    slopes[1:-1] = PchipInterpolator(knot_times, knots, axis=0).derivative()(
+                        knot_times[1:-1]
+                    )
+                else:
+                    slopes[1:-1] = (secants[:-1] * span[1:] + secants[1:] * span[:-1]) / (
+                        span[:-1] + span[1:]
+                    )
             coefficients = CubicHermiteSpline(knot_times, knots, slopes, axis=0).c
             a, b, c = coefficients[:3]
             vertex = np.divide(-b, 3 * a, out=np.zeros_like(a), where=a != 0)
@@ -136,15 +146,9 @@ class JointTrajectory:
                 float(np.max(peak_velocity / velocity)),
                 float(np.sqrt(np.max(peak_acceleration / acceleration))),
             )
-            if (
-                scale <= 0
-                or not np.isfinite(scale)
-                or not np.isfinite(self.waypoint_times * scale).all()
-            ):
-                raise ValueError("path and limits must yield a finite total duration")
             self.waypoint_times *= scale
             self._knot_times = knot_times * scale
-            self._coefficients = coefficients.copy()
+            self._coefficients = coefficients
             self._coefficients[0] /= scale**3
             self._coefficients[1] /= scale**2
             self._coefficients[2] /= scale
@@ -172,14 +176,11 @@ class JointTrajectory:
             )
         index = int(np.searchsorted(self.waypoint_times, elapsed, side="right") - 1)
         duration = self.waypoint_times[index + 1] - self.waypoint_times[index]
-        fraction = (elapsed - self.waypoint_times[index]) / duration
-        blend, slope = min_jerk(fraction)
-        acceleration = 60 * fraction - 180 * fraction**2 + 120 * fraction**3
-        delta = self.path[index + 1] - self.path[index]
-        return ControlTarget(
-            self.path[index] + delta * blend,
-            delta * slope / duration,
-            delta * acceleration / duration**2,
+        return min_jerk(
+            ControlTarget(self.path[index]),
+            ControlTarget(self.path[index + 1]),
+            elapsed - self.waypoint_times[index],
+            duration,
         )
 
 
@@ -215,9 +216,7 @@ def osc_circle_target(
     if elapsed >= lead_in:
         return circle(elapsed - lead_in)
     entry = circle(0.0).position
-    blend, slope = min_jerk(elapsed / lead_in)
-    delta = entry - start_position
-    return ControlTarget(start_position + delta * blend, delta * slope / lead_in)
+    return min_jerk(ControlTarget(start_position), ControlTarget(entry), elapsed, lead_in)
 
 
 def demo_target_updater(simulator, modes: dict[str, str]):

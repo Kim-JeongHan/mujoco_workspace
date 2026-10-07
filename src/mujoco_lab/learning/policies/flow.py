@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from mujoco_lab.learning.infrastructure.utils import build_mlp
 from mujoco_lab.learning.models import SinusoidalTimeEmbedding
 from mujoco_lab.learning.policies.base import BasePolicy
 
@@ -35,19 +36,12 @@ class FlowMatchingPolicy(BasePolicy):
         self.time_embedding = (
             SinusoidalTimeEmbedding(time_embed_dim) if time_embed_dim is not None else None
         )
-        layers = []
-
         input_dim = state_dim + action_dim * chunk_size + (time_embed_dim or 1)
-
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(input_dim, hidden_dim))
-            layers.append(nn.ReLU())
-
-            input_dim = hidden_dim
-
-        layers.append(nn.Linear(input_dim, action_dim * chunk_size))
-
-        self.net = nn.Sequential(*layers)
+        self.net = build_mlp(
+            input_dim=input_dim,
+            output_dim=action_dim * chunk_size,
+            hidden_layers=hidden_dims,
+        )
         self.criterion = nn.MSELoss()
 
     def compute_loss(

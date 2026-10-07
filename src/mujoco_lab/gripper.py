@@ -1,8 +1,8 @@
-"""Robot-owned position-servo gripper target and measured joint position."""
+"""Opening-width control over native position-servo gripper joints."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import mujoco
 import numpy as np
@@ -12,103 +12,104 @@ if TYPE_CHECKING:
 
 
 class Gripper:
-    """Control one explicitly named position actuator in joint units."""
+    """Control total opening width in meters: zero closed, positive open."""
 
-    def __init__(self, robot: Robot, actuator_name: str) -> None:
-        if actuator_name not in robot.actuator_names:
-            raise ValueError(f"Unknown gripper actuator {actuator_name!r}")
-        self._state = robot.state
-        self._model = robot.model
+    def __init__(self, robot: Robot, actuator_name: str, joint_names: list[str]) -> None:
         self._data = robot.data
         self.slot = robot.actuator_names.index(actuator_name)
         self.actuator_id = robot.actuator_ids[self.slot]
-        model = self._model
+        model = robot.model
         actuator = self.actuator_id
         if model.actuator_trntype[actuator] != mujoco.mjtTrn.mjTRN_JOINT:
             raise ValueError("Gripper requires a direct joint position actuator")
         joint = int(model.actuator_trnid[actuator, 0])
-        if joint not in self._state.joint_ids:
+        if joint not in robot.state.joint_ids:
             raise ValueError("Gripper actuator must drive a robot-owned joint")
         self.joint_id = joint
-        gain = model.actuator_gainprm[actuator, 0]
-        bias = model.actuator_biasprm[actuator]
         self.gear = float(model.actuator_gear[actuator, 0])
-        if not (
-            model.actuator_gaintype[actuator] == mujoco.mjtGain.mjGAIN_FIXED
-            and model.actuator_biastype[actuator] == mujoco.mjtBias.mjBIAS_AFFINE
-            and gain > 0
-            and self.gear != 0
-            and np.allclose(model.actuator_gear[actuator, 1:], 0)
-            and np.isclose(bias[0], 0)
-            and np.isclose(bias[1], -gain)
-            and bias[2] <= 0
-        ):
-            raise ValueError("Gripper requires a scalar position-servo actuator")
-        self._qpos_index = int(model.jnt_qposadr[joint])
-        joints = {self.joint_id}
-        links = [
-            (int(model.eq_obj1id[index]), int(model.eq_obj2id[index]))
-            for index in range(model.neq)
-            if model.eq_type[index] == mujoco.mjtEq.mjEQ_JOINT
-        ]
-        while True:
-            previous = len(joints)
-            for first, second in links:
-                if first in joints and second in self._state.joint_ids:
-                    joints.add(second)
-                if second in joints and first in self._state.joint_ids:
-                    joints.add(first)
-            if len(joints) == previous:
-                break
-        self._finger_joint_ids = [joint for joint in self._state.joint_ids if joint in joints]
+        self.finger_joint_ids = tuple(model.joint(robot.prefix + name).id for name in joint_names)
+        if not set(self.finger_joint_ids).issubset(robot.state.joint_ids):
+            raise ValueError("Gripper fingers must belong to the robot")
+        self.finger_geom_ids = tuple(
+            frozenset(
+                geom
+                for geom in range(model.ngeom)
+                if model.geom_bodyid[geom] == model.jnt_bodyid[joint]
+                and (model.geom_contype[geom] or model.geom_conaffinity[geom])
+            )
+            for joint in self.finger_joint_ids
+        )
         self._finger_qpos_indices = [
-            int(model.jnt_qposadr[joint]) for joint in self._finger_joint_ids
+            int(model.jnt_qposadr[joint]) for joint in self.finger_joint_ids
         ]
+        lower, upper = 0.0, np.inf
+        for joint in self.finger_joint_ids:
+            if model.jnt_limited[joint]:
+                upper = min(upper, model.jnt_range[joint, 1])
+        if model.actuator_ctrllimited[actuator]:
+            limits = np.sort(model.actuator_ctrlrange[actuator] / self.gear)
+            lower, upper = max(lower, limits[0]), min(upper, limits[1])
+        self._control_limits = np.array([lower, upper]) * len(self.finger_joint_ids)
         self._home_target = 0.0
         self._target = 0.0
         self._active = False
 
-    def get_position(self) -> float:
-        """Measured position of the driven joint in meters or radians."""
-        return float(self._state.data.qpos[self._qpos_index])
-
     def get_target(self) -> float:
-        """Stored joint target; active after set_target()."""
+        """Stored opening-width target in meters; active after set_target()."""
         return self._target
 
     def get_control_limits(self) -> np.ndarray:
-        """Return physical target limits in the driven joint's native units."""
-        if not self._model.actuator_ctrllimited[self.actuator_id]:
-            return np.array([-np.inf, np.inf])
-        return np.sort(self._model.actuator_ctrlrange[self.actuator_id] / self.gear)
+        """Return opening-width target limits in meters."""
+        return self._control_limits.copy()
+
+    def target_for_mode(self, mode: Literal[0, 1]) -> float:
+        """Resolve a validated recipe mode: 1 closes and 0 fully opens."""
+        return float(self._control_limits[0 if mode == 1 else 1])
 
     def get_width(self) -> float:
-        """Sum displacement from lower limits for the driven and coupled fingers."""
-        lower = self._model.jnt_range[self._finger_joint_ids, 0]
-        return float(np.sum(self._data.qpos[self._finger_qpos_indices] - lower))
+        """Measured opening from the closed configuration, excluding any fixed finger gap."""
+        return max(0.0, float(self._data.qpos[self._finger_qpos_indices].sum()))
+
+    def get_actuator_target(self) -> float:
+        """Convert the stored opening-width target to a native actuator input."""
+        return self._target / len(self.finger_joint_ids) * self.gear
+
+    def has_contact_on_all_fingers(self, contacts: set[int]) -> bool:
+        """Require an object contact with a collision geom on every configured finger."""
+        return bool(self.finger_geom_ids) and all(
+            group & contacts for group in self.finger_geom_ids
+        )
+
+    def apply_initial_width(self, width: float) -> None:
+        """Initialize all finger positions and their servo target without stepping physics."""
+        self.set_target(width)
+        self._data.qpos[self._finger_qpos_indices] = self._target / len(self.finger_joint_ids)
+        self._data.ctrl[self.actuator_id] = self.get_actuator_target()
+        self._active = False
 
     def is_active(self) -> bool:
         return self._active
 
-    def set_target(self, displacement: float) -> None:
-        """Store a joint target, checked against the native actuator range."""
-        value = float(displacement) * self.gear
-        lower, upper = self._model.actuator_ctrlrange[self.actuator_id]
-        limited = self._model.actuator_ctrllimited[self.actuator_id]
+    def set_target(self, width: float) -> None:
+        """Store an opening-width target in meters, checked against its physical range."""
+        value = float(width)
+        lower, upper = self._control_limits
         if not np.isfinite(value):
-            raise ValueError("gripper target is outside the actuator's control range")
-        if limited and not lower <= value <= upper:
+            raise ValueError("gripper width is outside the control range")
+        if not lower <= value <= upper:
             # Trajectory interpolation can exceed an endpoint by floating-point roundoff.
             bounded = float(np.clip(value, lower, upper))
-            tolerance = 8 * np.finfo(float).eps * max(abs(lower), abs(upper))
+            tolerance = 8 * np.finfo(float).eps * max(1.0, abs(value), abs(bounded))
             if abs(value - bounded) > tolerance:
-                raise ValueError("gripper target is outside the actuator's control range")
-            displacement = bounded / self.gear
-        self._target = float(displacement)
+                raise ValueError("gripper width is outside the control range")
+            value = bounded
+        self._target = value
         self._active = True
 
     def _capture_home(self) -> None:
-        self._home_target = float(self._data.ctrl[self.actuator_id] / self.gear)
+        self._home_target = (
+            self._data.ctrl[self.actuator_id] / self.gear * len(self.finger_joint_ids)
+        )
         self.reset()
 
     def reset(self) -> None:

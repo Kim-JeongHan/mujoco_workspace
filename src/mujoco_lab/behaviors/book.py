@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
 
 import mujoco
 import numpy as np
@@ -62,6 +61,10 @@ class BookTask:
             raise ValueError("Book insertion requires exactly one robot")
         self.simulator = simulator
         self.robot = next(iter(simulator.robots.values()))
+        gripper = self.robot.gripper
+        if gripper is None:
+            raise ValueError("Book insertion requires a gripper")
+        self.gripper = gripper
         model = simulator.model
         self.body = model.body("book").id
         self.geom = model.geom("book/collision").id
@@ -90,19 +93,8 @@ class BookTask:
         return others
 
     def has_grasp(self) -> bool:
-        """Require physical contact on both finger pads, not a closing command."""
-        model = self.simulator.model
-        contacts = self.contact_geoms()
-        if self.robot.robot_type == "forte":
-            return all(
-                model.geom(f"{self.robot.prefix}gripper_{side}_pad").id in contacts
-                for side in ("left", "right")
-            )
-        bodies = {int(model.geom_bodyid[g]) for g in contacts}
-        return all(
-            model.body(f"{self.robot.prefix}panda_{side}finger").id in bodies
-            for side in ("left", "right")
-        )
+        """Require physical contact on both fingers."""
+        return self.gripper.has_contact_on_all_fingers(self.contact_geoms())
 
     def status(self) -> BookStatus:
         """Require pose, support, release, low velocity, and 0.5 s dwell."""
@@ -111,7 +103,9 @@ class BookTask:
         position_error = float(np.linalg.norm(data.xpos[self.body] - data.site_xpos[self.target]))
         book_rotation = Rotation.from_matrix(data.xmat[self.body].reshape(3, 3))
         target_rotation = Rotation.from_matrix(data.site_xmat[self.target].reshape(3, 3))
-        rotation_error = float(cast(Rotation, target_rotation * book_rotation.inv()).magnitude())
+        relative_rotation = target_rotation * book_rotation.inv()
+        # SciPy includes NotImplemented in the result type even for two Rotations.
+        rotation_error = float(relative_rotation.magnitude())  # ty: ignore[unresolved-attribute]
         contacts = self.contact_geoms()
         supported = self.support in contacts
         touching = any(model.geom(g).name.startswith(self.robot.prefix) for g in contacts)

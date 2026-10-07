@@ -1,42 +1,41 @@
-# yaml-language-server: $schema=./schema.json
-# Close along world Y, near the home jaw orientation. The 35-degree tilt
-# from vertical clears the elbow while avoiding a large initial wrist turn.
-euler_xyz_degrees: [145.0, 0.0, -90.0]
+# Keep the home grasp direction vertically downward and close along world Y.
+euler_xyz_degrees: [180.0, 0.0, -90.0]
 frame: grasp
+# Gripper mode: 1 closes; 0 fully opens.
+# [velocity ratio, acceleration ratio] of configured robot limits.
+arm: [1.0, 1.0]
+gripper: [1.0, 1.0]
 arm_tolerance: 0.016
-gripper_tolerance: 0.001
+gripper_tolerance: 0.002
+lost_grasp_grace_s: 0.25
 stages:
   - name: above_pick
-    # Back off 90 mm along the tool axis to keep the approach near the home pose.
-    offset_xyz_m: [0.0516, 0.0, 0.0817]
-    gripper_target_m: 0.0
+    # Approach directly above the cube, with 90 mm of tool-axis clearance.
+    offset_xyz_m: [0.0, 0.0, 0.098]
+    gripper_mode: 0
   - name: pick
     # Back off 10 mm along the tool axis and raise 8 mm for finger-hull clearance.
-    offset_xyz_m: [0.0057, 0.0, 0.0162]
-    gripper_target_m: 0.0
+    offset_xyz_m: [0.0, 0.0, 0.018]
+    gripper_mode: 0
   - name: close
-    offset_xyz_m: [0.0057, 0.0, 0.0162]
-    gripper_target_m: -0.02
-    require_grasp: true
+    offset_xyz_m: [0.0, 0.0, 0.018]
+    gripper_mode: 1
   - name: lift
-    offset_xyz_m: [0.0057, 0.0, 0.1162]
-    gripper_target_m: -0.02
-    arm:
-      velocity_limit: 0.8
+    offset_xyz_m: [0.0, 0.0, 0.118]
+    gripper_mode: 1
+    arm: [0.8, 1.0]
     min_lift_height_m: 0.04
   - name: above_place
-    offset_xyz_m: [0.0057, 0.0, 0.1162]
-    gripper_target_m: -0.02
-    arm:
-      velocity_limit: 0.8
+    offset_xyz_m: [0.0, 0.0, 0.118]
+    gripper_mode: 1
+    arm: [0.8, 1.0]
   - name: place
-    offset_xyz_m: [0.0057, 0.0, 0.0162]
-    gripper_target_m: -0.02
-    arm:
-      velocity_limit: 0.8
+    offset_xyz_m: [0.0, 0.0, 0.018]
+    gripper_mode: 1
+    arm: [0.8, 1.0]
   - name: release
-    offset_xyz_m: [0.0057, 0.0, 0.0162]
-    gripper_target_m: 0.0
+    offset_xyz_m: [0.0, 0.0, 0.018]
+    gripper_mode: 0
   - name: retract
-    offset_xyz_m: [0.0516, 0.0, 0.0817]
-    gripper_target_m: 0.0
+    offset_xyz_m: [0.0, 0.0, 0.098]
+    gripper_mode: 0

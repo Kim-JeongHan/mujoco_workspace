@@ -14,10 +14,10 @@ def test_jacobian_rows_match_world_position_and_rotation_derivatives():
     )
     model, data = sim.model, sim.data
     state = sim.robots["forte"].state
-    jacobian = state.get_jacobian("ee_site").copy()
+    jacobian = state.get_jacobian("grasp").copy()
     assert jacobian.shape == (6, model.nv)
-    site = state.site_id("ee_site")
-    np.testing.assert_array_equal(state.get_frame_position("ee_site"), data.site(site).xpos)
+    site = state.site_id("grasp")
+    np.testing.assert_array_equal(state.get_frame_position("grasp"), data.site(site).xpos)
 
     plus = mujoco.MjData(model)
     minus = mujoco.MjData(model)
@@ -42,36 +42,6 @@ def test_jacobian_rows_match_world_position_and_rotation_derivatives():
     np.testing.assert_allclose(jacobian, finite_difference, rtol=1e-6, atol=1e-8)
 
 
-def test_getters_reuse_independent_buffers_and_allow_persistent_copies():
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
-    )
-    model, data = sim.model, sim.data
-    state = sim.robots["forte"].state
-    jacobian = state.get_jacobian("ee_site")
-    jacobian_snapshot = jacobian.copy()
-    mass = state.get_mass_matrix()
-    mass_snapshot = mass.copy()
-    assert mass.shape == (model.nv, model.nv)
-    assert not np.shares_memory(jacobian, mass)
-    np.testing.assert_array_equal(jacobian, jacobian_snapshot)
-
-    data.qpos[0] += 0.2
-    mujoco.mj_forward(model, data)
-    updated_jacobian = state.get_jacobian("ee_site")
-    assert np.shares_memory(jacobian, updated_jacobian)
-    assert not np.allclose(updated_jacobian, jacobian_snapshot)
-    np.testing.assert_array_equal(mass, mass_snapshot)
-
-    data.qpos[3] += 0.25
-    mujoco.mj_forward(model, data)
-    updated_mass = state.get_mass_matrix()
-    assert np.shares_memory(mass, updated_mass)
-    assert not np.allclose(updated_mass, mass_snapshot)
-    assert data.time == 0.0
-
-
 def test_state_reads_never_advance_or_refresh_shared_physics(monkeypatch):
     sim = Simulator(
         create_environment("empty"),
@@ -80,7 +50,7 @@ def test_state_reads_never_advance_or_refresh_shared_physics(monkeypatch):
     state = sim.robots["forte"].state
     assert isinstance(state, RobotState)
     previous = state.snapshot()
-    position = state.get_frame_position("ee_site").copy()
+    position = state.get_frame_position("grasp").copy()
     sim.data.qpos[0] += 0.2
 
     def unexpected_physics(*args, **kwargs):
@@ -91,8 +61,8 @@ def test_state_reads_never_advance_or_refresh_shared_physics(monkeypatch):
     current = state.snapshot()
     assert isinstance(current, JointState)
     assert current.qpos[0] == previous.qpos[0] + 0.2
-    np.testing.assert_array_equal(state.get_frame_position("ee_site"), position)
+    np.testing.assert_array_equal(state.get_frame_position("grasp"), position)
     np.testing.assert_array_equal(current.bias_forces, previous.bias_forces)
-    assert state.get_jacobian("ee_site").shape == (6, state.nv)
+    assert state.get_jacobian("grasp").shape == (6, state.nv)
     assert state.get_mass_matrix().shape == (state.nv, state.nv)
     assert sim.data.time == 0

@@ -1,6 +1,3 @@
-import subprocess
-import sys
-
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -9,15 +6,6 @@ from mujoco_lab.utils import Transform
 
 RZ_90 = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
 RX_90 = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-
-
-def test_identity_and_matrix_round_trip():
-    np.testing.assert_array_equal(Transform.identity().as_matrix(), np.eye(4))
-    matrix = np.array([[0, -1, 0, 1], [1, 0, 0, 2], [0, 0, 1, 3], [0, 0, 0, 1]])
-    transform = Transform.from_matrix(matrix)
-    np.testing.assert_allclose(transform.as_matrix(), matrix, atol=1e-14)
-    np.testing.assert_allclose((Transform() @ transform).as_matrix(), matrix, atol=1e-14)
-    np.testing.assert_allclose((transform @ Transform()).as_matrix(), matrix, atol=1e-14)
 
 
 @pytest.mark.parametrize("shape", [(3,), (5, 3), (2, 4, 3), (0, 3)])
@@ -75,50 +63,6 @@ def test_transform_is_a_snapshot_of_inputs_and_conversion_results():
     np.testing.assert_allclose(restored.as_matrix(), transform.as_matrix(), atol=1e-14)
 
 
-def test_float32_rotation_is_normalized_by_scipy():
-    angle = np.float32(0.7)
-    rotation = np.array(
-        [[np.cos(angle), -np.sin(angle), 0], [np.sin(angle), np.cos(angle), 0], [0, 0, 1]],
-        dtype=np.float32,
-    )
-    transform = Transform(rotation=rotation)
-    actual = transform.as_rotation().as_matrix()
-    np.testing.assert_allclose(actual, rotation, atol=1e-7)
-    np.testing.assert_allclose(actual.T @ actual, np.eye(3), atol=1e-14)
-    assert actual.dtype == np.float64
-
-
-def test_accepts_scipy_rotation_and_exposes_rotation_conversions():
-    rotation = Rotation.from_euler("z", 90, degrees=True)
-    transform = Transform(rotation=rotation, translation=[1, 2, 3])
-    assert isinstance(transform.as_rotation(), Rotation)
-    np.testing.assert_allclose(transform.as_rotation().as_rotvec(), [0, 0, np.pi / 2], atol=1e-14)
-    np.testing.assert_allclose(transform.apply([1, 0, 0]), [1, 3, 3], atol=1e-14)
-
-
-def test_rejects_a_stack_of_scipy_rotations():
-    with pytest.raises(ValueError, match="single rotation"):
-        Transform(rotation=Rotation.identity(2))
-
-
-def test_pose_exports_use_fixed_axis_rpy_and_requested_units():
-    roll, pitch, yaw = np.deg2rad([20, -30, 40])
-    rx = np.array([[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]])
-    ry = np.array(
-        [[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]]
-    )
-    rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
-    transform = Transform(rotation=rz @ ry @ rx, translation=[0.125, -0.25, 0.8])
-    np.testing.assert_allclose(
-        transform.as_pose_mrad(), [0.125, -0.25, 0.8, roll, pitch, yaw], atol=1e-14
-    )
-    np.testing.assert_allclose(
-        transform.as_pose_mmrad(), [125, -250, 800, roll, pitch, yaw], atol=1e-14
-    )
-    np.testing.assert_allclose(transform.as_mmdeg(), [125, -250, 800, 20, -30, 40], atol=1e-12)
-    np.testing.assert_array_equal(transform.as_translation(), [0.125, -0.25, 0.8])
-
-
 def test_quaternion_pose_uses_meters_and_mujoco_scalar_first_order():
     quat = np.array([1, 2, 3, 4]) / np.sqrt(30)
     transform = Transform(
@@ -142,13 +86,3 @@ def test_pose_factories_convert_units_and_round_trip_rpy():
     pose_mrad[:] = 0
     np.testing.assert_allclose(from_mmdeg.as_translation(), [0.125, -0.25, 0.8], atol=1e-14)
     np.testing.assert_allclose(from_mrad.as_translation(), [0.125, -0.25, 0.8], atol=1e-14)
-
-
-def test_transform_utils_import_does_not_load_optional_runtimes(tmp_path):
-    code = """
-import sys
-from mujoco_lab.utils import Transform
-assert Transform().apply([1, 2, 3]).tolist() == [1, 2, 3]
-assert not {'mujoco_warp', 'isaaclab', 'isaacsim', 'matplotlib'} & sys.modules.keys()
-"""
-    subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True)

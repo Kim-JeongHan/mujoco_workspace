@@ -6,17 +6,16 @@ import json
 import math
 from dataclasses import asdict
 from datetime import datetime
-from typing import cast
 from uuid import uuid4
 
 import torch
 import tyro
-from torch.utils.data import Dataset, random_split
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata, save_checkpoint
 from mujoco_lab.learning.config.config import TrainConfig
 from mujoco_lab.learning.datasets import load_episodes
-from mujoco_lab.learning.evaluate import create_evaluation_env
+from mujoco_lab.learning.datasets.replay import require_width_actions
+from mujoco_lab.learning.evaluate import create_rollout_env
 from mujoco_lab.learning.evaluation import (
     PolicyEvaluator,
     evaluation_log_metrics,
@@ -29,12 +28,17 @@ from mujoco_lab.utils.logger import Logger as ConsoleLogger
 def main() -> None:
     console = ConsoleLogger()
     config = tyro.cli(TrainConfig, description="Train offline behavior cloning")
-    config.validate()
+    repeat = config.physics_steps_per_action
+    if not (
+        config.validation_ratio >= 0
+        and config.test_ratio >= 0
+        and config.validation_ratio + config.test_ratio < 1
+    ):
+        raise ValueError("Holdout ratios must be nonnegative and sum to less than 1")
     episodes = load_episodes(config.data_dir)
     for episode in episodes:
-        episode.check_physics_step_consistency(
-            config.physics_steps_per_action, simulation_dt=config.simulation_dt
-        )
+        require_width_actions(episode.metadata.get("replay", {}))
+        episode.check_physics_step_consistency(repeat, simulation_dt=config.simulation_dt)
     validation_count = (
         max(1, round(len(episodes) * config.validation_ratio)) if config.validation_ratio else 0
     )
@@ -42,16 +46,13 @@ def main() -> None:
     train_count = len(episodes) - validation_count - test_count
     if train_count <= 0:
         raise ValueError("Not enough episodes for the requested holdouts and train")
-    parts = iter(
-        random_split(
-            cast(Dataset, episodes),
-            [count for count in (train_count, validation_count, test_count) if count],
-            generator=torch.Generator().manual_seed(config.seed),
-        )
-    )
-    train = [episodes[index] for index in next(parts).indices]
-    validation = [episodes[index] for index in next(parts).indices] if validation_count else []
-    test = [episodes[index] for index in next(parts).indices] if test_count else []
+    indices = torch.randperm(
+        len(episodes), generator=torch.Generator().manual_seed(config.seed)
+    ).tolist()
+    validation_end = train_count + validation_count
+    train = [episodes[index] for index in indices[:train_count]]
+    validation = [episodes[index] for index in indices[train_count:validation_end]]
+    test = [episodes[index] for index in indices[validation_end:]]
     dataset_metadata = {
         "data_dir": str(config.data_dir),
         "train_episodes": len(train),
@@ -70,14 +71,10 @@ def main() -> None:
     settings["dataset"] = dataset_metadata
     rollout = config.rollout
     eval_env = None
-    if config.eval_interval:
-        eval_env, _ = create_evaluation_env(
+    if config.eval_interval > 0:
+        eval_env, _ = create_rollout_env(
             {"train_config": settings, "dataset_metadata": dataset_metadata},
-            xy_range=rollout.xy_range,
-            min_gap=rollout.min_gap,
-            max_steps=rollout.max_steps,
-            cube_yaw_range_degrees=rollout.cube_yaw_range_degrees,
-            book_yaw_range_degrees=rollout.book_yaw_range_degrees,
+            rollout,
         )
     config.output_dir.mkdir(parents=True, exist_ok=True)
     run_name = config.exp_name or f"{config.robot}-{config.policy_type}-seed{config.seed}"

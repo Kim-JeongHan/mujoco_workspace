@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,9 +16,11 @@ from mujoco_lab.behaviors import (
     create_book_controller,
 )
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
-from mujoco_lab.learning.datasets.replay import book_metadata, capture_frame
+from mujoco_lab.learning.config.replay import BookReplayConfig
+from mujoco_lab.learning.datasets.replay import capture_frame, capture_metadata
 from mujoco_lab.learning.envs.book import BookEnv
 from mujoco_lab.learning.rollout.collector import iter_episodes
+from mujoco_lab.learning.timing import max_steps_for_seconds, physics_steps_per_action
 from mujoco_lab.planning import (
     PRMConfig,
     RRTConfig,
@@ -57,33 +58,17 @@ class Config:
 
     @property
     def physics_steps_per_action(self) -> int:
-        return int(self.simulation_hz / self.action_execution_hz)
+        return physics_steps_per_action(self.simulation_hz, self.action_execution_hz)
 
-    def validate(self) -> None:
-        """Reject invalid collection cadence and randomization parameters."""
-        if not (
-            math.isfinite(self.simulation_hz)
-            and self.simulation_hz > 0
-            and math.isfinite(self.action_execution_hz)
-            and self.action_execution_hz > 0
-        ):
-            raise ValueError("simulation_hz and action_execution_hz must be finite and positive")
-        if not (self.simulation_hz / self.action_execution_hz).is_integer():
-            raise ValueError("simulation_hz / action_execution_hz must be a positive integer")
-        if not math.isfinite(self.max_seconds) or self.max_seconds <= 0:
-            raise ValueError("max_seconds must be finite and positive")
-        if self.count <= 0:
-            raise ValueError("count must be positive")
-        for name in ("xy_range", "book_yaw_range_degrees"):
-            value = getattr(self, name)
-            if not math.isfinite(value) or value < 0:
-                raise ValueError(f"{name} must be finite and nonnegative")
+    @property
+    def max_steps(self) -> int:
+        return max_steps_for_seconds(
+            self.max_seconds, self.simulation_dt * self.physics_steps_per_action
+        )
 
 
 def main() -> None:
     config = tyro.cli(Config, description="Collect Panda or Forte book demonstrations")
-    config.validate()
-    repeat = config.physics_steps_per_action
     logger = Logger()
     logger.info(
         f"Collecting {config.count} total attempts to {config.output_dir.resolve()} "
@@ -95,25 +80,27 @@ def main() -> None:
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
         dt=config.simulation_dt,
     )
-    replay_metadata = book_metadata(
+    replay_metadata = capture_metadata(
         simulator,
-        book=config.book,
-        robot=config.robot,
-        physics_steps_per_action=config.physics_steps_per_action,
-        book_yaw_range_degrees=config.book_yaw_range_degrees,
-        xy_range=config.xy_range,
+        BookReplayConfig(
+            book=config.book,
+            robot=config.robot,
+            physics_steps_per_action=config.physics_steps_per_action,
+            book_yaw_range_degrees=config.book_yaw_range_degrees,
+            xy_range=config.xy_range,
+        ),
     )
     robot = simulator.robots[config.robot]
     controller = create_book_controller(robot, robot_config.controller)
     robot.change_controller(controller)
     task = BookTask(simulator)
-    max_steps = math.ceil(config.max_seconds * config.action_execution_hz)
+    max_steps = config.max_steps
     env = BookEnv(
         task,
         xy_range=config.xy_range,
         book_yaw_range_degrees=config.book_yaw_range_degrees,
         max_steps=max_steps,
-        physics_steps_per_action=repeat,
+        physics_steps_per_action=config.physics_steps_per_action,
     )
     recipe = load_book_recipe(config.robot)
     expert = BookInsertionExpert(

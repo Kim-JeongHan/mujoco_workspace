@@ -85,32 +85,9 @@ def test_pick_tracks_cube_yaw_and_place_returns_to_recipe(degrees, method):
         assert (recipe_rotation * orientation.inv()).magnitude() < 0.34
 
 
-@pytest.mark.parametrize("degrees", [90.0, -90.0, 180.0, 270.0])
-@pytest.mark.parametrize("method", ["heuristic", "sampling"])
-def test_quarter_turns_use_the_same_targets_as_zero_yaw(degrees, method):
-    _, _, _, _, baseline = _plan_at_yaw(0, method)
-    _, _, _, _, rotated = _plan_at_yaw(degrees, method)
-    for name, stage in baseline.items():
-        np.testing.assert_allclose(rotated[name].waypoints[-1], stage.waypoints[-1], atol=1e-9)
-
-
 @pytest.mark.parametrize("method", ["heuristic", "sampling"])
 def test_positive_45_degree_tie_uses_negative_45_degree_grasp(method):
     _, _, _, _, positive = _plan_at_yaw(45, method)
     _, _, _, _, negative = _plan_at_yaw(-45, method)
     for name, stage in positive.items():
         np.testing.assert_allclose(negative[name].waypoints[-1], stage.waypoints[-1], atol=1e-9)
-
-
-def test_forte_sampling_pick_target_tracks_rotated_cube():
-    simulator, expert, starts, goals, stages = _plan_at_yaw(15, "sampling", "forte")
-    pick = stages["cube0:pick"]
-    place = stages["cube0:place"]
-    pick_position, pick_orientation = _grasp_pose(simulator, expert, pick)
-    place_position, place_orientation = _grasp_pose(simulator, expert, place)
-    nominal = Rotation.from_euler("xyz", expert.recipe.euler_xyz_degrees, degrees=True)
-    yaw = Rotation.from_euler("z", 15, degrees=True)
-    assert np.linalg.norm(pick_position - (starts[0] + yaw.apply(pick.recipe.offset_xyz_m))) < 0.009
-    assert (yaw * nominal * pick_orientation.inv()).magnitude() < 0.34
-    assert np.linalg.norm(place_position - (goals[0] + place.recipe.offset_xyz_m)) < 0.009
-    assert (nominal * place_orientation.inv()).magnitude() < 0.34

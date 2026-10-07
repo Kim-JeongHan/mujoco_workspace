@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -18,9 +17,11 @@ from mujoco_lab.behaviors import (
 )
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
-from mujoco_lab.learning.datasets.replay import capture_frame, cube_stack_metadata
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
+from mujoco_lab.learning.datasets.replay import capture_frame, capture_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout.collector import iter_episodes
+from mujoco_lab.learning.timing import max_steps_for_seconds, physics_steps_per_action
 from mujoco_lab.planning import (
     PRMConfig,
     RRTConfig,
@@ -34,7 +35,7 @@ from mujoco_lab.utils import Logger
 class Config:
     """Choose a Panda or Forte cube demonstration collection run."""
 
-    count: int = 1800  # Total target attempts, including existing episodes when resuming.
+    count: int = 900  # Total target attempts, including existing episodes when resuming.
     seed: int = 42  # Starting seed for repeatable attempts.
 
     xy_range: float = 0.02  # Cube offset range, in meters.
@@ -48,7 +49,9 @@ class Config:
     resume: bool = False  # Continue or extend a collection to count total attempts.
     robot: RobotName = "forte"  # Bundled robot for demonstration collection.
     cubes: CubeCount = 1  # Supported collection cube counts.
-    method: Literal["heuristic", "sampling"] = "sampling"  # Expert execution method.
+    method: Literal["heuristic", "sampling"] = "heuristic"  # Expert execution method.
+    # Maximum simulated duration per attempt; None uses 60 s heuristic or 180 s sampling.
+    max_seconds: float | None = None
     planning: RRTConnectConfig | RRTConfig | PRMConfig = field(
         default_factory=default_planning
     )  # Sampling planner settings.
@@ -59,30 +62,18 @@ class Config:
 
     @property
     def physics_steps_per_action(self) -> int:
-        return int(self.simulation_hz / self.action_execution_hz)
+        return physics_steps_per_action(self.simulation_hz, self.action_execution_hz)
 
-    def validate(self) -> None:
-        """Reject invalid collection cadence and randomization parameters."""
-        if not (
-            math.isfinite(self.simulation_hz)
-            and self.simulation_hz > 0
-            and math.isfinite(self.action_execution_hz)
-            and self.action_execution_hz > 0
-        ):
-            raise ValueError("simulation_hz and action_execution_hz must be finite and positive")
-        if not (self.simulation_hz / self.action_execution_hz).is_integer():
-            raise ValueError("simulation_hz / action_execution_hz must be a positive integer")
-        if self.count <= 0:
-            raise ValueError("count must be positive")
-        for name in ("xy_range", "min_gap", "cube_yaw_range_degrees"):
-            value = getattr(self, name)
-            if not math.isfinite(value) or value < 0:
-                raise ValueError(f"{name} must be finite and nonnegative")
+    @property
+    def max_steps(self) -> int:
+        duration = self.max_seconds
+        if duration is None:
+            duration = 180.0 if self.method == "sampling" else 60.0
+        return max_steps_for_seconds(duration, self.simulation_dt * self.physics_steps_per_action)
 
 
 def main() -> None:
     config = tyro.cli(Config, description="Collect Panda or Forte cube demonstrations")
-    config.validate()
     repeat = config.physics_steps_per_action
     logger = Logger()
     logger.info(
@@ -95,21 +86,22 @@ def main() -> None:
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
         dt=config.simulation_dt,
     )
-    replay_metadata = cube_stack_metadata(
+    replay_metadata = capture_metadata(
         simulator,
-        cubes=config.cubes,
-        robot=config.robot,
-        physics_steps_per_action=config.physics_steps_per_action,
-        cube_yaw_range_degrees=config.cube_yaw_range_degrees,
-        xy_range=config.xy_range,
-        min_gap=config.min_gap,
+        CubeStackReplayConfig(
+            cubes=config.cubes,
+            robot=config.robot,
+            physics_steps_per_action=repeat,
+            cube_yaw_range_degrees=config.cube_yaw_range_degrees,
+            xy_range=config.xy_range,
+            min_gap=config.min_gap,
+        ),
     )
     robot = simulator.robots[config.robot]
     controller = create_controller(robot, robot_config.controller)
     robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
-    duration = 180 if config.method == "sampling" else 60
-    max_steps = math.ceil(duration * config.action_execution_hz)
+    max_steps = config.max_steps
     env = CubeStackEnv(
         task,
         xy_range=config.xy_range,

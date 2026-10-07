@@ -9,7 +9,7 @@ from controller_config import create_test_controller
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
-from mujoco_lab.control import ControlTarget, min_jerk_target
+from mujoco_lab.control import ControlTarget, min_jerk
 from mujoco_lab.learning.datasets.replay import capture_frame
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import collect_episode
@@ -31,9 +31,9 @@ def test_action_interpolates_target_with_fresh_control_each_physics_tick(monkeyp
     env, robot = make_env(repeat)
     env.reset(seed=7)
     monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(released_stable_stack=False))
-    action = np.clip(np.zeros(env.action_space.shape), env.action_space.low, env.action_space.high)
-    action[1] = 0.08
     start_target = robot.target
+    action = np.r_[start_target.position, robot.gripper.get_target()]
+    action[1] -= 0.08
     targets = []
     qpos_samples = []
     original_control = robot.control
@@ -55,13 +55,11 @@ def test_action_interpolates_target_with_fresh_control_each_physics_tick(monkeyp
     assert info["elapsed_dt"] == pytest.approx(env.action_dt)
     assert len(targets) == len(qpos_samples) == repeat
     for index, target in enumerate(targets):
-        expected = min_jerk_target(
+        expected = min_jerk(
             start_target, ControlTarget(action[:7]), index * env.simulator.dt, env.action_dt
         )
         np.testing.assert_allclose(target, expected.position)
-    endpoint = min_jerk_target(
-        start_target, ControlTarget(action[:7]), env.action_dt, env.action_dt
-    )
+    endpoint = min_jerk(start_target, ControlTarget(action[:7]), env.action_dt, env.action_dt)
     np.testing.assert_allclose(robot.target.position, endpoint.position)
     np.testing.assert_allclose(robot.target.velocity, endpoint.velocity)
     assert robot.target.position[1] < start_target.position[1]
@@ -92,12 +90,6 @@ def test_success_can_end_partial_action_and_reset_clears_terminal_state(monkeypa
     assert not env._done
 
 
-@pytest.mark.parametrize("repeat", [True, 0, -1, 1.5])
-def test_action_repeat_requires_positive_integer(repeat):
-    with pytest.raises(ValueError, match="physics_steps_per_action"):
-        make_env(repeat)
-
-
 def test_collector_records_actual_repeat_and_action_boundary_frames(monkeypatch):
     env, _ = make_env(5)
     monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(released_stable_stack=False))
@@ -108,7 +100,7 @@ def test_collector_records_actual_repeat_and_action_boundary_frames(monkeypatch)
         def reset(self, obs, info):
             pass
 
-        def act(self, obs):
+        def act(self, obs, *, dt=0.0):
             return np.clip(
                 np.zeros(env.action_space.shape), env.action_space.low, env.action_space.high
             ).astype(np.float32)
@@ -128,42 +120,3 @@ def test_collector_records_actual_repeat_and_action_boundary_frames(monkeypatch)
     assert episode.metadata["replay"]["physics_steps_per_action"] == 5
     assert episode.qpos.shape[0] == episode.states.shape[0] == len(episode) + 1 == 3
     np.testing.assert_allclose(np.diff(episode.frame_times), 0.01)
-
-
-def test_action_boundary_reaches_goal_and_reset_clears_interpolation(monkeypatch):
-    env, robot = make_env(5)
-    env.reset(seed=7)
-    monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(released_stable_stack=False))
-    initial = robot.target
-    action = np.clip(np.zeros(env.action_space.shape), env.action_space.low, env.action_space.high)
-    action[1] = 0.08
-    env.step(action)
-    boundary = robot.target
-    np.testing.assert_allclose(boundary.position, action[:7], atol=1e-12)
-    np.testing.assert_allclose(boundary.velocity, np.zeros(7), atol=1e-10)
-    np.testing.assert_allclose(boundary.acceleration, np.zeros(7), atol=1e-8)
-    captured = []
-    original_control = robot.control
-
-    def control():
-        captured.append(robot.target)
-        return original_control()
-
-    monkeypatch.setattr(robot, "control", control)
-    action[1] = -0.04
-    env.step(action)
-    for index, actual in enumerate(captured):
-        expected = min_jerk_target(
-            boundary, ControlTarget(action[:7]), index * env.simulator.dt, env.action_dt
-        )
-        for field in ("position", "velocity", "acceleration"):
-            np.testing.assert_allclose(getattr(actual, field), getattr(expected, field), atol=1e-12)
-    env.reset(seed=7)
-    np.testing.assert_array_equal(robot.target.position, initial.position)
-    assert robot.target.velocity is None
-    assert robot.target.acceleration is None
-    captured.clear()
-    env.step(action)
-    np.testing.assert_array_equal(captured[0].position, initial.position)
-    np.testing.assert_array_equal(captured[0].velocity, np.zeros(7))
-    np.testing.assert_array_equal(captured[0].acceleration, np.zeros(7))

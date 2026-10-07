@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -129,7 +129,9 @@ class Transform:
         """Compose transforms: apply ``other`` first, then ``self``."""
         if not isinstance(other, Transform):
             return NotImplemented
-        return self.from_transform(cast(RigidTransform, self._transform * other._transform))
+        composed = self._transform * other._transform
+        # Both operands are RigidTransforms; SciPy also annotates NotImplemented.
+        return self.from_transform(composed)  # ty: ignore[invalid-argument-type]
 
     def apply(self, points: ArrayLike) -> NDArray[np.float64]:
         """Transform a point (3,) or points (..., 3), including translation.

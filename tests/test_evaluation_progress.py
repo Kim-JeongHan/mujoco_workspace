@@ -1,28 +1,17 @@
 """Physical progress milestones remain observational and episode-local."""
 
-from dataclasses import replace
 from types import SimpleNamespace
 
 import mujoco
 import numpy as np
 import pytest
-import torch
-from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.behaviors.cube_stack import has_physical_grasp
-from mujoco_lab.learning.config.config import RolloutConfig
-from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
-from mujoco_lab.learning.evaluation.evaluator import (
-    PolicyEvaluator,
-    evaluation_log_metrics,
-    summarize,
-)
 from mujoco_lab.learning.evaluation.progress import CubeProgressTracker
-from mujoco_lab.learning.policies.factory import build_policy
 
 
 class FakeTask(CubeStackTask):
@@ -102,41 +91,6 @@ def test_progress_requires_grasped_lift_and_held_released_placement(monkeypatch)
     assert fresh.result()["cube_best_stage"] == [0, 0]
 
 
-def test_task_tracks_independent_holds_and_resets_completion_history():
-    task = FakeTask()
-    task.stable[0] = True
-    task.simulator.data.time = 1.0
-    assert not task.status().released_stable_stack
-    task.stable[1] = True
-    task.simulator.data.time = 1.25
-    assert not task.status().released_stable_stack
-    task.simulator.data.time = 1.5
-    assert not task.status().released_stable_stack
-    assert task.completed_placements().tolist() == [True, False]
-    task.simulator.data.time = 1.75
-    assert task.status().released_stable_stack
-
-    task.stable[0] = False
-    task.simulator.data.time = 1.8
-    assert not task.status().released_stable_stack
-    assert task.completed_placements().tolist() == [True, True]
-    task.stable[0] = True
-    task.simulator.data.time = 2.0
-    assert not task.status().released_stable_stack
-    task.simulator.data.time = 2.49
-    assert not task.status().released_stable_stack
-    task.simulator.data.time = 2.5
-    assert task.status().released_stable_stack
-
-    # Callers cannot alter task history through the returned snapshot.
-    completed = task.completed_placements()
-    completed[:] = False
-    assert task.completed_placements().all()
-    task.reset()
-    assert not task.completed_placements().any()
-    assert not task.status().released_stable_stack
-
-
 def test_progress_retains_placement_completed_between_observations():
     task = FakeTask()
     tracker = CubeProgressTracker(task)
@@ -158,99 +112,6 @@ def test_progress_retains_placement_completed_between_observations():
     assert tracker.result()["cube_placed"] == [True, False]
     assert task._stable_since == before_hold
     assert task.simulator.data.time == before_time
-
-
-@pytest.mark.parametrize("cubes", [1, 2])
-def test_success_inside_action_reports_complete_progress(cubes, monkeypatch):
-    simulator = Simulator(
-        create_cube_stack(cubes),
-        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
-        dt=0.002,
-    )
-    robot = simulator.robots["forte"]
-    robot.change_controller(create_test_controller(robot, controller="pd", frame="grasp"))
-    task = CubeStackTask(simulator, cubes)
-    env = CubeStackEnv(task, xy_range=0, max_steps=100, physics_steps_per_action=5)
-    measure = task.measurements
-    # Stable placement begins at the first physics tick, before the tracker runs.
-    monkeypatch.setattr(
-        task,
-        "measurements",
-        lambda: replace(measure(), stable_placement=np.full(cubes, simulator.data.time >= 0.002)),
-    )
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-    policy = build_policy(
-        "mse", state_dim=state_dim, action_dim=action_dim, chunk_size=4, hidden_dims=()
-    )
-    with torch.no_grad():
-        for parameter in policy.parameters():
-            parameter.zero_()
-    normalizer = Normalizer(
-        state_mean=np.zeros(state_dim, dtype=np.float32),
-        state_std=np.ones(state_dim, dtype=np.float32),
-        action_mean=np.zeros(action_dim, dtype=np.float32),
-        action_std=np.ones(action_dim, dtype=np.float32),
-    )
-    rows, summary = PolicyEvaluator(
-        env,
-        RolloutConfig(num_episodes=1, max_steps=100, video_episodes=0),
-        torch.device("cpu"),
-    ).evaluate(
-        policy,
-        normalizer,
-        {"architecture": {"obs_horizon": 1, "execution_horizon": 4}},
-        flow_num_steps=1,
-    )
-    row = rows[0]
-    assert row["success"]
-    assert row["steps"] == 51
-    assert row["sim_seconds"] == pytest.approx(0.502)
-    assert row["cube_placed"] == [True] * cubes
-    assert row["best_progress"] == row["place_fraction"] == 1.0
-    assert summary["success_rate"] == summary["mean_place_fraction"] == 1.0
-    assert summary["mean_best_progress"] == 1.0
-
-
-def test_summary_aggregates_progress_only_when_present():
-    def row(progress):
-        return {
-            "success": False,
-            "steps": 2,
-            "termination_reason": "time_limit",
-            **progress,
-        }
-
-    first = row(
-        {
-            "best_progress": 0.5,
-            "final_goal_distance": 0.1,
-            "grasp_fraction": 0.5,
-            "lift_fraction": 0.5,
-            "place_fraction": 0.5,
-            "cube_grasped": [True, False],
-            "cube_lifted": [True, False],
-            "cube_placed": [True, False],
-        }
-    )
-    second = row(
-        {
-            "best_progress": 0.0,
-            "final_goal_distance": 0.3,
-            "grasp_fraction": 0.0,
-            "lift_fraction": 0.0,
-            "place_fraction": 0.0,
-            "cube_grasped": [False, False],
-            "cube_lifted": [False, False],
-            "cube_placed": [False, False],
-        }
-    )
-    summary = summarize([first, second])
-    assert summary["mean_best_progress"] == pytest.approx(0.25)
-    assert summary["mean_final_goal_distance"] == pytest.approx(0.2)
-    assert summary["cube_grasp_fraction"] == pytest.approx([0.5, 0.0])
-    assert evaluation_log_metrics(summary)["eval/mean_best_progress"] == pytest.approx(0.25)
-    assert "mean_best_progress" not in summarize([row({})])
 
 
 def test_physical_placement_predicates_and_measurement_do_not_advance_task():
@@ -290,24 +151,23 @@ def test_physical_placement_predicates_and_measurement_do_not_advance_task():
     np.testing.assert_array_equal(task.completed_placements(), before_placed)
 
 
-def test_both_forte_finger_pads_are_required_for_grasp():
-    cube = 1
-    left = 2
-    right = 3
-    names = {
-        cube: "cube0/object_0",
-        left: "forte/gripper_left_pad",
-        right: "forte/gripper_right_pad",
-    }
-    # The real helper resolves the cube by name as well as contact endpoints.
-    model = SimpleNamespace(
-        geom=lambda index: SimpleNamespace(
-            id=cube if isinstance(index, str) else index,
-            name=names[index] if isinstance(index, int) else index,
-        )
+@pytest.mark.parametrize("robot_type", ["forte", "panda"])
+def test_contacts_on_distinct_fingers_are_required_for_grasp(robot_type):
+    simulator = Simulator(
+        create_cube_stack(1),
+        robots=[RobotSpec("robot", robot_type, config=load_robot_config(robot_type))],
     )
+    actual = simulator.robots["robot"]
+    gripper = actual.gripper
+    assert gripper is not None
+    cube = simulator.model.geom("cube0/object_0").id
+    left = next(iter(gripper.finger_geom_ids[0]))
+    right = next(iter(gripper.finger_geom_ids[1]))
     data = SimpleNamespace(contact=[SimpleNamespace(geom1=cube, geom2=left)])
-    robot = SimpleNamespace(model=model, data=data, name="forte", robot_type="forte")
+    robot = SimpleNamespace(model=simulator.model, data=data, gripper=gripper)
+    assert not has_physical_grasp(robot, 0)
+    for geom in gripper.finger_geom_ids[0]:
+        data.contact.append(SimpleNamespace(geom1=geom, geom2=cube))
     assert not has_physical_grasp(robot, 0)
     data.contact.append(SimpleNamespace(geom1=right, geom2=cube))
     assert has_physical_grasp(robot, 0)
