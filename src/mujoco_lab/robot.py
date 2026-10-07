@@ -86,12 +86,12 @@ class Robot:
             ],
             dtype=int,
         )
-        arm_ids = np.asarray(self.actuator_ids, dtype=int)[self._arm_actuator_slots]
+        arm_ids = [self.actuator_ids[slot] for slot in self._arm_actuator_slots]
         model = self.model
         transmissions = model.actuator_trntype[arm_ids]
         self._arm_joint_ids = model.actuator_trnid[arm_ids, 0]
-        self._arm_gear = model.actuator_gear[arm_ids, 0].copy()
-        self._arm_gain = model.actuator_gainprm[arm_ids, 0].copy()
+        self._arm_gear = model.actuator_gear[arm_ids, 0]
+        self._arm_gain = model.actuator_gainprm[arm_ids, 0]
         bias = model.actuator_biasprm[arm_ids]
         self._arm_position = (
             (transmissions == mujoco.mjtTrn.mjTRN_JOINT)
@@ -203,7 +203,8 @@ class Robot:
             limits = self.state.get_joint_limits(slots)
             if np.any(arm_pose < limits[:, 0]) or np.any(arm_pose > limits[:, 1]):
                 raise ValueError(f"Robot {self.name!r} default arm pose exceeds joint limits")
-        self.data.qpos[np.asarray(self.state.qpos_indices, dtype=int)[slots]] = arm_pose
+        qpos_indices = [self.state.qpos_indices[slot] for slot in slots]
+        self.data.qpos[qpos_indices] = arm_pose
         self.data.qvel[self.state.dof_indices] = 0
         self.data.ctrl[self.actuator_ids] = 0
         self._initialize_actuator_inputs()
@@ -215,7 +216,7 @@ class Robot:
         slots = self._arm_actuator_slots[self._arm_position]
         joints = self._arm_joint_ids[self._arm_position]
         gears = self._arm_gear[self._arm_position]
-        actuators = np.asarray(self.actuator_ids, dtype=int)[slots]
+        actuators = [self.actuator_ids[slot] for slot in slots]
         self.data.ctrl[actuators] = self.data.qpos[self.model.jnt_qposadr[joints]] * gears
 
     def change_controller(self, controller: Controller | None) -> None:
@@ -260,6 +261,12 @@ class Robot:
             return None
         return self.controller.initial_target(self.get_control_state())
 
+    def update_target(self, target: ControlTarget, gripper_target: float | None = None) -> None:
+        """Update the arm target; None leaves the gripper opening-width target unchanged."""
+        self.target = target
+        if self.gripper is not None and gripper_target is not None:
+            self.gripper.set_target(gripper_target)
+
     def update_state(self) -> None:
         """Refresh and return the owned joint snapshot without forwarding or stepping."""
         self.joint_state = self.state.snapshot()
@@ -270,15 +277,12 @@ class Robot:
         Control inputs use each actuator's native units. Only actuators with
         enabled control limits are clipped. This method never steps physics.
         """
-        command = self.data.ctrl[self.actuator_ids].copy()
+        command = self.data.ctrl[self.actuator_ids]
         if self.controller is not None:
             target = self.target
             if target is None:
                 raise RuntimeError("An attached controller requires a control target")
-            values = np.asarray(
-                self.controller.compute(self.get_control_state(), target),
-                dtype=float,
-            )
+            values = self.controller.compute(self.get_control_state(), target)
             required = len(self.control_actuator_slots)
             if values.shape != (required,):
                 raise ValueError(f"Robot {self.name!r} needs {required} finite joint commands")

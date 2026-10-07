@@ -8,7 +8,7 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_cube_stack
 from mujoco_lab.assets import CubeCount, RobotName
-from mujoco_lab.assets.loader import load_robot_config
+from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.control import create_controller
@@ -19,7 +19,11 @@ from mujoco_lab.planning import PlannerConfig, default_planning, planner_name
 class Config:
     """Run heuristic or sampling cube stacking."""
 
-    cubes: CubeCount = 2
+    cubes: CubeCount = 1
+    seed: int = 50
+    xy_range: float = 0.02
+    min_gap: float = 0.01
+    cube_yaw_range_degrees: float = 45
     robot: RobotName = "forte"
     environment: Literal["table_shelf", "warehouse"] = "table_shelf"
     method: Literal["heuristic", "sampling"] = "heuristic"
@@ -41,8 +45,16 @@ def main() -> None:
         raise ValueError("steps must be zero or greater")
 
     robot_config = load_robot_config(config.robot)
+    scene = create_cube_stack(config.cubes, environment=config.environment)
+    randomize_cube_positions(
+        scene,
+        xy_range=config.xy_range,
+        min_gap=config.min_gap,
+        yaw_range_degrees=config.cube_yaw_range_degrees,
+        seed=config.seed,
+    )
     simulator = Simulator(
-        create_cube_stack(config.cubes, environment=config.environment),
+        scene,
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
     )
     robot = simulator.robots[config.robot]

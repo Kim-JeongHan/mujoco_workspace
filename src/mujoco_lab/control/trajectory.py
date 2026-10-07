@@ -249,6 +249,6 @@ def demo_target_updater(simulator, modes: dict[str, str]):
 
     def update(sim):
         for name, trajectory in trajectories.items():
-            sim.robots[name].target = trajectory(sim.data.time)
+            sim.robots[name].update_target(trajectory(sim.data.time))
 
     return update

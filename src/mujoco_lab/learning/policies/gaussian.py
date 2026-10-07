@@ -40,7 +40,7 @@ class GaussianPolicy(BasePolicy):
 
         self.log_std = nn.Parameter(torch.zeros(chunk_size, action_dim))
 
-    def forward(self, state):
+    def forward(self, state: torch.Tensor) -> torch.distributions.Normal:
         """Return the Gaussian distribution conditioned on a batch of states.
 
         Args:
@@ -72,6 +72,28 @@ class GaussianPolicy(BasePolicy):
         """
         return self(state).rsample()
 
+    def log_prob(self, state: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        """Return one joint log probability per sampled action chunk (B,)."""
+        return self(state).log_prob(actions).sum(dim=(-1, -2))
+
+    def entropy(self, state: torch.Tensor) -> torch.Tensor:
+        """Return joint action entropy per state (B,)."""
+        return self(state).entropy().sum(dim=(-1, -2))
+
+    def kl_from(
+        self, state: torch.Tensor, old_mean: torch.Tensor, old_std: torch.Tensor
+    ) -> torch.Tensor:
+        """Return KL(old || current) per state using a detached distribution snapshot."""
+        current = self(state)
+        old_mean, old_std = old_mean.detach(), old_std.detach()
+        kl = (
+            current.scale.log()
+            - old_std.log()
+            + (old_std.square() + (old_mean - current.loc).square()) / (2 * current.scale.square())
+            - 0.5
+        )
+        return kl.sum(dim=(-1, -2))
+
     def compute_loss(self, state, action_chunk):
         """Compute the negative log likelihood of expert action chunks.
 
@@ -82,8 +104,4 @@ class GaussianPolicy(BasePolicy):
         Returns:
             torch.Tensor: Mean negative log likelihood with shape ().
         """
-        dist: torch.distributions.Normal = self(state)
-
-        log_prob = dist.log_prob(action_chunk)
-
-        return -log_prob.sum(dim=(-1, -2)).mean()
+        return -self.log_prob(state, action_chunk).mean()

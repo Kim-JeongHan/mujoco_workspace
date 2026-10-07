@@ -140,8 +140,6 @@ class Graph:
 
     def nearest(self, target: Node) -> Node:
         """Find the nearest graph node according to the graph planning space."""
-        if not self.nodes:
-            raise ValueError("Node list is empty")
         return min(self.nodes, key=lambda node: self.distance(node, target))
 
     def near(self, target: Node, radius: float) -> list[Node]:

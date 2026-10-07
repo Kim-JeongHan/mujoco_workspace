@@ -17,6 +17,6 @@ def physics_steps_per_action(simulation_hz: float, action_execution_hz: float) -
     if not (0 < simulation_hz < math.inf and 0 < action_execution_hz < math.inf):
         raise ValueError("simulation_hz and action_execution_hz must be finite and positive")
     repeat = simulation_hz / action_execution_hz
-    if not math.isfinite(repeat) or repeat < 1 or not math.isclose(repeat, round(repeat)):
+    if repeat < 1 or not math.isclose(repeat, round(repeat)):
         raise ValueError("simulation_hz must be an integer multiple of action_execution_hz")
     return round(repeat)

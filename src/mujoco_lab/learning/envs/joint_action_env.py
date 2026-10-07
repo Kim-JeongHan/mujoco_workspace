@@ -129,7 +129,7 @@ class JointActionEnv(gym.Env):
             for robot in self.robots:
                 if robot.name in arm_segments:
                     act, next_act = arm_segments[robot.name]
-                    robot.target = min_jerk(act, next_act, elapsed, transit)
+                    robot.update_target(min_jerk(act, next_act, elapsed, transit))
 
         terminated = False
         physics_steps = 0

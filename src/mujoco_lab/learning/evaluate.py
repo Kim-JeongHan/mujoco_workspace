@@ -79,8 +79,6 @@ def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path,
     """Load a checkpoint, evaluate it, and write one exclusive local run directory."""
     console = ConsoleLogger()
     rollout = config.rollout
-    if config.device == "cuda" and not torch.cuda.is_available():
-        raise ValueError("CUDA requested but unavailable")
     device = torch.device(config.device)
     model, normalizer, metadata = load_checkpoint(config.checkpoint)
     scene_name = metadata["dataset_metadata"]["replay"].get("scene", "cube_stack")

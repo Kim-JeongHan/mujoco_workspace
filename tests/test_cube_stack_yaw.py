@@ -63,7 +63,9 @@ def test_pick_tracks_cube_yaw_and_place_returns_to_recipe(degrees, method):
         recipe_rotation = Rotation.from_euler("xyz", expert.recipe.euler_xyz_degrees, degrees=True)
 
     pick_names = (
-        ("above_pick", "pick", "close", "lift") if method == "heuristic" else ("pick", "close")
+        ("above_pick", "pick", "close", "lift")
+        if method == "heuristic"
+        else ("above_pick", "pick", "close")
     )
     for name in pick_names:
         stage = stages[f"cube0:{name}"]

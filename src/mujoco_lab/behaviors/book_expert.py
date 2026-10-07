@@ -88,7 +88,8 @@ class BookInsertionExpert(Expert):
             return self._hold_action()
         now = self.simulator.data.time
         current = self.robot.state.snapshot().qpos[:7]
-        if self.execution.trajectory is None:
+        trajectory = self.execution.trajectory
+        if trajectory is None:
             try:
                 trajectory, reason = self.motion.make_trajectory(
                     self.motion_request(self.get_stage_name(), self.pick_pose)
@@ -102,9 +103,6 @@ class BookInsertionExpert(Expert):
         next_act, complete = self.execution.sample(
             now, current, self.recipe.waypoint_tolerance, dt=dt
         )
-        trajectory = self.execution.trajectory
-        if trajectory is None:
-            raise RuntimeError("Trajectory expert has no active trajectory")
         if self._advance_stage(current, path_complete=complete):
             return next_act
         if now - self.execution.start_time > trajectory.duration + self.recipe.stage_timeout_s:
@@ -115,8 +113,7 @@ class BookInsertionExpert(Expert):
         if simulator is not self.simulator:
             raise ValueError("Expert is bound to a different simulator")
         action = self.act()
-        self.robot.target = ControlTarget(action[:7])
-        self.gripper.set_target(float(action[7]))
+        self.robot.update_target(ControlTarget(action[:7]), float(action[7]))
         success = self.task.status().released_stable
         if self.failed or (self.stage >= len(self.STAGES) and success):
             simulator.stop()

@@ -95,10 +95,10 @@ def load_checkpoint(path: str | Path) -> tuple[BasePolicy, Normalizer, dict[str,
     model.eval()
     stats = payload["normalizer"]
     normalizer = Normalizer(
-        state_mean=stats["state_mean"].numpy().copy(),
-        state_std=stats["state_std"].numpy().copy(),
-        action_mean=stats["action_mean"].numpy().copy(),
-        action_std=stats["action_std"].numpy().copy(),
+        state_mean=stats["state_mean"].numpy(),
+        state_std=stats["state_std"].numpy(),
+        action_mean=stats["action_mean"].numpy(),
+        action_std=stats["action_std"].numpy(),
     )
     metadata = {
         "architecture": architecture,

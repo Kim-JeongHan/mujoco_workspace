@@ -69,6 +69,7 @@ class Config:
 
 def main() -> None:
     config = tyro.cli(Config, description="Collect Panda or Forte book demonstrations")
+    repeat = config.physics_steps_per_action
     logger = Logger()
     logger.info(
         f"Collecting {config.count} total attempts to {config.output_dir.resolve()} "
@@ -85,7 +86,7 @@ def main() -> None:
         BookReplayConfig(
             book=config.book,
             robot=config.robot,
-            physics_steps_per_action=config.physics_steps_per_action,
+            physics_steps_per_action=repeat,
             book_yaw_range_degrees=config.book_yaw_range_degrees,
             xy_range=config.xy_range,
         ),
@@ -94,13 +95,13 @@ def main() -> None:
     controller = create_book_controller(robot, robot_config.controller)
     robot.change_controller(controller)
     task = BookTask(simulator)
-    max_steps = config.max_steps
+    max_steps = max_steps_for_seconds(config.max_seconds, simulator.dt * repeat)
     env = BookEnv(
         task,
         xy_range=config.xy_range,
         book_yaw_range_degrees=config.book_yaw_range_degrees,
         max_steps=max_steps,
-        physics_steps_per_action=config.physics_steps_per_action,
+        physics_steps_per_action=repeat,
     )
     recipe = load_book_recipe(config.robot)
     expert = BookInsertionExpert(

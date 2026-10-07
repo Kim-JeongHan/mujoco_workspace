@@ -31,3 +31,11 @@ def test_update_rejects_targets_that_would_broadcast():
     critic = ValueCritic(3, 1, 8, 1e-3)
     with pytest.raises(ValueError, match="q_values must have shape"):
         critic.update(np.zeros((4, 3)), np.ones((4, 2)))
+
+
+def test_tensor_targets_are_fixed_during_critic_update():
+    critic = ValueCritic(3, 1, 8, 1e-3)
+    targets = torch.ones(4, requires_grad=True)
+    critic.update(torch.zeros(4, 3), targets)
+    assert targets.grad is None
+    assert critic.optimizer.state

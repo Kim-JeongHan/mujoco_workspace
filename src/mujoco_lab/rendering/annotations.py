@@ -33,7 +33,9 @@ def _next_geom(scene):
     return scene.geoms[scene.ngeom - 1]
 
 
-def add_arrow(scene, origin, vector, rgba, width: float = ARROW_WIDTH) -> None:
+def add_arrow(
+    scene, origin: np.ndarray, vector: np.ndarray, rgba, width: float = ARROW_WIDTH
+) -> None:
     geom = _next_geom(scene)
     if geom is None:
         return
@@ -45,17 +47,16 @@ def add_arrow(scene, origin, vector, rgba, width: float = ARROW_WIDTH) -> None:
         np.eye(3).flatten(),
         np.asarray(rgba, dtype=np.float32),
     )
-    start = np.asarray(origin, dtype=float)
     mujoco.mjv_connector(
         geom,
         mujoco.mjtGeom.mjGEOM_ARROW,
         width,
-        start,
-        start + np.asarray(vector, dtype=float),
+        origin,
+        origin + vector,
     )
 
 
-def add_marker(scene, position, rgba, size: float = 0.02) -> None:
+def add_marker(scene, position: np.ndarray, rgba, size: float = 0.02) -> None:
     geom = _next_geom(scene)
     if geom is None:
         return
@@ -63,7 +64,7 @@ def add_marker(scene, position, rgba, size: float = 0.02) -> None:
         geom,
         mujoco.mjtGeom.mjGEOM_SPHERE,
         np.full(3, size),
-        np.asarray(position, dtype=float),
+        position,
         np.eye(3).flatten(),
         np.asarray(rgba, dtype=np.float32),
     )
@@ -77,8 +78,7 @@ def scaled_length(value: float, reference: float, max_length: float) -> float:
     return max_length * np.sign(ratio) * np.sqrt(abs(ratio))
 
 
-def scaled_vector(vector, reference: float, max_length: float) -> np.ndarray:
-    vector = np.asarray(vector, dtype=float)
+def scaled_vector(vector: np.ndarray, reference: float, max_length: float) -> np.ndarray:
     magnitude = float(np.linalg.norm(vector))
     if magnitude < 1e-9:
         return np.zeros(3)

@@ -24,9 +24,11 @@ Examples:
   scripts/dataset_upload.sh username/robot-datasets forte_heuristic_final_100hz
 
 Requires the Hugging Face CLI (`hf`; install with `pip install -U
-huggingface_hub`) and an authenticated account with write access (`hf auth
-login`). The CLI handles authentication; this script never logs in. A newly
-created repository is private; an existing repository keeps its visibility.
+huggingface_hub`) and HUGGINGFACE_API_KEY in the project-root .env file,
+using shell-compatible KEY=value assignments. The token must have write
+access. It is passed to the CLI through HF_TOKEN; no `hf auth login` is
+needed. A newly created repository is private; an existing repository keeps
+its visibility.
 EOF
 }
 
@@ -62,6 +64,19 @@ if ! command -v hf >/dev/null 2>&1; then
   printf 'Hugging Face CLI "hf" was not found on PATH.\n' >&2
   exit 1
 fi
+
+env_file="$project_root/.env"
+if [[ ! -f "$env_file" ]]; then
+  printf 'Hugging Face authentication requires %s.\n' "$env_file" >&2
+  exit 1
+fi
+HUGGINGFACE_API_KEY=""
+source "$env_file"
+if [[ -z "${HUGGINGFACE_API_KEY:-}" ]]; then
+  printf 'Set HUGGINGFACE_API_KEY in %s.\n' "$env_file" >&2
+  exit 1
+fi
+export HF_TOKEN="$HUGGINGFACE_API_KEY"
 
 hf repos create "$repo_id" --repo-type dataset --private --exist-ok
 hf upload "$repo_id" "$source_dir" "$path_in_repo" --repo-type dataset \

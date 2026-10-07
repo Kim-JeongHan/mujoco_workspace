@@ -1,4 +1,4 @@
-"""Independent state-value network for PPO."""
+"""Independent state-value network for policy gradient learning."""
 
 import numpy as np
 import torch
@@ -34,7 +34,9 @@ class ValueCritic(nn.Module):
         """Map normalized state histories of shape (B, N_s) to values (B,)."""
         return self.network(obs).squeeze(-1)
 
-    def update(self, obs: np.ndarray, q_values: np.ndarray) -> dict[str, float]:
+    def update(
+        self, obs: np.ndarray | torch.Tensor, q_values: np.ndarray | torch.Tensor
+    ) -> dict[str, float]:
         """Take one MSE regression step toward fixed return targets.
 
         ``obs`` must already use BC normalization and flattened observation
@@ -43,7 +45,7 @@ class ValueCritic(nn.Module):
         """
         parameter = next(self.network.parameters())
         observations = torch.as_tensor(obs, dtype=parameter.dtype, device=parameter.device)
-        targets = torch.as_tensor(q_values, dtype=parameter.dtype, device=parameter.device)
+        targets = torch.as_tensor(q_values, dtype=parameter.dtype, device=parameter.device).detach()
         if observations.ndim != 2 or observations.shape[1] != self.state_dim:
             raise ValueError("obs must have shape (B, ob_dim)")
         if targets.ndim == 2 and targets.shape[1] == 1:

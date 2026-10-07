@@ -184,8 +184,7 @@ class PolicyEvaluator:
         max_steps = self.max_steps
         obs_horizon = metadata["architecture"]["obs_horizon"]
         execution_horizon = metadata["architecture"]["execution_horizon"]
-        low = np.asarray(env.action_space.low, dtype=np.float64)
-        high = np.asarray(env.action_space.high, dtype=np.float64)
+        low, high = env.action_space.low, env.action_space.high
         raw_obs, _ = env.reset(seed=env_seed)
         start_sim_time = float(env.simulator.data.time)
         task = env.task
@@ -196,7 +195,6 @@ class PolicyEvaluator:
             if isinstance(task, BookTask)
             else None
         )
-        raw_obs = np.asarray(raw_obs)
         history = deque((raw_obs.copy() for _ in range(obs_horizon)), maxlen=obs_horizon)
         steps = 0
         episode_return = 0.0
@@ -222,8 +220,7 @@ class PolicyEvaluator:
                             recorder.record_due(camera)
                         episode_return += float(reward)
                         success = bool(info["success"]) and terminated and not truncated
-                        raw_obs = np.asarray(next_obs)
-                        history.append(raw_obs.copy())
+                        history.append(next_obs.copy())
                         if terminated or truncated or steps >= max_steps:
                             if success:
                                 reason = "success"

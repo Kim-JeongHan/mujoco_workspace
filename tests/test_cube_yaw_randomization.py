@@ -58,19 +58,16 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
     distance = sum(env._cube_half_sizes[:, 0]) + env.min_gap + 0.001
     env._home_xy[:] = [[0.0, 0.0], [distance, 0.0]]
     env.xy_range = 0.0
-    assert (
-        len(
-            sample_cube_positions(
-                env._home_xy,
-                env._cube_half_sizes,
-                np.random.default_rng(11),
-                0.0,
-                env.min_gap,
-                100,
-            )
-        )
-        == 2
+    positions, yaws = sample_cube_positions(
+        env._home_xy,
+        env._cube_half_sizes,
+        np.random.default_rng(11),
+        0.0,
+        env.min_gap,
+        100,
     )
+    assert len(positions) == 2
+    np.testing.assert_array_equal(yaws, 0.0)
     with pytest.raises(ValueError, match="without overlap"):
         env.reset(seed=11)
 

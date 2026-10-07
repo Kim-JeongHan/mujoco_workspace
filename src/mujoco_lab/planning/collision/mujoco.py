@@ -64,19 +64,19 @@ class MuJoCoCollisionChecker(CollisionChecker):
 
         configured = state.get_joint_limits([state.joint_ids.index(joint) for joint in selected])
         if bounds is None:
-            requested = configured
+            self.bounds = configured
         else:
             requested = np.asarray(bounds, dtype=float)
             if requested.shape != (len(selected), 2):
                 raise ValueError(f"bounds must have shape ({len(selected)}, 2)")
-        if not np.isfinite(requested).all() or np.any(requested[:, 0] >= requested[:, 1]):
-            raise ValueError("Each planning bound must be finite with lower < upper")
-        if np.any(
-            (requested[:, 0] < configured[:, 0] - 1e-9)
-            | (requested[:, 1] > configured[:, 1] + 1e-9)
-        ):
-            raise ValueError("Planning bounds cannot exceed configured position limits")
-        self.bounds = requested.copy()
+            if not np.isfinite(requested).all() or np.any(requested[:, 0] >= requested[:, 1]):
+                raise ValueError("Each planning bound must be finite with lower < upper")
+            if np.any(
+                (requested[:, 0] < configured[:, 0] - 1e-9)
+                | (requested[:, 1] > configured[:, 1] + 1e-9)
+            ):
+                raise ValueError("Planning bounds cannot exceed configured position limits")
+            self.bounds = requested.copy()
 
         owned = np.zeros(self.model.nbody, dtype=bool)
         owned[state.root_body_id] = True
@@ -123,7 +123,7 @@ class MuJoCoCollisionChecker(CollisionChecker):
         start, goal = self._state(from_state), self._state(to_state)
         if resolution is None:
             resolution = self.edge_resolution
-        if not np.isfinite(resolution) or resolution <= 0:
+        elif not np.isfinite(resolution) or resolution <= 0:
             raise ValueError("resolution must be finite and positive")
         steps = max(1, int(np.ceil(np.linalg.norm(goal - start) / resolution)))
         return all(

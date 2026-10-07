@@ -104,8 +104,8 @@ class MountainTerrain:
         goal: np.ndarray | tuple[float, float] | list[float],
     ) -> float:
         """Approximate surface distance between two 2D states."""
-        start_state = np.array(start, dtype=float)
-        goal_state = np.array(goal, dtype=float)
+        start_state = np.asarray(start, dtype=float)
+        goal_state = np.asarray(goal, dtype=float)
         direction = goal_state - start_state
         if np.linalg.norm(direction) == 0.0:
             return 0.0

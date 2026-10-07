@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal
 
 import mujoco
-import numpy as np
 import tyro
 from dacite import from_dict
 
@@ -114,8 +113,6 @@ class EpisodeReplay:
 
 def main() -> None:
     config = tyro.cli(Config, description="Replay a recorded manipulation episode")
-    if not np.isfinite(config.speed) or config.speed <= 0:
-        raise ValueError("speed must be finite and positive")
     replay = EpisodeReplay(load_episode(config.path))
     manager = SimulatorManager()
     manager.add_simulator("replay", replay.simulator)

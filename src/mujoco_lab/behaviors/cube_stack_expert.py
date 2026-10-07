@@ -131,7 +131,8 @@ class CubeStackExpert(Expert):
             self.failed, self.failure_reason = True, reason
             return self._hold_action()
         current = self.robot.state.snapshot().qpos[:7]
-        if self.execution.trajectory is None:
+        trajectory = self.execution.trajectory
+        if trajectory is None:
             try:
                 trajectory, reason = self.make_trajectory(self._plan[self.stage])
             except IKError as error:
@@ -146,9 +147,6 @@ class CubeStackExpert(Expert):
             height = self.simulator.data.body(f"cube{stage.cube_index}/object_0").xpos[2]
             self._transport_peak = max(self._transport_peak, float(height))
         next_act, complete = self.execution.sample(now, current, self.recipe.arm_tolerance, dt=dt)
-        trajectory = self.execution.trajectory
-        if trajectory is None:
-            raise RuntimeError("Trajectory expert has no active trajectory")
         if (
             complete
             and required_lift is not None
@@ -168,8 +166,7 @@ class CubeStackExpert(Expert):
         if simulator is not self.simulator:
             raise ValueError("Expert is bound to a different simulator")
         action = self.act()
-        self.robot.target = ControlTarget(action[:7])
-        self.gripper.set_target(float(action[7]))
+        self.robot.update_target(ControlTarget(action[:7]), float(action[7]))
         success = self.task.status().released_stable_stack
         if self.failed or (self.stage >= len(self._plan) and success):
             simulator.stop()
@@ -264,20 +261,28 @@ class CubeStackExpert(Expert):
             translation=reference + yaw_rotation.apply(stage.offset_xyz_m),
         )
 
-    SAMPLING_STAGES = frozenset(("pick", "close", "place", "release", "retract"))
+    SAMPLING_STAGES = frozenset(("above_pick", "pick", "close", "place", "release", "retract"))
 
     def sampling_request(self, stage, planned_start):
         """Own cube workflow semantics; the planner receives only motion inputs."""
         robot = self.robot
         phase = stage.recipe.name
         reason = self._grasp_failure(stage, started=False)
-        if phase == "pick":
+        if phase in ("above_pick", "pick"):
             actual = robot.data.body(f"cube{stage.cube_index}/object_0").xpos
             if np.linalg.norm(actual - planned_start) > 0.01:
                 reason = f"cube{stage.cube_index} moved more than 1 cm from its planned pick pose"
         hold = phase in ("close", "release")
         waypoints = stage.waypoints
-        if phase == "place" and reason is None:
+        if hold:
+            # Preserve the live command after Cartesian IK chooses a new branch.
+            waypoints = (grasp_pose(robot),)
+        elif phase == "pick":
+            measured = grasp_pose(robot)
+            destination = measured.as_translation().copy()
+            destination[2] = planned_start[2] + stage.recipe.offset_xyz_m[2]
+            waypoints = (Transform(rotation=measured.as_rotation(), translation=destination),)
+        elif phase == "place" and reason is None:
             measured = grasp_pose(robot)
             waypoints = (
                 Transform(
@@ -289,11 +294,13 @@ class CubeStackExpert(Expert):
         arm_ratio, gripper_ratio = self.stage_ratios(stage)
         return MotionRequest(
             name=stage.name,
-            mode="hold" if hold else "sampling",
+            mode="hold" if hold else "cartesian" if phase == "pick" else "sampling",
             waypoints=waypoints,
             gripper_target=stage.gripper_target,
             arm_ratio=arm_ratio,
             gripper_ratio=gripper_ratio,
+            shape_preserving=phase == "pick",
+            cartesian_resolution=0.005 if phase == "pick" else 0.01,
             checker=None if hold else self.collision_checker(stage.cube_index, phase),
             failure_reason=reason,
         )
@@ -367,15 +374,11 @@ class CubeStackExpert(Expert):
 
     def build_stages(self, starts: np.ndarray, goals: np.ndarray) -> list[PlannedStage]:
         """Compute ordered targets from (cube_count, 3) poses; defer live paths."""
-        self._starts = np.array(starts, dtype=float, copy=True)
-        # Keep heuristic IK near the measured posture after joint-reference changes.
+        self._starts = starts.copy()
+        # Seed IK from the measured posture, including the configured default pose.
         state = self.robot.state
         reference = state.snapshot().qpos[:7].copy()
-        reference_q = (
-            self.simulator.model.qpos0[state.qpos_indices[:7]].copy()
-            if self.robot.robot_type == "forte" and self.method == "sampling"
-            else reference
-        )
+        reference_q = reference
         if self.recipe.euler_xyz_degrees is None:
             rotation = self.simulator.data.site_xmat[state.site_id(self.recipe.frame)].reshape(3, 3)
             rotation = rotation.copy()
@@ -411,7 +414,10 @@ class CubeStackExpert(Expert):
                     else:
                         raise IKError(f"Unreachable IK pose for {self.robot.name}/grasp")
                 else:
-                    reference_q = self.motion.solve_ik(pose, reference_q)
+                    # Keep pickup null-space choices out of independent Forte targets.
+                    reference_q = self.motion.solve_ik(
+                        pose, reference if self.robot.robot_type == "forte" else reference_q
+                    )
                 stages.append(
                     PlannedStage(
                         f"cube{index}:{stage.name}",
@@ -568,7 +574,7 @@ class CubeStackExpert(Expert):
         arm_ratio, gripper_ratio = self.stage_ratios(stage)
         for route in routes:
             try:
-                path = self.forte_heuristic_orientation_path(np.asarray(route))
+                path = self.forte_heuristic_orientation_path(route)
             except IKError:
                 continue
             trajectory = self.motion.trajectory(

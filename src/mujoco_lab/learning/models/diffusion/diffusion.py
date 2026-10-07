@@ -72,8 +72,6 @@ class DiffusionModel(nn.Module):
         Returns:
             Predicted noise ``[B, H, state_dim]``.
         """
-        if x.ndim < 3:
-            raise ValueError("x must have shape [B, H, state_dim].")
         if t.ndim == 0:
             t = t.reshape(1).expand(x.shape[0])
         elif t.ndim == 1 and t.shape[0] == 1 and x.shape[0] != 1:

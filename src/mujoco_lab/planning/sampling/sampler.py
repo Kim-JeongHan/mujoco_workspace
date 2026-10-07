@@ -60,7 +60,7 @@ class GoalBiasedSampler(Sampler):
             seed: Random seed for reproducibility
         """
         super().__init__(bounds, seed)
-        self.goal_state = np.array(goal_state)
+        self.goal_state = goal_state.copy()
         self.goal_bias = goal_bias
 
         if len(self.goal_state) != self.dim:
@@ -98,8 +98,8 @@ class InformedSampler(Sampler):
             seed: Random seed for reproducibility
         """
         super().__init__(bounds, seed)
-        self.start_state = np.array(start_state)
-        self.goal_state = np.array(goal_state)
+        self.start_state = start_state.copy()
+        self.goal_state = goal_state.copy()
         self.c_min = np.linalg.norm(self.goal_state - self.start_state)
         self.x_center = (self.start_state + self.goal_state) / 2.0
         self.dim = len(bounds)

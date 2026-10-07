@@ -235,7 +235,7 @@ def test_dynamics_are_robot_scoped_and_buffers_do_not_alias_other_robots():
         np.testing.assert_array_equal(robot.state.get_mass_matrix(), expected)
         assert robot.state.get_jacobian("grasp").shape == (6, robot.state.nv)
     np.testing.assert_array_equal(whole[np.ix_(left.state.dof_indices, right.state.dof_indices)], 0)
-    with pytest.raises(ValueError, match="no site"):
+    with pytest.raises(KeyError, match="right/grasp"):
         left.state.get_frame_position("right/grasp")
 
 
@@ -255,7 +255,7 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     assert left.state.dof_indices[0] == 6
     assert left.actuator_ids[0] == 0
     assert sim.model.body("left/helper").id not in sim.model.jnt_bodyid[left.state.joint_ids]
-    with pytest.raises(ValueError, match="no site"):
+    with pytest.raises(KeyError, match="helper_site"):
         left.state.get_frame_position("helper_site")
     left.change_controller(create_test_controller(left, controller="osc"))
     sim.step()

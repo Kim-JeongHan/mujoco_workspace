@@ -99,18 +99,12 @@ class RobotState:
             or np.any(limits[:, 0] >= limits[:, 1])
         ):
             raise ValueError("Configured position limits must be finite with lower < upper")
-        try:
-            indices = [constraints.joint_names.index(self.joint_names[slot]) for slot in slots]
-        except ValueError as error:
-            raise ValueError("Position limits must include every selected joint") from error
-        return limits[indices].copy()
+        indices = [constraints.joint_names.index(self.joint_names[slot]) for slot in slots]
+        return limits[indices]
 
     def site_id(self, frame: str) -> int:
         """Resolve a local site name belonging to this robot."""
-        try:
-            return self._sites[frame]
-        except KeyError:
-            raise ValueError(f"Robot {self.name!r} has no site named {frame!r}") from None
+        return self._sites[frame]
 
     def get_frame_joint_slots(self, frame: str) -> list[int]:
         """Return robot joint slots on a site's ancestor chain, in joint-name order."""
@@ -195,7 +189,7 @@ class RobotState:
             self._ik_data = mujoco.MjData(self.model)
         data = self._ik_data
         mujoco.mj_copyData(data, self.model, self.data)
-        current = data.qpos[indices].copy()
+        current = data.qpos[indices]
         reference = np.asarray(reference_q, dtype=float)
         if reference.shape != current.shape or not np.isfinite(reference).all():
             raise ValueError("reference_q must contain one finite position per IK joint")

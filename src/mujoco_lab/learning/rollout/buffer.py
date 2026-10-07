@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 import torch
 
-from mujoco_lab.learning.algorithms.advantage import compute_gae
-
 
 @dataclass
 class RolloutBatch:
@@ -32,6 +30,8 @@ class RolloutBuffer:
     sampled actions before environment clipping, and their joint log probability
     reduced over action dimensions. ``next_values`` uses the final observation
     before reset at episode boundaries. Inputs are copied without autograd.
+    Compute advantages and returns outside the buffer using the stored prefix
+    ``[:len(buffer)]``, then pass them to ``set_targets`` before sampling batches.
     """
 
     def __init__(
@@ -46,7 +46,7 @@ class RolloutBuffer:
     ) -> None:
         self.rollout_length = rollout_length
         self.pos = 0
-        self._returns_ready = False
+        self._targets_ready = False
         shape = (rollout_length, num_envs)
         self.states = torch.empty((*shape, state_dim), device=device, dtype=dtype)
         self.actions = torch.empty((*shape, *action_shape), device=device, dtype=dtype)
@@ -66,7 +66,7 @@ class RolloutBuffer:
     def reset(self) -> None:
         """Discard the rollout and reuse its allocated storage."""
         self.pos = 0
-        self._returns_ready = False
+        self._targets_ready = False
 
     @torch.no_grad()
     def add(
@@ -93,34 +93,32 @@ class RolloutBuffer:
         self.terminated[self.pos].copy_(terminated)
         self.truncated[self.pos].copy_(truncated)
         self.pos += 1
-        self._returns_ready = False
+        self._targets_ready = False
 
     @torch.no_grad()
-    def compute_returns(self, *, gamma: float = 0.99, gae_lambda: float = 0.95) -> None:
-        """Compute GAE and value targets for stored steps, including partial rollouts."""
+    def set_targets(self, advantages: torch.Tensor, returns: torch.Tensor) -> None:
+        """Copy externally computed targets of shape (len(buffer), E) without gradients.
+
+        The caller chooses the advantage estimator and critic target separately.
+        Any advantage normalization also belongs to the caller.
+        """
         if self.pos == 0:
-            raise RuntimeError("cannot compute returns for an empty rollout")
-        advantages, returns = compute_gae(
-            self.rewards[: self.pos],
-            self.values[: self.pos],
-            self.next_values[: self.pos],
-            self.terminated[: self.pos],
-            self.truncated[: self.pos],
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-        )
+            raise RuntimeError("cannot set targets for an empty rollout")
+        shape = self.rewards[: self.pos].shape
+        if advantages.shape != shape or returns.shape != shape:
+            raise ValueError("targets must have shape (len(buffer), num_envs)")
         self.advantages[: self.pos].copy_(advantages)
         self.returns[: self.pos].copy_(returns)
-        self._returns_ready = True
+        self._targets_ready = True
 
     def minibatches(self, batch_size: int) -> Iterator[RolloutBatch]:
         """Shuffle all stored transitions once, retaining the final smaller batch.
 
         Call again for each update epoch to reshuffle the same rollout. Do not
-        modify or reset the buffer while iterating. Advantages are unnormalized.
+        modify or reset the buffer while iterating. Targets are returned as supplied.
         """
-        if not self._returns_ready:
-            raise RuntimeError("compute returns before requesting minibatches")
+        if not self._targets_ready:
+            raise RuntimeError("set targets before requesting minibatches")
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
         states = self.states[: self.pos].flatten(0, 1)

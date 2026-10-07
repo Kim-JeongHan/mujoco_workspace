@@ -53,8 +53,6 @@ class CubeStackEnv(JointActionEnv):
         self.xy_range = float(xy_range)
         self.min_gap = float(min_gap)
         self.cube_yaw_range_degrees = float(cube_yaw_range_degrees)
-        if not np.isfinite(self.cube_yaw_range_degrees) or self.cube_yaw_range_degrees < 0:
-            raise ValueError("cube_yaw_range_degrees must be finite and nonnegative")
 
         self._cube_bodies = []
         self._goal_bodies = []
@@ -68,9 +66,9 @@ class CubeStackEnv(JointActionEnv):
             self._goal_bodies.append(self.model.body(f"cube{index}/object_target_0").id)
             qpos = int(self.model.joint(f"cube{index}/object_joint_0").qposadr[0])
             self._cube_qpos.append(qpos)
-            home_xy.append(self.data.qpos[qpos : qpos + 2].copy())
-            home_quat.append(self.data.qpos[qpos + 3 : qpos + 7].copy())
-            cube_half_sizes.append(self.model.geom(name).size[:2].copy())
+            home_xy.append(self.data.qpos[qpos : qpos + 2])
+            home_quat.append(self.data.qpos[qpos + 3 : qpos + 7])
+            cube_half_sizes.append(self.model.geom(name).size[:2])
         self._home_xy = np.array(home_xy)
         self._home_quat = np.array(home_quat)
         self._cube_half_sizes = np.array(cube_half_sizes)
@@ -100,39 +98,21 @@ class CubeStackEnv(JointActionEnv):
         ]
 
     def _randomize_cubes(self) -> list[float]:
-        if self.cube_yaw_range_degrees:
-            yaws = self.np_random.uniform(
-                -self.cube_yaw_range_degrees,
-                self.cube_yaw_range_degrees,
-                size=len(self._cube_qpos),
-            )
-            angles = np.deg2rad(yaws)
-            cosines = np.abs(np.cos(angles))
-            sines = np.abs(np.sin(angles))
-            half_sizes = np.column_stack(
-                (
-                    cosines * self._cube_half_sizes[:, 0] + sines * self._cube_half_sizes[:, 1],
-                    sines * self._cube_half_sizes[:, 0] + cosines * self._cube_half_sizes[:, 1],
-                )
-            )
-        else:
-            yaws = np.zeros(len(self._cube_qpos))
-            angles = np.zeros(len(self._cube_qpos))
-            half_sizes = self._cube_half_sizes
-        positions = sample_cube_positions(
+        positions, yaws = sample_cube_positions(
             self._home_xy,
-            half_sizes,
+            self._cube_half_sizes,
             self.np_random,
             self.xy_range,
             self.min_gap,
             100,
+            yaw_range_degrees=self.cube_yaw_range_degrees,
         )
-        for adr, xy, angle, home in zip(
-            self._cube_qpos, positions, angles, self._home_quat, strict=True
+        for adr, xy, yaw, home in zip(
+            self._cube_qpos, positions, yaws, self._home_quat, strict=True
         ):
             self.data.qpos[adr : adr + 2] = xy
             if self.cube_yaw_range_degrees:
-                half_angle = angle / 2
+                half_angle = np.deg2rad(yaw) / 2
                 yaw_quat = np.array([np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)])
                 mujoco.mju_mulQuat(self.data.qpos[adr + 3 : adr + 7], yaw_quat, home)
         return yaws.tolist()
@@ -185,7 +165,4 @@ class CubeStackEnv(JointActionEnv):
             parts.extend((position, rotation))
             parts.extend(position - ee_pos for ee_pos in ee_positions)
             parts.append(goal - position)
-        observation = np.concatenate(parts).astype(np.float32)
-        if observation.shape != self.observation_space.shape or not np.isfinite(observation).all():
-            raise RuntimeError("CubeStackEnv produced an invalid observation")
-        return observation
+        return np.concatenate(parts).astype(np.float32)

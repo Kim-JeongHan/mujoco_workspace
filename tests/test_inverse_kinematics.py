@@ -150,15 +150,15 @@ def test_failed_ik_leaves_shared_state_intact_and_allows_another_query(state):
 
 
 @pytest.mark.parametrize(
-    "frame,message",
+    "frame,error,message",
     [
-        ("other/tool", "no site named"),
-        ("base_frame", "no movable joints"),
+        ("other/tool", KeyError, "other/tool"),
+        ("base_frame", ValueError, "no movable joints"),
     ],
 )
-def test_ik_requires_an_owned_site_with_a_movable_chain(state, frame, message):
+def test_ik_requires_an_owned_site_with_a_movable_chain(state, frame, error, message):
     state.ik_frame = frame
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(error, match=message):
         state.solve_ik(Transform.identity(), state.snapshot().qpos[:3])
 
 

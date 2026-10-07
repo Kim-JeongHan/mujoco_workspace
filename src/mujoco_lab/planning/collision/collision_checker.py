@@ -97,17 +97,16 @@ class BoundedCollisionChecker(CollisionChecker):
 
     def _within_bounds(self, state: np.ndarray) -> bool:
         """Return True when position is inside bounds."""
-        position = np.array(state, dtype=float)
-        if position.ndim != 1:
+        if state.ndim != 1:
             raise ValueError("state must be a 1-D array")
-        if position.size < self.bounds.shape[0]:
+        if state.size < self.bounds.shape[0]:
             raise ValueError(
-                f"state must have at least {self.bounds.shape[0]} dimensions, got {position.size}"
+                f"state must have at least {self.bounds.shape[0]} dimensions, got {state.size}"
             )
 
         lower = self.bounds[:, 0]
         upper = self.bounds[:, 1]
-        truncated = position[: self.bounds.shape[0]]
+        truncated = state[: self.bounds.shape[0]]
         return bool(np.all(truncated >= lower - self.eps) and np.all(truncated <= upper + self.eps))
 
     def is_collision_free(self, state: np.ndarray) -> bool:

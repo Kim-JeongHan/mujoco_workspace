@@ -69,8 +69,6 @@ class ValueModel(nn.Module):
         Returns:
             Scalar value per trajectory ``[B, 1]``.
         """
-        if x.ndim < 3:
-            raise ValueError("x must have shape [B, H, state_dim].")
         return self.net(x)
 
     def set_seed(self, seed: int) -> None:

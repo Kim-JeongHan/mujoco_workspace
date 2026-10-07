@@ -69,19 +69,20 @@ def randomize_cube_positions(
     *,
     xy_range: float = 0.02,
     min_gap: float = 0.01,
+    yaw_range_degrees: float = 0.0,
     seed: int | None = None,
     max_attempts: int = 100,
 ) -> None:
-    """Randomize cube XY positions in a fresh, uncompiled cube scene.
+    """Randomize cube XY positions and yaw in a fresh, uncompiled cube scene.
 
     Each cube is sampled within ``xy_range`` meters of its current position.
     The function assumes bundled, axis-aligned cube bodies share a coordinate
-    frame and keeps their Z positions, rotations, target bodies, and robot
-    unchanged. Call it on a fresh scene for each episode. A fixed seed makes
-    sampling reproducible; this spacing check does not guarantee reachability.
+    frame. Yaw offsets are sampled within ``yaw_range_degrees`` of the initial
+    orientation, accounting for rotated footprints when checking spacing.
+    Z positions, target bodies, and the robot stay unchanged. Call it on a
+    fresh scene for each episode. A fixed seed makes sampling reproducible;
+    this spacing check does not guarantee reachability.
     """
-    if not np.isfinite(xy_range) or xy_range < 0:
-        raise ValueError("xy_range must be finite and nonnegative")
     if not np.isfinite(min_gap) or min_gap < 0:
         raise ValueError("min_gap must be finite and nonnegative")
     if max_attempts <= 0:
@@ -103,17 +104,24 @@ def randomize_cube_positions(
         geom = scene.geom(body.name)
         if geom is None:
             raise ValueError(f"Cube body {body.name!r} has no same-named geom")
-        half_sizes.append(geom.size[:2].copy())
+        half_sizes.append(geom.size[:2])
 
-    positions = sample_cube_positions(
-        np.array([body.pos[:2].copy() for body in cubes]),
+    positions, yaws = sample_cube_positions(
+        np.array([body.pos[:2] for body in cubes]),
         np.array(half_sizes),
         np.random.default_rng(seed),
         xy_range,
         min_gap,
         max_attempts,
+        yaw_range_degrees=yaw_range_degrees,
     )
-    for body, xy in zip(cubes, positions, strict=True):
+    for body, xy, yaw in zip(cubes, positions, yaws, strict=True):
         position = body.pos.copy()
         position[:2] = xy
         body.pos = position
+        if yaw_range_degrees:
+            half_angle = np.deg2rad(yaw) / 2
+            yaw_quat = np.array([np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)])
+            quaternion = np.empty(4)
+            mujoco.mju_mulQuat(quaternion, yaw_quat, body.quat)
+            body.quat = quaternion

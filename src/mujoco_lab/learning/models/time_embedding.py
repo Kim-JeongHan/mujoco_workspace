@@ -13,7 +13,7 @@ class SinusoidalTimeEmbedding(nn.Module):
 
     def __init__(self, dim: int) -> None:
         super().__init__()
-        if not isinstance(dim, int) or isinstance(dim, bool) or dim <= 0 or dim % 2:
+        if dim <= 0 or dim % 2:
             raise ValueError("time embedding dimension must be a positive even integer")
         periods = torch.logspace(math.log10(0.004), math.log10(4.0), dim // 2)
         self.register_buffer("frequencies", 2 * math.pi / periods, persistent=False)

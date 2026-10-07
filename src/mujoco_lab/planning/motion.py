@@ -32,6 +32,7 @@ class MotionRequest:
     gripper_ratio: MotionRatio = (1.0, 1.0)  # Fractions of configured opening-width limits.
     checker: CollisionChecker | None = None  # Stage-specific collision checker.
     shape_preserving: bool = False  # Keep smooth joint curves inside each waypoint interval.
+    cartesian_resolution: float = 0.01  # Maximum spacing of Cartesian IK waypoints (m).
     failure_reason: str | None = None  # Skip planning and return this failure reason when set.
 
 
@@ -39,9 +40,7 @@ def grasp_pose(robot) -> Transform:
     """Read the current world pose of the robot's grasp frame."""
     data = robot.data
     site = robot.state.site_id("grasp")
-    return Transform(
-        rotation=data.site_xmat[site].reshape(3, 3).copy(), translation=data.site_xpos[site].copy()
-    )
+    return Transform(rotation=data.site_xmat[site].reshape(3, 3), translation=data.site_xpos[site])
 
 
 class MotionPlanner:
@@ -68,12 +67,7 @@ class MotionPlanner:
             raise ValueError("Motion planning requires arm constraints and gripper motion limits")
         slots = self.robot.state.get_frame_joint_slots("grasp")
         names = [self.robot.state.joint_names[slot] for slot in slots]
-        try:
-            indices = [constraints.joint_names.index(name) for name in names]
-        except ValueError as error:
-            raise ValueError(
-                "Motion constraints must include every grasp-frame arm joint"
-            ) from error
+        indices = [constraints.joint_names.index(name) for name in names]
         gripper_slot = self.robot.state.joint_ids.index(self.robot.gripper.joint_id)
         return Constraints(
             joint_names=[*names, self.robot.state.joint_names[gripper_slot]],
@@ -114,7 +108,7 @@ class MotionPlanner:
             destination = request.waypoints[-1]
             if not isinstance(destination, Transform):
                 raise TypeError("Cartesian motion requires a Transform waypoint")
-            path = self.cartesian_path(destination)
+            path = self.cartesian_path(destination, resolution=request.cartesian_resolution)
         else:
             if self.planning is None:
                 raise ValueError("A sampling planner configuration is required")

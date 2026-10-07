@@ -36,7 +36,7 @@ def test_updater_runs_before_each_control_and_replays_after_reset():
 
     def update(current):
         calls.append(current.data.time)
-        current.robots["arm"].target = ControlTarget(np.full(7, len(calls)))
+        current.robots["arm"].update_target(ControlTarget(np.full(7, len(calls))))
 
     sim.target_updater = update
     sim.run_steps(10)
@@ -72,14 +72,22 @@ def test_external_targets_and_updater_are_robot_local():
     left.change_controller(create_test_controller(left, controller="pd"))
     right.change_controller(create_test_controller(right, controller="pd"))
     original_right = right.target.position.copy()
+    left_gripper, right_gripper = left.gripper, right.gripper
+    assert left_gripper is not None and right_gripper is not None
+    left.update_target(ControlTarget(np.zeros(7)), 0.02)
+    original_right_gripper = right_gripper.get_target()
 
     def update(current):
-        current.robots["left"].target = ControlTarget(np.full(7, 0.1))
+        current.robots["left"].update_target(ControlTarget(np.full(7, 0.1)))
 
     sim.target_updater = update
     sim.step()
     np.testing.assert_array_equal(left.target.position, 0.1)
     np.testing.assert_array_equal(right.target.position, original_right)
+    assert left_gripper.get_target() == 0.02
+    assert left_gripper.is_active()
+    assert right_gripper.get_target() == original_right_gripper
+    assert not right_gripper.is_active()
 
 
 def test_updater_and_controller_error_prevent_physics_step():

@@ -157,9 +157,6 @@ class TemporalUnet(nn.Module):
         kernel_size: int = 5,
     ) -> None:
         super().__init__()
-        if dim % 8 != 0:
-            raise ValueError(f"dim must be divisible by 8 for GroupNorm, got {dim}")
-
         self.transition_dim = int(transition_dim)
         self.dim = int(dim)
         self.dim_mults = tuple(dim_mults)
@@ -292,9 +289,6 @@ class TemporalValueNet(nn.Module):
         kernel_size: int = 5,
     ) -> None:
         super().__init__()
-        if dim % 8 != 0:
-            raise ValueError(f"dim must be divisible by 8 for GroupNorm, got {dim}")
-
         self.transition_dim = int(transition_dim)
         self.dim = int(dim)
         self.dim_mults = tuple(dim_mults)

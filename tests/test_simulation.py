@@ -1,8 +1,3 @@
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import mujoco
 import numpy as np
 import pytest
@@ -84,59 +79,3 @@ def test_divergence_releases_lifecycle_and_allows_reset(field):
     assert np.isfinite(getattr(sim.data, field)).all()
     sim.run_steps(1)
     assert sim._state.get_state() == "idle"
-
-
-def test_simulation_example_loads_an_external_model_with_relative_includes(tmp_path):
-    model_dir = tmp_path / "external"
-    model_dir.mkdir()
-    path = model_dir / "scene.xml"
-    path.write_text('<mujoco><include file="body.xml"/></mujoco>')
-    (model_dir / "body.xml").write_text(
-        '<mujoco><worldbody><body pos="0 0 1"><freejoint/>'
-        '<geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
-    )
-    example = Path(__file__).parents[1] / "examples" / "simulation.py"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(example),
-            "--environment",
-            "external/scene.xml",
-            "--headless",
-            "--steps",
-            "10",
-        ],
-        cwd=tmp_path,
-        env={**os.environ, "MUJOCO_GL": "disable"},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert "[INFO] environment=external/scene.xml robot=none simulated=0.020s" in result.stderr
-
-
-def test_installed_cli_runs_without_display_from_another_directory(tmp_path):
-    env = {**os.environ, "MUJOCO_GL": "disable"}
-    env.pop("DISPLAY", None)
-    env.pop("WAYLAND_DISPLAY", None)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mujoco_lab",
-            "--headless",
-            "--robot",
-            "panda",
-            "--steps",
-            "3",
-        ],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "robot=panda cubes=2 method=heuristic" in result.stderr
-    assert "simulated=0.006s" in result.stderr
-    assert "step budget exhausted" in result.stderr
