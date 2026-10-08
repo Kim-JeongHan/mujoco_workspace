@@ -1,5 +1,7 @@
 """Centered grasps, physical carry checks, and released book insertion."""
 
+from dataclasses import replace
+
 import mujoco
 import numpy as np
 import pytest
@@ -28,7 +30,7 @@ def make_expert(planning=None, *, method="sampling"):
     task = BookTask(sim)
     expert = BookInsertionExpert(
         task,
-        recipe=load_book_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        recipe=load_book_recipe("forte"),
         method=method,
         planning=(planning or default_planning()) if method == "sampling" else None,
     )
@@ -65,6 +67,33 @@ def test_no_physical_grasp_cannot_start_carry():
     expert.act()
     assert expert.failed
     assert expert.failure_reason == "No two-finger physical grasp for lift"
+
+
+def test_sampling_replaces_a_colliding_joint_goal_without_changing_its_grasp_pose():
+    sim, _, expert = make_expert()
+    request = expert.motion_request("approach", expert.pick_pose)
+    # Sequential Cartesian IK reaches a folded wrist branch at this same goal.
+    blocked = expert.motion.cartesian_path(request.waypoints[0])[-1]
+    assert not request.checker.is_collision_free(blocked)
+    before = sim.data.qpos.copy()
+    blocked_pose = expert.motion.waypoint_poses((blocked,))[0]
+
+    trajectory, reason = expert.motion.make_trajectory(replace(request, waypoints=(blocked,)))
+
+    assert reason is None
+    selected = trajectory.path[-1, :7]
+    assert not np.allclose(selected, blocked)
+    assert request.checker.is_collision_free(selected)
+    selected_pose = expert.motion.waypoint_poses((selected,))[0]
+    np.testing.assert_allclose(
+        selected_pose.as_translation(), blocked_pose.as_translation(), atol=1e-5
+    )
+    np.testing.assert_allclose(
+        selected_pose.as_rotation().as_matrix(), blocked_pose.as_rotation().as_matrix(), atol=1e-5
+    )
+    for time in np.linspace(0, trajectory.duration, 101):
+        assert request.checker.is_collision_free(trajectory.sample(time).position[:7])
+    np.testing.assert_array_equal(sim.data.qpos, before)
 
 
 def test_close_mode_waits_for_contact_then_completes(monkeypatch):

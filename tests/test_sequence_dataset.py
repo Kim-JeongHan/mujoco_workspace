@@ -86,7 +86,9 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
 
     assert model.state_dim == 108 and model.action_dim == 8 and model.chunk_size == 1
     assert normalizer.state_mean.shape == (54,) and normalizer.action_mean.shape == (8,)
-    np.testing.assert_allclose(normalizer.state_mean, episode.states[:-1].mean(axis=0))
+    np.testing.assert_allclose(
+        normalizer.state_mean, episode.states[:-1].mean(axis=0, dtype=np.float64)
+    )
     state, _ = ChunkDataset([episode], 1, normalizer, obs_horizon=2)[0]
     with torch.no_grad():
         actions = model.sample_actions(torch.from_numpy(state[None]))

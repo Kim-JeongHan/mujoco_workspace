@@ -5,14 +5,16 @@ from itertools import pairwise
 from math import ceil
 from typing import Literal
 
+import mujoco
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
 from mujoco_lab.assets.robot.robot import Constraints
 from mujoco_lab.control.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.planning.collision.collision_checker import CollisionChecker
 from mujoco_lab.planning.planners import PlannerConfig, plan_path, planner_name
 from mujoco_lab.robot import Robot
+from mujoco_lab.state import IKError
 from mujoco_lab.utils import Transform
 
 
@@ -21,7 +23,8 @@ class MotionRequest:
     """Ordered motion inputs with explicit joint, sampling, or Cartesian execution.
 
     Hold and Cartesian requests use one waypoint. Sampling visits every
-    waypoint in order; poses are resolved by IK without changing live physics.
+    waypoint in order. Blocked routes retry alternate IK solutions without
+    changing the requested grasp poses or live physics.
     """
 
     name: str  # Stage label used in failure messages.
@@ -112,28 +115,19 @@ class MotionPlanner:
         else:
             if self.planning is None:
                 raise ValueError("A sampling planner configuration is required")
-            waypoints = []
-            for waypoint in request.waypoints:
-                if isinstance(waypoint, Transform):
-                    waypoint = self.solve_ik(waypoint, current)
-                waypoints.append(waypoint)
             legs = []
             # The old arm target can collide in the new scene after release.
             # Keep the measured start checked by the planner instead of bridging back.
             start = current
-            for index, goal in enumerate(waypoints):
-                vertices = self.plan_arm_path(start, goal, checker)
-                label = " departure" if index < len(waypoints) - 1 else ""
+            for index, waypoint in enumerate(request.waypoints):
+                vertices = self.sampling_path(start, waypoint, checker)
+                label = " departure" if index < len(request.waypoints) - 1 else ""
                 if vertices is None:
                     return None, f"No {planner_name(self.planning)}{label} route for {request.name}"
                 vertices = self.shortcut_path(vertices, checker)
                 legs.append(vertices if index == 0 else vertices[1:])
-                start = goal
+                start = vertices[-1]
             path = np.vstack(legs)
-        if checker is not None and any(
-            not checker.is_path_collision_free(a, b) for a, b in pairwise(path)
-        ):
-            return None, f"Collision on {request.name} path"
         trajectory = self.trajectory(
             path,
             request.gripper_target,
@@ -142,7 +136,102 @@ class MotionPlanner:
             gripper_ratio=request.gripper_ratio,
             shape_preserving=request.shape_preserving,
         )
+        if trajectory is None and request.mode == "cartesian":
+            trajectory = self.branch_trajectory(
+                current,
+                request.waypoints,
+                request.gripper_target,
+                checker,
+                arm_ratio=request.arm_ratio,
+                gripper_ratio=request.gripper_ratio,
+                shape_preserving=request.shape_preserving,
+            )
         return trajectory, None if trajectory is not None else f"Collision on {request.name} path"
+
+    def ik_candidates(
+        self, pose, reference_q, checker, *, use_default: bool = False
+    ) -> tuple[list[np.ndarray], np.ndarray | None]:
+        """Check alternate IK solutions without changing the requested grasp pose.
+
+        Forte forearm and wrist seeds escape folded branches. Retry from the
+        configured default posture only after local branches cannot make a route.
+        Return the unchecked reference solution for deferred execution failures.
+        """
+        references = [reference_q]
+        if self.robot.robot_type == "forte":
+            base = reference_q
+            offsets = (-np.pi / 2, np.pi / 2)
+            if use_default:
+                config = self.robot.config
+                if config is None:
+                    raise ValueError("IK retries require a configured default pose")
+                base = np.asarray(config.pose.default[: len(reference_q)])
+                references = [base]
+                offsets = (*offsets, -np.pi, np.pi)
+            for forearm in offsets:
+                for wrist in offsets:
+                    seed = base.copy()
+                    seed[4] += forearm
+                    seed[6] += wrist
+                    references.append(seed)
+        current = self.robot.state.snapshot().qpos[: len(reference_q)].copy()
+        current_scheduled = any(np.array_equal(seed, current) for seed in references)
+        candidates = []
+        unchecked = None
+        for seed in references:
+            try:
+                q = self.solve_ik(pose, seed, retry_current=False)
+            except IKError:
+                if not current_scheduled:
+                    references.append(current)
+                    current_scheduled = True
+                continue
+            if unchecked is None:
+                unchecked = q
+            if checker.is_collision_free(q):
+                candidates.append(q)
+        return sorted(candidates, key=lambda q: np.linalg.norm(q - reference_q)), unchecked
+
+    def waypoint_poses(self, waypoints) -> list[Transform]:
+        """Resolve joint waypoints with private forward kinematics."""
+        model = self.robot.model
+        data = mujoco.MjData(model)
+        mujoco.mj_copyData(data, model, self.robot.data)
+        slots = self.robot.state.get_frame_joint_slots("grasp")
+        indices = [self.robot.state.qpos_indices[slot] for slot in slots]
+        site = self.robot.state.site_id("grasp")
+        poses = []
+        for waypoint in waypoints:
+            if isinstance(waypoint, Transform):
+                poses.append(waypoint)
+            else:
+                data.qpos[indices] = waypoint
+                mujoco.mj_kinematics(model, data)
+                poses.append(
+                    Transform(
+                        rotation=data.site_xmat[site].reshape(3, 3),
+                        translation=data.site_xpos[site],
+                    )
+                )
+        return poses
+
+    def sampling_path(self, start, waypoint, checker):
+        """Try the original goal, then checked IK alternatives if its route fails."""
+        goal = self.solve_ik(waypoint, start) if isinstance(waypoint, Transform) else waypoint
+        if checker.is_collision_free(goal):
+            path = self.plan_arm_path(start, goal, checker)
+            if path is not None:
+                return path
+        pose = self.waypoint_poses((waypoint,))[0]
+        for use_default in (False, True):
+            candidates, _ = self.ik_candidates(pose, start, checker, use_default=use_default)
+            for candidate in candidates:
+                if np.allclose(candidate, goal):
+                    continue
+                path = self.plan_arm_path(start, candidate, checker)
+                if path is not None:
+                    return path
+        return None
 
     def solve_ik(
         self,
@@ -185,6 +274,92 @@ class MotionPlanner:
         if len(vertices) == 1:
             vertices = np.vstack((vertices, goal))
         return vertices
+
+    def orientation_path(self, path):
+        """Refine joint edges around the Cartesian interpolation of their grasp poses."""
+        poses = self.waypoint_poses(path)
+        refined = [path[0]]
+        for start, end, first, second in zip(
+            path[:-1], path[1:], poses[:-1], poses[1:], strict=True
+        ):
+            interpolation = Slerp(
+                [0, 1], Rotation.concatenate([first.as_rotation(), second.as_rotation()])
+            )
+            for fraction in (1 / 3, 2 / 3):
+                pose = Transform(
+                    rotation=interpolation(fraction),
+                    translation=first.as_translation()
+                    + fraction * (second.as_translation() - first.as_translation()),
+                )
+                reference_q = start + fraction * (end - start)
+                refined.append(self.solve_ik(pose, reference_q))
+            refined.append(end)
+        return np.asarray(refined)
+
+    def heuristic_trajectory(self, path, gripper_target, checker, *, arm_ratio, gripper_ratio):
+        """Check a heuristic route and retry other IK branches when it is blocked."""
+        refined = self.orientation_path(path) if self.robot.robot_type == "forte" else path
+        trajectory = self.trajectory(
+            refined,
+            gripper_target,
+            checker,
+            arm_ratio=arm_ratio,
+            gripper_ratio=gripper_ratio,
+        )
+        if trajectory is None:
+            trajectory = self.branch_trajectory(
+                path[0],
+                tuple(path[1:]),
+                gripper_target,
+                checker,
+                arm_ratio=arm_ratio,
+                gripper_ratio=gripper_ratio,
+            )
+        return trajectory
+
+    def branch_trajectory(
+        self,
+        start,
+        waypoints,
+        gripper_target,
+        checker,
+        *,
+        arm_ratio,
+        gripper_ratio,
+        shape_preserving=False,
+    ):
+        """Connect grasp poses through checked IK branches, then check the trajectory."""
+        poses = self.waypoint_poses(waypoints)
+        for use_default in (False, True):
+            routes = [(start,)]
+            for pose in poses:
+                candidates, _ = self.ik_candidates(pose, start, checker, use_default=use_default)
+                routes = [
+                    (*route, candidate)
+                    for route in routes
+                    for candidate in candidates
+                    if checker.is_path_collision_free(route[-1], candidate)
+                ]
+                if not routes:
+                    break
+                routes.sort(key=lambda route: np.linalg.norm(np.diff(route, axis=0), axis=1).sum())
+                routes = routes[:5]
+            for route in routes:
+                try:
+                    path = self.orientation_path(route)
+                except IKError:
+                    continue
+                trajectory = self.trajectory(
+                    path,
+                    gripper_target,
+                    checker,
+                    arm_ratio=arm_ratio,
+                    gripper_ratio=gripper_ratio,
+                    shape_preserving=shape_preserving,
+                )
+                if trajectory is not None:
+                    return trajectory
+        return None
 
     @staticmethod
     def shortcut_path(path: np.ndarray, checker) -> np.ndarray:

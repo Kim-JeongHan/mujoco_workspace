@@ -27,12 +27,13 @@ class Normalizer:
         *,
         state_passthrough_indices: Sequence[int] = (),
     ) -> Normalizer:
-        state_mean = states.mean(axis=0)
-        state_std = cls._safe_std(states.std(axis=0))
+        """Fit statistics with float64 accumulation and store them as float32."""
+        state_mean = states.mean(axis=0, dtype=np.float64).astype(np.float32)
+        state_std = cls._safe_std(states.std(axis=0, dtype=np.float64)).astype(np.float32)
         state_mean[list(state_passthrough_indices)] = 0
         state_std[list(state_passthrough_indices)] = 1
-        action_mean = actions.mean(axis=0)
-        action_std = cls._safe_std(actions.std(axis=0))
+        action_mean = actions.mean(axis=0, dtype=np.float64).astype(np.float32)
+        action_std = cls._safe_std(actions.std(axis=0, dtype=np.float64)).astype(np.float32)
         return cls(state_mean, state_std, action_mean, action_std)
 
     def normalize_state(self, state: np.ndarray) -> np.ndarray:

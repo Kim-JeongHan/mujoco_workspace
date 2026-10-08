@@ -28,6 +28,25 @@ SceneDraw = Callable[[mujoco.MjvScene, mujoco.MjData], None]
 __all__ = ["SimulatorManager"]
 
 
+def _replay_offsets(
+    frame_count: int, frame_dt: float, frame_times: Sequence[float] | None
+) -> tuple[int, list[float] | None]:
+    """Validate one recording's timing and return offsets from its first frame."""
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    if frame_times is None:
+        if not isfinite(frame_dt) or frame_dt <= 0:
+            raise ValueError("frame_dt must be finite and positive")
+        return frame_count, None
+    if len(frame_times) != frame_count or not all(isfinite(value) for value in frame_times):
+        raise ValueError("frame_times must contain one finite time per frame")
+    first_time = frame_times[0]
+    offsets = [value - first_time for value in frame_times]
+    if any(later <= earlier for earlier, later in zip(offsets, offsets[1:], strict=False)):
+        raise ValueError("frame_times must increase strictly")
+    return frame_count, offsets
+
+
 def _copy_camera(source: mujoco.MjvCamera) -> mujoco.MjvCamera:
     """Snapshot the viewer camera for rendering on another scene."""
     camera = mujoco.MjvCamera()
@@ -282,6 +301,7 @@ class SimulatorManager:
         speed: float = 1.0,
         camera: mujoco.MjvCamera | None = None,
         frame_times: Sequence[float] | None = None,
+        change_episode: Callable[[int], tuple[int, float, Sequence[float]] | None] | None = None,
     ) -> None:
         """Display recorded frames without advancing physics or evaluating control.
 
@@ -290,23 +310,15 @@ class SimulatorManager:
         Playback pauses on the final frame; Space there restarts from frame zero.
         Frames may be skipped to keep wall-clock timing at the 60 Hz display rate.
         ``frame_times`` uses recorded timestamps when action intervals vary.
+        ``frame_dt`` is used only when recorded timestamps are not supplied.
+        With ``change_episode``, F8/F9 load the previous/next episode and play from
+        frame zero. The callback updates the frame source, retains the same
+        model and data, and returns its frame count, interval, and timestamps.
         """
         simulator = self.simulators[name]
-        frame_count = index(frame_count)
-        if frame_count <= 0:
-            raise ValueError("frame_count must be positive")
-        if not isfinite(frame_dt) or frame_dt <= 0:
-            raise ValueError("frame_dt must be finite and positive")
+        frame_count, offsets = _replay_offsets(frame_count, frame_dt, frame_times)
         if not isfinite(speed) or speed <= 0:
             raise ValueError("speed must be finite and positive")
-        offsets = None
-        if frame_times is not None:
-            if len(frame_times) != frame_count or not all(isfinite(value) for value in frame_times):
-                raise ValueError("frame_times must contain one finite time per frame")
-            offsets = [float(value) - float(frame_times[0]) for value in frame_times]
-            if any(later <= earlier for earlier, later in zip(offsets, offsets[1:], strict=False)):
-                raise ValueError("frame_times must increase strictly")
-
         # The viewer invokes callbacks on its render thread. Consume input only
         # on this thread, alongside state restoration under the viewer lock.
         keys: deque[int] = deque()
@@ -342,6 +354,16 @@ class SimulatorManager:
                         frame = max(0, min(frame + (1 if key == 262 else -1), frame_count - 1))
                     elif key in (82, 268):  # R / GLFW Home
                         frame = 0
+                    elif key in (297, 298) and change_episode is not None:  # GLFW F8 / F9
+                        with viewer.lock():
+                            recording = change_episode(1 if key == 298 else -1)
+                        if recording is None:
+                            continue
+                        count, frame_dt, times = recording
+                        frame_count, offsets = _replay_offsets(count, frame_dt, times)
+                        frame = 0
+                        playing = True
+                        previous = time.monotonic()
                     else:
                         continue
                     playhead = frame * frame_dt if offsets is None else offsets[frame]

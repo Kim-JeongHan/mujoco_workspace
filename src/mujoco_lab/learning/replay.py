@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import mujoco
+import numpy as np
 import tyro
 from dacite import from_dict
 
@@ -52,29 +53,38 @@ class ReplayConfig:
 
 @dataclass
 class Config:
-    """Choose an episode and playback speed."""
+    """Choose an episode file or directory and playback speed."""
 
-    path: Path  # Episode NPZ written by the collection CLI.
+    path: Path  # One episode NPZ or a directory of episode files.
     speed: float = 1.0  # Recorded seconds per wall-clock second.
+
+
+def _recording(
+    episode: Episode,
+) -> tuple[ReplayConfig, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Read recorded scene settings and require complete native geometry frames."""
+    metadata = episode.metadata.get("replay")
+    if (
+        episode.qpos is None
+        or episode.frame_times is None
+        or episode.mocap_pos is None
+        or episode.mocap_quat is None
+        or not isinstance(metadata, dict)
+    ):
+        raise ValueError(
+            "Episode has no replay data. Recollect with replay recording enabled; "
+            "learning states are not MuJoCo qpos."
+        )
+    config = from_dict(data_class=ReplayConfig, data=metadata)
+    return config, episode.qpos, episode.frame_times, episode.mocap_pos, episode.mocap_quat
 
 
 class EpisodeReplay:
     """Reconstruct a supported scene and apply its recorded geometry frames."""
 
     def __init__(self, episode: Episode) -> None:
-        metadata = episode.metadata.get("replay")
-        if (
-            episode.qpos is None
-            or episode.frame_times is None
-            or episode.mocap_pos is None
-            or episode.mocap_quat is None
-            or not isinstance(metadata, dict)
-        ):
-            raise ValueError(
-                "Episode has no replay data. Recollect with replay recording enabled; "
-                "learning states are not MuJoCo qpos."
-            )
-        config = from_dict(data_class=ReplayConfig, data=metadata)
+        config, qpos, times, mocap_pos, mocap_quat = _recording(episode)
+        self._config = config
         self.simulator = Simulator(
             config.create_scene(),
             robots=[
@@ -89,12 +99,29 @@ class EpisodeReplay:
         recorded_model = config.model_sha256
         if recorded_model is not None and recorded_model != model_signature(self.simulator.model):
             raise ValueError("Replay native joint coordinates require the recorded robot model")
+        self._set_frames(episode, qpos, times, mocap_pos, mocap_quat)
+
+    def load_episode(self, episode: Episode) -> None:
+        """Replace frames for the same scene while retaining the viewer's model and data."""
+        config, qpos, times, mocap_pos, mocap_quat = _recording(episode)
+        if config != self._config:
+            raise ValueError("Replay episodes must use the same recorded scene and timing settings")
+        self._set_frames(episode, qpos, times, mocap_pos, mocap_quat)
+
+    def _set_frames(
+        self,
+        episode: Episode,
+        qpos: np.ndarray,
+        times: np.ndarray,
+        mocap_pos: np.ndarray,
+        mocap_quat: np.ndarray,
+    ) -> None:
         self.frame_count = len(episode) + 1
-        self.frame_dt = self.simulator.dt * config.physics_steps_per_action
-        self._qpos = episode.qpos
-        self._mocap_pos = episode.mocap_pos
-        self._mocap_quat = episode.mocap_quat
-        self.frame_times = episode.frame_times.copy()
+        self.frame_dt = self.simulator.dt * self._config.physics_steps_per_action
+        self._qpos = qpos
+        self._mocap_pos = mocap_pos
+        self._mocap_quat = mocap_quat
+        self.frame_times = times.copy()
 
     def set_frame(self, index: int) -> None:
         """Restore a frame's qpos, mocap targets, and time without physics steps."""
@@ -113,10 +140,30 @@ class EpisodeReplay:
 
 def main() -> None:
     config = tyro.cli(Config, description="Replay a recorded manipulation episode")
-    replay = EpisodeReplay(load_episode(config.path))
+    paths = sorted(config.path.glob("*.npz")) if config.path.is_dir() else [config.path]
+    if not paths:
+        raise ValueError(f"No episode NPZ files found in {config.path}")
+    replay = EpisodeReplay(load_episode(paths[0]))
+    episode_index = 0
+    logger = Logger()
+
+    def switch_episode(direction: int) -> tuple[int, float, list[float]] | None:
+        nonlocal episode_index
+        if len(paths) == 1:
+            return None
+        next_index = (episode_index + direction) % len(paths)
+        replay.load_episode(load_episode(paths[next_index]))
+        episode_index = next_index
+        logger.info(f"Episode {episode_index + 1}/{len(paths)}: {paths[episode_index].name}")
+        return replay.frame_count, replay.frame_dt, replay.frame_times.tolist()
+
     manager = SimulatorManager()
     manager.add_simulator("replay", replay.simulator)
-    Logger().info("Space: play/pause; Left/Right: step; R/Home: rewind; close the viewer to exit.")
+    logger.info(f"Episode 1/{len(paths)}: {paths[0].name}")
+    logger.info(
+        "Space: play/pause; Left/Right: step; R/Home: rewind; "
+        "F8/F9: previous/next episode; close the viewer to exit."
+    )
     try:
         manager.show_replay(
             "replay",
@@ -125,6 +172,7 @@ def main() -> None:
             replay.set_frame,
             speed=config.speed,
             frame_times=replay.frame_times.tolist(),
+            change_episode=switch_episode,
         )
     finally:
         manager.remove_simulator("replay")
