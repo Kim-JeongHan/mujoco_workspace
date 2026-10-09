@@ -12,6 +12,7 @@ def test_stationary_paths_hold_position_with_zero_duration(count, smooth):
     path = np.tile([0.2, -0.1], (count, 1))
     trajectory = JointTrajectory(path, 1.0, 1.0, smooth=smooth)
     assert trajectory.duration == 0
+    np.testing.assert_array_equal(trajectory.peak_velocity, 0)
     for elapsed in (-1.0, 0.0, 1.0):
         target = trajectory.sample(elapsed)
         np.testing.assert_array_equal(target.position, path[0])
@@ -27,6 +28,7 @@ def test_ratio_scales_time_and_derivatives_without_changing_the_curve(smooth):
         path, np.array([1.0, 2.0]), np.array([3.0, 4.0]), ratio=(0.5, 0.25), smooth=smooth
     )
     assert reduced.duration == pytest.approx(2 * baseline.duration)
+    np.testing.assert_allclose(reduced.peak_velocity, baseline.peak_velocity / 2)
     for elapsed in np.linspace(0, baseline.duration, 101):
         original = baseline.sample(elapsed)
         scaled = reduced.sample(2 * elapsed)
@@ -62,6 +64,28 @@ def test_per_joint_ratios_bound_motion_and_preserve_input_arrays(smooth):
     assert not trajectory.ratio.flags.writeable
     assert not trajectory.max_velocity.flags.writeable
     assert not trajectory.max_acceleration.flags.writeable
+    assert not trajectory.peak_velocity.flags.writeable
+
+
+@pytest.mark.parametrize("smooth, shape_preserving", [(False, False), (True, False), (True, True)])
+def test_actual_peak_velocity_matches_sampled_curve(smooth, shape_preserving):
+    # Repeated waypoints and reversals exercise both interpolation modes.
+    path = np.array([[0.0, 0.0], [0.2, 0.1], [0.2, 0.1], [0.21, -0.15], [0.5, 0.0]])
+    trajectory = JointTrajectory(
+        path, np.array([10.0, 20.0]), 0.5, smooth=smooth, shape_preserving=shape_preserving
+    )
+    velocities = []
+    for start, end in zip(
+        trajectory.waypoint_times[:-1], trajectory.waypoint_times[1:], strict=True
+    ):
+        for elapsed in np.linspace(start, end, 501):
+            target = trajectory.sample(float(elapsed))
+            assert target.velocity is not None
+            velocities.append(target.velocity)
+    sampled_peaks = np.max(np.abs(velocities), axis=0)
+    assert np.all(sampled_peaks <= trajectory.peak_velocity + 1e-12)
+    np.testing.assert_allclose(trajectory.peak_velocity, sampled_peaks, rtol=2e-5)
+    assert np.all(trajectory.peak_velocity < trajectory.max_velocity)
 
 
 @pytest.mark.parametrize("value", [0.0, -0.1, 1.1, float("nan"), float("inf")])

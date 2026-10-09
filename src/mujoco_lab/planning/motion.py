@@ -378,18 +378,22 @@ class MotionPlanner:
         return np.asarray(kept)
 
     @staticmethod
-    def smooth_path_collision_free(checker, trajectory: JointTrajectory, velocity: np.ndarray):
-        arm_size = len(velocity)
-        if trajectory.duration == 0:
+    def smooth_path_collision_free(checker, trajectory: JointTrajectory, peak_velocity: np.ndarray):
+        arm_size = len(peak_velocity)
+        # Per-joint peaks bound the vector speed even if they occur at different times.
+        speed = np.linalg.norm(peak_velocity)
+        if trajectory.duration == 0 or speed == 0:
             return checker.is_collision_free(trajectory.path[0, :arm_size])
-        interval = min(0.02, checker.edge_resolution / (2 * np.linalg.norm(velocity)))
+        interval = min(0.02, checker.edge_resolution / (2 * speed))
         steps = max(1, ceil(trajectory.duration / interval))
-        previous = trajectory.sample(0).position[:arm_size]
+        if not checker.is_collision_free(trajectory.sample(0).position[:arm_size]):
+            return False
+        # The speed bound keeps adjacent samples within half the edge resolution,
+        # so edge checks add no interior samples and only repeat their endpoints.
         for elapsed in np.linspace(trajectory.duration / steps, trajectory.duration, steps):
             current = trajectory.sample(float(elapsed)).position[:arm_size]
-            if not checker.is_path_collision_free(previous, current):
+            if not checker.is_collision_free(current):
                 return False
-            previous = current
         return True
 
     def trajectory(
@@ -421,7 +425,7 @@ class MotionPlanner:
             path, velocity, acceleration, ratio=ratios, shape_preserving=shape_preserving
         )
         if checker is not None and not self.smooth_path_collision_free(
-            checker, trajectory, trajectory.max_velocity[:-1]
+            checker, trajectory, trajectory.peak_velocity[:-1]
         ):
             if any(not checker.is_path_collision_free(a, b) for a, b in pairwise(arm_path)):
                 return None

@@ -66,6 +66,7 @@ class JointTrajectory:
     Shape-preserving smoothing keeps each joint inside its waypoint intervals.
     Ratio pairs scale the supplied limits, uniformly or once per joint. Each
     fraction must be in (0, 1]; both interpolation modes use the scaled limits.
+    ``peak_velocity`` stores the actual absolute peak speed of each timed joint.
     """
 
     def __init__(
@@ -108,6 +109,16 @@ class JointTrajectory:
         durations = np.maximum(
             np.max((15 / 8) * distance / velocity, axis=1),
             np.max(np.sqrt((10 / np.sqrt(3)) * distance / acceleration), axis=1),
+        )
+        self.peak_velocity = np.max(
+            np.divide(
+                (15 / 8) * distance,
+                durations[:, None],
+                out=np.zeros_like(distance),
+                where=durations[:, None] > 0,
+            ),
+            axis=0,
+            initial=0.0,
         )
         self.path = waypoints
         self.path.flags.writeable = False
@@ -152,6 +163,8 @@ class JointTrajectory:
             self._coefficients[0] /= scale**3
             self._coefficients[1] /= scale**2
             self._coefficients[2] /= scale
+            self.peak_velocity = np.max(peak_velocity, axis=0) / scale
+        self.peak_velocity.flags.writeable = False
         self.waypoint_times.flags.writeable = False
         self.duration = float(self.waypoint_times[-1])
 

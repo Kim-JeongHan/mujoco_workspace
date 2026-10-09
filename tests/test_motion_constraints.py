@@ -1,13 +1,14 @@
 """Stage ratios scale configured limits without changing joint ordering."""
 
 from copy import deepcopy
+from math import ceil
 
 import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import ControlTarget, create_controller
+from mujoco_lab.control import ControlTarget, JointTrajectory, create_controller
 from mujoco_lab.planning import RRTConnectConfig
 from mujoco_lab.planning.collision.collision_checker import EmptyCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest
@@ -96,19 +97,81 @@ def test_arm_and_gripper_ratios_apply_independently_without_mutating_limits(moti
     assert motion.robot.config == before
 
 
-def test_collision_sampling_uses_scaled_velocity(motion, monkeypatch):
+def test_collision_sampling_uses_actual_trajectory_peak_velocity(motion, monkeypatch):
     calls = []
 
     def record_velocity(checker, trajectory, velocity):
         calls.append(velocity.copy())
+        np.testing.assert_array_equal(velocity, trajectory.peak_velocity[:-1])
+        assert np.all(velocity < trajectory.max_velocity[:-1])
         return True
 
     monkeypatch.setattr(motion, "smooth_path_collision_free", record_velocity)
     start = motion.robot.state.snapshot().qpos[:7]
-    motion.trajectory(np.vstack((start, start + 0.1)), 0.02, object(), arm_ratio=(0.3, 0.7))
-    np.testing.assert_allclose(
-        calls, [np.array(motion.motion_constraints().velocity_limit[:-1]) * 0.3]
+    motion.trajectory(np.vstack((start, start + 0.001)), 0.02, object(), arm_ratio=(0.3, 0.7))
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("blocked", [None, "start", "middle", "end"])
+def test_smooth_collision_sampling_checks_each_boundary_once(blocked):
+    trajectory = JointTrajectory(np.array([[0.0, 0.0], [0.4, 0.02]]), 0.5, 1.0)
+    calls = []
+
+    class Checker:
+        edge_resolution = 0.05
+
+        def is_collision_free(self, state):
+            calls.append(state.copy())
+            position = state[0]
+            return not (
+                (blocked == "start" and position == 0)
+                or (blocked == "middle" and 0.19 <= position <= 0.21)
+                or (blocked == "end" and position == 0.4)
+            )
+
+    assert MotionPlanner.smooth_path_collision_free(
+        Checker(), trajectory, trajectory.peak_velocity[:1]
+    ) == (blocked is None)
+    positions = np.concatenate(calls)
+    assert len(np.unique(positions)) == len(positions)
+    assert positions[0] == 0
+    if blocked is None:
+        assert positions[-1] == 0.4
+        assert len(calls) == ceil(trajectory.duration / 0.02) + 1
+        assert np.all(np.diff(positions) <= Checker.edge_resolution / 2)
+    elif blocked == "start":
+        assert len(calls) == 1
+    elif blocked == "middle":
+        assert 0.19 <= positions[-1] <= 0.21
+    else:
+        assert positions[-1] == 0.4
+
+
+@pytest.mark.parametrize("arm_distance", [0.0, 0.01, 1.0])
+def test_collision_sampling_preserves_time_and_joint_spacing_limits(arm_distance):
+    trajectory = JointTrajectory(np.array([[0.0, 0.0], [arm_distance, 0.04]]), 100.0, 100.0)
+    calls = []
+
+    class Checker:
+        edge_resolution = 0.05
+
+        def is_collision_free(self, state):
+            calls.append(state.copy())
+            return True
+
+    assert MotionPlanner.smooth_path_collision_free(
+        Checker(), trajectory, trajectory.peak_velocity[:1]
     )
+    if arm_distance == 0:
+        assert len(calls) == 1  # A gripper-only trajectory keeps the checked arm fixed.
+    else:
+        positions = np.concatenate(calls)
+        assert positions[0] == 0
+        assert positions[-1] == arm_distance
+        assert trajectory.duration / (len(calls) - 1) <= 0.02
+        assert np.all(np.diff(positions) <= Checker.edge_resolution / 2 + 1e-12)
+        configured_interval = Checker.edge_resolution / (2 * trajectory.max_velocity[0])
+        assert len(calls) < ceil(trajectory.duration / configured_interval) + 1
 
 
 def test_sampling_visits_mixed_waypoints_with_adjacent_queries(motion, monkeypatch):
