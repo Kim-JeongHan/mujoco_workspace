@@ -12,7 +12,7 @@ import yaml
 from dacite import Config, from_dict
 
 # dacite requires a runtime Literal alias rather than a PEP 695 alias.
-ControllerType = Literal["none", "pd", "position", "osc"]  # noqa: UP040
+ControllerType = Literal["none", "pd", "position", "osc", "computed_torque"]  # noqa: UP040
 
 
 @dataclass(frozen=True)
@@ -107,6 +107,8 @@ class ControllerConfig:
     gravity_compensation: bool = True
     frame: str = "grasp"
     pd_gains: FortePDGain | dict[str, PDGain] | None = None
+    natural_frequency: float = 20.0  # Computed-torque acceleration gains, in rad/s.
+    damping_ratio: float = 1.0
 
     def pd_gain(self, joint_names: tuple[str, ...]) -> tuple[list[float], list[float]]:
         """Return Kp and Kd arrays in controlled-joint order."""

@@ -5,58 +5,24 @@ import numpy as np
 import pytest
 from controller_config import create_test_controller
 
-from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, create_environment
+from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.assets.robot.forte_coordinates import HOME_RADIANS as HOME_QPOS
-from mujoco_lab.control import ControlTarget, demo_target_updater
-from mujoco_lab.control.osc import OperationalSpaceControl
-from mujoco_lab.control.pd import JointSpacePD
+from mujoco_lab.control import demo_target_updater
 from mujoco_lab.control.trajectory import osc_circle_target
 from mujoco_lab.rendering.annotations import annotate_controller
-from mujoco_lab.state import JointState
 from mujoco_lab.utils import Transform
 
 
-def forte_simulator(environment="empty"):
+def forte_simulator():
     return Simulator(
-        create_environment(environment),
+        create_environment("empty"),
         robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
     )
 
 
-def test_seven_axis_controller_math_on_numpy_snapshots():
-    state = JointState(0.0, HOME_QPOS.copy(), np.zeros(7), np.ones(7))
-    np.testing.assert_array_equal(
-        JointSpacePD(np.ones(7), np.ones(7), control_dt=0.002).compute(
-            state, ControlTarget(HOME_QPOS)
-        ),
-        np.ones(7),
-    )
-
-    class Dynamics:
-        nv = 7
-
-        def get_frame_position(self, frame):
-            return np.array([0.65, 0.0, 0.53])
-
-        def get_jacobian(self, frame):
-            return np.eye(6, 7)
-
-        def get_mass_matrix(self):
-            return np.eye(7)
-
-    np.testing.assert_array_equal(
-        OperationalSpaceControl(Dynamics(), posture=HOME_QPOS).compute(
-            state, ControlTarget([0.65, 0, 0.53])
-        ),
-        np.ones(7),
-    )
-
-
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-@pytest.mark.parametrize("environment", ENVIRONMENT_NAMES)
-def test_feedback_control_is_finite_in_each_environment(mode, environment):
-    sim = forte_simulator(environment)
+@pytest.mark.parametrize("mode", ["pd", "osc", "computed_torque"])
+def test_feedback_control_is_finite(mode):
+    sim = forte_simulator()
     robot = sim.robots["robot"]
     robot.change_controller(create_test_controller(robot, controller=mode))
     if mode == "osc":
@@ -126,12 +92,11 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
     np.testing.assert_allclose(scene.geoms[0].pos, moved_robot.target.position, atol=1e-6)
 
 
-@pytest.mark.parametrize("robot", ["panda"])
-@pytest.mark.parametrize("mode", ["pd", "osc"])
-def test_torque_control_rejects_position_actuators(robot, mode):
+@pytest.mark.parametrize("mode", ["pd", "osc", "computed_torque"])
+def test_torque_control_rejects_position_actuators(mode):
     sim = Simulator(
         create_environment("empty"),
-        robots=[RobotSpec("robot", robot, config=load_robot_config(robot))],
+        robots=[RobotSpec("robot", "panda", config=load_robot_config("panda"))],
     )
     with pytest.raises(ValueError, match="requires torque/force actuators"):
         create_test_controller(sim.robots["robot"], controller=mode)

@@ -1,6 +1,7 @@
 """Controller algorithms and creation for MuJoCo Robots."""
 
 from mujoco_lab.control.base import Controller
+from mujoco_lab.control.computed_torque import JointSpaceComputedTorque
 from mujoco_lab.control.factory import create_controller
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
@@ -13,6 +14,7 @@ __all__ = [
     "ControlTarget",
     "JointTrajectory",
     "JointSpacePD",
+    "JointSpaceComputedTorque",
     "OperationalSpaceControl",
     "PositionController",
     "create_controller",

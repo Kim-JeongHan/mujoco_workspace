@@ -3,6 +3,7 @@
 import mujoco
 import numpy as np
 
+from mujoco_lab.control.computed_torque import JointSpaceComputedTorque
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
 
@@ -114,9 +115,9 @@ def draw_joint_torques(scene, robot, data) -> None:
 
 
 def annotate_controller(scene, robot, data, target_data) -> None:
-    """Draw cached targets using rendering data and shared PD kinematics scratch."""
+    """Draw cached targets using rendering data and shared joint kinematics scratch."""
     model, controller = robot.model, robot.controller
-    if isinstance(controller, JointSpacePD):
+    if isinstance(controller, (JointSpacePD, JointSpaceComputedTorque)):
         if robot.target is None:
             return
         target_data.qpos[:] = data.qpos
@@ -157,7 +158,10 @@ def annotate(scene, simulator, data) -> None:
     for robot in simulator.robots.values():
         if robot.controller is not None:
             controller = robot.controller
-            if isinstance(controller, JointSpacePD) and target_data is None:
+            if (
+                isinstance(controller, (JointSpacePD, JointSpaceComputedTorque))
+                and target_data is None
+            ):
                 target_data = mujoco.MjData(simulator.model)
                 mujoco.mj_copyData(target_data, simulator.model, data)
             draw_joint_torques(scene, robot, data)

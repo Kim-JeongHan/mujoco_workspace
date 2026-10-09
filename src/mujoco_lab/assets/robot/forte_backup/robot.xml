@@ -1208,13 +1208,13 @@
     <joint name="gripper_parallel" joint1="gripper_left_joint" joint2="gripper_right_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
   </equality>
   <actuator>
-    <motor name="shoulder_yaw_motor" joint="shoulder_yaw" gear="1" ctrlrange="-87 87" />
-    <motor name="shoulder_pitch_motor" joint="shoulder_pitch" gear="1" ctrlrange="-87 87" />
-    <motor name="shoulder_roll_motor" joint="shoulder_roll" gear="1" ctrlrange="-87 87" />
-    <motor name="elbow_pitch_motor" joint="elbow_pitch" gear="1" ctrlrange="-87 87" />
-    <motor name="lower_arm_roll_motor" joint="lower_arm_roll" gear="1" ctrlrange="-87 87" />
-    <motor name="wrist_pitch_motor" joint="wrist_pitch" gear="1" ctrlrange="-12 12" />
-    <motor name="wrist_roll_motor" joint="wrist_roll" gear="1" ctrlrange="-12 12" />
+    <motor name="shoulder_yaw_motor" joint="shoulder_yaw" gear="1" ctrlrange="-1.8 1.8" />
+    <motor name="shoulder_pitch_motor" joint="shoulder_pitch" gear="6" ctrlrange="-11 11" />
+    <motor name="shoulder_roll_motor" joint="shoulder_roll" gear="1" ctrlrange="-11 11" />
+    <motor name="elbow_pitch_motor" joint="elbow_pitch" gear="1" ctrlrange="-11 11" />
+    <motor name="lower_arm_roll_motor" joint="lower_arm_roll" gear="2" ctrlrange="-1.8 1.8" />
+    <motor name="wrist_pitch_motor" joint="wrist_pitch" gear="2" ctrlrange="-1.8 1.8" />
+    <motor name="wrist_roll_motor" joint="wrist_roll" gear="1" ctrlrange="-1.8 1.8" />
     <position name="gripper_motor" joint="gripper_left_joint" kp="2000" kv="5" ctrlrange="0 0.037" forcerange="-20 20" />
   </actuator>
   <keyframe>

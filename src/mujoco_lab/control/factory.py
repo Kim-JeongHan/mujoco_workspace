@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from mujoco_lab.assets.robot.robot import ControllerConfig
 from mujoco_lab.control.base import Controller
+from mujoco_lab.control.computed_torque import JointSpaceComputedTorque
 from mujoco_lab.control.osc import OperationalSpaceControl
 from mujoco_lab.control.pd import JointSpacePD
 from mujoco_lab.control.position import PositionController
@@ -34,6 +35,15 @@ def create_controller(robot: Robot, config: ControllerConfig) -> Controller | No
             gravity_compensation=config.gravity_compensation,
             frame=config.frame,
             control_dt=robot._simulator.dt,
+        )
+    elif name == "computed_torque":
+        algorithm = JointSpaceComputedTorque(
+            robot.state,
+            [robot._arm_joint_slots[index] for index in selected],
+            config.natural_frequency,
+            config.damping_ratio,
+            gravity_compensation=config.gravity_compensation,
+            frame=config.frame,
         )
     else:
         joint_slots = [robot._arm_joint_slots[index] for index in selected]
