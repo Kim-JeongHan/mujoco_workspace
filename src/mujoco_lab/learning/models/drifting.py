@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Literal
 
 import torch
@@ -187,21 +188,13 @@ class DriftingLoss(nn.Module):
         return losses, info
 
 
-if __name__ == "__main__":
-    import argparse
-    from pathlib import Path
-
+def simple_example(
+    *, steps: int = 20000, output: Path = Path("outputs/drifting_demo.png"), show: bool = False
+) -> None:
+    """Train an unconditional generator on four 2D Gaussian clusters."""
     import matplotlib.pyplot as plt
 
     from mujoco_lab.learning.infrastructure.utils import build_mlp
-
-    parser = argparse.ArgumentParser(description="Train and visualize a small 2D drifting model.")
-    parser.add_argument("--steps", type=int, default=20000)
-    parser.add_argument("--output", type=Path, default=Path("outputs/drifting_demo.png"))
-    parser.add_argument("--show", action="store_true", help="Also open the plot window.")
-    args = parser.parse_args()
-    if args.steps < 3:
-        parser.error("--steps must be at least 3")
 
     torch.manual_seed(42)
     torch.set_num_threads(1)
@@ -232,11 +225,11 @@ if __name__ == "__main__":
     directions = torch.randn(2, 32)
     directions = directions / directions.norm(dim=0, keepdim=True)
     reference_projection = (reference @ directions).sort(dim=0).values
-    snapshot_steps = {0, args.steps // 10, args.steps // 2, args.steps}
+    snapshot_steps = {0, steps // 10, steps // 2, steps}
     snapshots = {}
     losses, distances, eval_steps = [], [], []
 
-    for step in range(args.steps + 1):
+    for step in range(steps + 1):
         if step % 25 == 0 or step in snapshot_steps:
             with torch.no_grad():
                 samples = generator(eval_noise)
@@ -248,7 +241,7 @@ if __name__ == "__main__":
             if step in snapshot_steps:
                 snapshots[step] = samples.numpy()
                 print(f"Step {step:4d}: sliced W2 = {distance:.4f}")
-        if step == args.steps:
+        if step == steps:
             break
 
         # One unconditional group: B=1, G=P=128, D=2; draw fresh training samples.
@@ -276,7 +269,7 @@ if __name__ == "__main__":
             ax.legend(loc="upper right", markerscale=2)
 
     ax = fig.add_subplot(grid[1, :2])
-    ax.plot(range(1, args.steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
     ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
     ax = fig.add_subplot(grid[1, 2:])
     ax.plot(eval_steps, distances, color="tab:blue")
@@ -285,9 +278,206 @@ if __name__ == "__main__":
     )
     fig.suptitle("Drifting: noise → MLP → four Gaussian clusters", fontsize=16)
     fig.supxlabel("The normalized drifting loss need not decrease with distribution distance.")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=160)
-    print(f"Saved visualization to {args.output.resolve()}")
-    if args.show:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
         plt.show()
     plt.close(fig)
+
+
+def complex_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/drifting_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Learn two curved trajectory modes for each start/goal condition.
+
+    Each sample is a complete 24-waypoint 2D trajectory. Conditions occupy B,
+    independent generated/reference trajectories occupy G/P, and [H, 2] is the
+    sample shape flattened by DriftingLoss. The existing TemporalUnet backbone
+    generates trajectories in one forward pass, with its diffusion timestep
+    fixed at zero. Start/goal coordinates are input features only; the network
+    learns all waypoints, including the endpoints, without a prescribed path or
+    output envelope. This is a synthetic demo without robot dynamics or collisions.
+
+    Run with ``python -m mujoco_lab.learning.models.drifting --example complex``.
+    """
+    import matplotlib.pyplot as plt
+
+    from mujoco_lab.learning.models.diffusion import TemporalUnet
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    horizon, latent_dim = 24, 8
+    # Four conditions share one generator; each group has its own target distribution.
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]])
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]])
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon).view(1, 1, horizon, 1)
+    # Sine curves define the training data only, not the generator's output.
+    target_envelope = torch.sin(math.pi * phase)
+    target_envelope[:, :, [0, -1]] = 0
+    target_baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        """Draw upper/lower curved paths, with smooth within-mode variation."""
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1)) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2)
+        return target_baseline + target_envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    class TrajectoryGenerator(nn.Module):
+        """Condition TemporalUnet on start/goal coordinates and latent noise."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            # Append condition, latent noise, and waypoint phase as input channels.
+            channels = 4 + latent_dim + 1
+            self.net = TemporalUnet(transition_dim=channels, dim=16, dim_mults=(1, 2, 4))
+            # TemporalUnet preserves its channel count; read out 2D coordinates.
+            self.readout = nn.Linear(channels, 2)
+
+        def forward(self, condition: Tensor, noise: Tensor) -> Tensor:
+            group_count, sample_count, _ = noise.shape
+            context = condition[:, None, None].expand(-1, sample_count, horizon, -1)
+            latent = noise.unsqueeze(-2).expand(-1, -1, horizon, -1)
+            waypoint_phase = phase.expand(group_count, sample_count, -1, -1)
+            inputs = torch.cat((context, latent, waypoint_phase), dim=-1)
+            # Merge B/G only for the network; restore conditional groups before loss.
+            timestep = torch.zeros(
+                group_count * sample_count, device=noise.device, dtype=torch.long
+            )
+            features = self.net(inputs.flatten(0, 1), timestep)
+            return self.readout(features).reshape(group_count, sample_count, horizon, 2)
+
+    generator = TrajectoryGenerator()
+    optimizer = torch.optim.Adam(generator.parameters(), lr=1e-3)
+    loss_module = DriftingLoss()
+    eval_noise = torch.randn(n_conditions, 256, latent_dim)
+    reference = sample_target(256)
+    # Project whole trajectories, rather than pooling independent waypoints.
+    directions = torch.randn(horizon * 2, 64)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generator(conditions, eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+                endpoint_error = (
+                    (samples[:, :, [0, -1]] - torch.stack((starts, goals), dim=1)[:, None])
+                    .norm(dim=-1)
+                    .mean()
+                )
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples
+                print(
+                    f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}, "
+                    f"mean endpoint error = {endpoint_error.item():.4f}"
+                )
+        if step == steps:
+            break
+
+        # B=4 conditions, G=P=32 trajectories, sample_shape=[24, 2].
+        generated = generator(conditions, torch.randn(n_conditions, 32, latent_dim))
+        positive = sample_target(32)
+        loss, _ = loss_module(generated, positive)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            generated_paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(
+                generated_paths[:, :, 0].T,
+                generated_paths[:, :, 1].T,
+                color="tab:orange",
+                alpha=0.4,
+            )
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35, label="Start")
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45, label="Goal")
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(
+        xlabel="Optimizer step", ylabel="Sliced W2", title="Whole-trajectory distribution distance"
+    )
+    ax.legend()
+    fig.suptitle(
+        "Conditional drifting: start/goal + noise → Temporal U-Net → 2D trajectories",
+        fontsize=15,
+    )
+    fig.supxlabel("Each generated sample is a whole trajectory; normalized loss need not decrease.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train and visualize drifting examples.")
+    parser.add_argument("--example", choices=("simple", "complex"), default="simple")
+    parser.add_argument("--steps", type=int, help="Optimizer steps")
+    parser.add_argument("--output", type=Path, help="Output figure path.")
+    parser.add_argument("--show", action="store_true", help="Also open the plot window.")
+    args = parser.parse_args()
+    if args.steps is not None and args.steps < 3:
+        parser.error("--steps must be at least 3")
+    if args.example == "complex":
+        complex_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/drifting_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    else:
+        simple_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/drifting_demo.png") if args.output is None else args.output,
+            show=args.show,
+        )
