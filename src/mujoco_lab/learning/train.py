@@ -12,9 +12,8 @@ import torch
 import tyro
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets import load_episodes
-from mujoco_lab.learning.datasets.replay import require_width_actions
 from mujoco_lab.learning.evaluate import create_rollout_env
 from mujoco_lab.learning.evaluation import (
     PolicyEvaluator,
@@ -27,7 +26,7 @@ from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 def main() -> None:
     console = ConsoleLogger()
-    config = tyro.cli(TrainConfig, description="Train offline behavior cloning")
+    config = tyro.cli(BCTrainConfig, description="Train offline behavior cloning")
     repeat = config.physics_steps_per_action
     if not (
         config.validation_ratio >= 0
@@ -37,7 +36,6 @@ def main() -> None:
         raise ValueError("Holdout ratios must be nonnegative and sum to less than 1")
     episodes = load_episodes(config.data_dir)
     for episode in episodes:
-        require_width_actions(episode.metadata.get("replay", {}))
         episode.check_physics_step_consistency(repeat, simulation_dt=config.simulation_dt)
     validation_count = (
         max(1, round(len(episodes) * config.validation_ratio)) if config.validation_ratio else 0
@@ -69,15 +67,15 @@ def main() -> None:
     settings["data_dir"] = str(config.data_dir)
     settings["output_dir"] = str(config.output_dir)
     settings["dataset"] = dataset_metadata
-    rollout = config.rollout
+    rollout = config.evaluation
     eval_env = None
-    if config.eval_interval > 0:
+    if config.eval_interval_steps > 0:
         eval_env, _ = create_rollout_env(
             {"train_config": settings, "dataset_metadata": dataset_metadata},
             rollout,
         )
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    run_name = config.exp_name or f"{config.robot}-{config.policy_type}-seed{config.seed}"
+    run_name = config.run_name or f"{config.robot}-{config.policy_type}-seed{config.seed}"
     run_dir = (
         config.output_dir
         / "bc"

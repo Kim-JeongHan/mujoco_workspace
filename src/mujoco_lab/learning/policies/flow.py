@@ -19,7 +19,7 @@ class FlowMatchingPolicy(BasePolicy):
         action_dim: int,
         chunk_size: int,
         hidden_dims: tuple[int, ...] = (128, 128),
-        time_embed_dim: int | None = 128,
+        time_embed_dim: int = 128,
     ) -> None:
         """Initialize the state-conditioned velocity model.
 
@@ -28,15 +28,13 @@ class FlowMatchingPolicy(BasePolicy):
             action_dim: Number of action features per step, N_a.
             chunk_size: Number of actions in each predicted chunk, C.
             hidden_dims: Width of each hidden MLP layer.
-            time_embed_dim: Sinusoidal feature width, or None for legacy scalar time.
+            time_embed_dim: Sinusoidal time feature width.
         """
         super().__init__(state_dim, action_dim, chunk_size)
 
         self.time_embed_dim = time_embed_dim
-        self.time_embedding = (
-            SinusoidalTimeEmbedding(time_embed_dim) if time_embed_dim is not None else None
-        )
-        input_dim = state_dim + action_dim * chunk_size + (time_embed_dim or 1)
+        self.time_embedding = SinusoidalTimeEmbedding(time_embed_dim)
+        input_dim = state_dim + action_dim * chunk_size + time_embed_dim
         self.net = build_mlp(
             input_dim=input_dim,
             output_dim=action_dim * chunk_size,
@@ -108,9 +106,7 @@ class FlowMatchingPolicy(BasePolicy):
         batch_size = noisy_action.shape[0]
         noisy_action = noisy_action.reshape(batch_size, -1)
         tau = tau.reshape(batch_size)
-        time_features = (
-            self.time_embedding(tau) if self.time_embedding is not None else tau[:, None]
-        )
+        time_features = self.time_embedding(tau)
 
         x = torch.cat([state, noisy_action, time_features], -1)
         action_chunk = self.net(x)

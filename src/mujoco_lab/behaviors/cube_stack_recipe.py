@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mujoco_lab.assets import RobotName
-from mujoco_lab.control.trajectory import MotionRatio
+from mujoco_lab.trajectory_generation.trajectory import MotionRatio
 
 STAGE_ORDER = ("above_pick", "pick", "close", "lift", "above_place", "place", "release", "retract")
 

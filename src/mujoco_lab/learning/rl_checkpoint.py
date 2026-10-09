@@ -8,8 +8,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from mujoco_lab.learning.algorithms.npg import NPGConfig
+from mujoco_lab.learning.config.critic import CriticConfig
 from mujoco_lab.learning.config.dapg import DAPGConfig
+from mujoco_lab.learning.config.npg import NPGConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.models.critic import ValueCritic
 from mujoco_lab.learning.policies.gaussian import GaussianPolicy
@@ -76,6 +77,8 @@ def load_training_checkpoint(path: Path, *, device: str = "cpu") -> TrainingStat
             settings[key] = Path(settings[key])
     settings["device"] = device
     settings["npg"] = NPGConfig(**settings["npg"])
+    settings["critic"]["hidden_dims"] = tuple(settings["critic"]["hidden_dims"])
+    settings["critic"] = CriticConfig(**settings["critic"])
     config = DAPGConfig(**settings)
     architecture = payload["metadata"]["architecture"]
     actor = GaussianPolicy(
@@ -87,9 +90,8 @@ def load_training_checkpoint(path: Path, *, device: str = "cpu") -> TrainingStat
     actor.load_state_dict(payload["actor"])
     critic = ValueCritic(
         actor.state_dim,
-        config.critic_n_layers,
-        config.critic_layer_size,
-        config.critic_learning_rate,
+        config.critic.hidden_dims,
+        config.critic.learning_rate,
         device=device,
     )
     critic.load_state_dict(payload["critic"])

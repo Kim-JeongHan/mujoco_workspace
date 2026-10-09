@@ -72,28 +72,28 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
         env.reset(seed=11)
 
 
-@pytest.mark.parametrize("recorded_ranges", [False, True])
-def test_evaluation_restores_recorded_randomization(recorded_ranges):
+@pytest.mark.parametrize("xy_range,min_gap", [(0.02, 0.01), (0.04, 0.02)])
+def test_evaluation_restores_recorded_randomization(xy_range, min_gap):
     metadata = {
+        "architecture": {"physics_steps_per_action": 1},
         "dataset_metadata": {
             "replay": {
+                "scene": "cube_stack",
                 "robot": "forte",
                 "robot_name": "forte",
-                "gripper_action_units": "opening_width_m",
                 "cubes": 2,
                 "environment": "table_shelf",
                 "dt": 0.002,
                 "cube_yaw_range_degrees": 45.0,
                 "physics_steps_per_action": 1,
+                "xy_range": xy_range,
+                "min_gap": min_gap,
             }
-        }
+        },
     }
-    replay = metadata["dataset_metadata"]["replay"]
-    if recorded_ranges:
-        replay.update(xy_range=0.04, min_gap=0.02)
     env, scene = create_evaluation_env(metadata, xy_range=None, min_gap=None, max_steps=1)
-    assert env.xy_range == scene["xy_range"] == (0.04 if recorded_ranges else 0.02)
-    assert env.min_gap == scene["min_gap"] == (0.02 if recorded_ranges else 0.01)
+    assert env.xy_range == scene["xy_range"] == xy_range
+    assert env.min_gap == scene["min_gap"] == min_gap
     assert env.cube_yaw_range_degrees == scene["cube_yaw_range_degrees"] == 45.0
     assert max(map(abs, env.reset(seed=11)[1]["cube_yaws_degrees"])) > 0
     recorded = capture_metadata(

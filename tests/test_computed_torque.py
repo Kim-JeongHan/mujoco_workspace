@@ -6,8 +6,9 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
-from mujoco_lab.assets.robot.robot import ControllerConfig, PoseConfig, RobotConfig
-from mujoco_lab.control import ControlTarget, JointSpaceComputedTorque, create_controller
+from mujoco_lab.assets.robot.robot import Constraints, ControllerConfig, PoseConfig, RobotConfig
+from mujoco_lab.control import JointSpaceComputedTorque, create_controller
+from mujoco_lab.trajectory_generation import ControlTarget
 
 
 @pytest.fixture
@@ -30,7 +31,11 @@ def coupled_arm(tmp_path, monkeypatch):
       </actuator>
     </mujoco>""")
     monkeypatch.setitem(ROBOT_ASSETS, "coupled", RobotAsset(path))
-    config = RobotConfig(ControllerConfig("computed_torque"), pose=PoseConfig([0.25, -0.35]))
+    config = RobotConfig(
+        ControllerConfig("computed_torque"),
+        Constraints(["alpha", "beta"], [[-np.pi, np.pi]] * 2, [1.0, 2.0], [3.0, 4.0]),
+        pose=PoseConfig([0.25, -0.35]),
+    )
     sim = Simulator(
         create_environment("empty"), robots=[RobotSpec("arm", "coupled", config=config)]
     )
@@ -43,7 +48,6 @@ def test_feedback_linearizes_coupled_geared_joint_dynamics(coupled_arm, with_der
     controller = create_controller(
         robot, ControllerConfig("computed_torque", natural_frequency=10, damping_ratio=0.8)
     )
-    assert controller is not None
     robot.change_controller(controller)
     assert robot.control_joint_names == ("beta", "alpha")
     sim.data.qvel[robot.state.dof_indices] = [0.1, -0.2]
@@ -86,6 +90,5 @@ def test_per_joint_acceleration_gains_and_optional_bias(coupled_arm):
 def test_target_joint_count_cannot_silently_broadcast(coupled_arm):
     _, robot = coupled_arm
     controller = create_controller(robot, ControllerConfig("computed_torque"))
-    assert controller is not None
     with pytest.raises(ValueError, match="one value per controlled joint"):
         controller.compute(robot.joint_state, ControlTarget(np.zeros(1)))

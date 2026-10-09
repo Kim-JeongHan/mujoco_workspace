@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.logging import Logger
 from mujoco_lab.learning.policies.factory import build_policy
@@ -37,7 +37,8 @@ def test_disabled_logger_writes_dynamic_jsonl_without_mutating_metrics(tmp_path,
         pass
 
 
-def test_wandb_history_shares_optimizer_step_and_flushes_on_exit(tmp_path, monkeypatch):
+@pytest.mark.parametrize("step_metric", ["optimizer_step", "train/env_steps"])
+def test_wandb_history_shares_step_and_flushes_on_exit(tmp_path, monkeypatch, step_metric):
     run = SimpleNamespace(define_metric=Mock(), log=Mock(), finish=Mock())
     video = Mock(return_value="video")
     monkeypatch.setitem(
@@ -45,10 +46,13 @@ def test_wandb_history_shares_optimizer_step_and_flushes_on_exit(tmp_path, monke
     )
     path = tmp_path / "episode.mp4"
     path.write_bytes(b"mp4")
-    with Logger(tmp_path / "run", {}, wandb_mode="online") as logger:
-        logger.log({"train/loss": 1.0}, step=4)
+    axis = {"train/env_steps": 8192} if step_metric == "train/env_steps" else {}
+    with Logger(tmp_path / "run", {}, wandb_mode="online", step_metric=step_metric) as logger:
+        logger.log({**axis, "train/loss": 1.0}, step=4)
         logger.log_evaluation(
-            {"eval/success_rate": 0.5}, [{"env_seed": 100, "video_path": str(path)}], step=4
+            {**axis, "eval/success_rate": 0.5},
+            [{"env_seed": 100, "video_path": str(path)}],
+            step=4,
         )
         logger.log({"validation/loss": 0.5}, step=4)
         logger.log({"train/loss": 0.2}, step=8)
@@ -64,11 +68,14 @@ def test_wandb_history_shares_optimizer_step_and_flushes_on_exit(tmp_path, monke
     ]
     assert calls[1].args[0] == {
         "optimizer_step": 4,
+        **axis,
         "eval/success_rate": 0.5,
         "eval/rollout_ep0": "video",
     }
     assert calls[-1].args == ({},)
     assert "env seed 100, optimizer step 4" in video.call_args.kwargs["caption"]
+    run.define_metric.assert_any_call(step_metric)
+    run.define_metric.assert_any_call("*", step_metric=step_metric)
     run.finish.assert_called_once_with(exit_code=0)
 
 
@@ -94,7 +101,7 @@ def test_wandb_flushes_pending_history_before_failed_finish(tmp_path, monkeypatc
 
 
 def test_checkpoint_round_trip_is_weights_only_and_preserves_normalizer(tmp_path):
-    config = TrainConfig(
+    config = BCTrainConfig(
         robot="forte",
         policy_type="mse",
         hidden_dims=(8,),

@@ -8,7 +8,7 @@ import torch
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.learning.config.config import RolloutConfig
+from mujoco_lab.learning.config import EvaluationConfig
 from mujoco_lab.learning.config.replay import BookReplayConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.replay import capture_metadata
@@ -41,7 +41,7 @@ def metadata():
 
 
 def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(tmp_path, monkeypatch):
-    rollout = RolloutConfig(num_episodes=1, xy_range=None, max_seconds=0.02, video_episodes=1)
+    rollout = EvaluationConfig(num_episodes=1, xy_range=None, max_seconds=0.02, video_episodes=1)
     env, _ = create_rollout_env(metadata(), rollout)
     model = build_policy(
         "mse", state_dim=48, action_dim=env.action_space.shape[0], chunk_size=1, hidden_dims=()
@@ -79,13 +79,12 @@ def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(tmp_path, m
     )
     np.testing.assert_allclose(lookats[0], env.camera_lookat)
     assert rows[0]["steps"] == 2 and rows[0]["sim_seconds"] == pytest.approx(0.02)
-    assert "book_position_error" in rows[0] and "cube_grasped" not in rows[0]
-    assert "mean_book_position_error" in summary and Path(rows[0]["video_path"]).is_file()
-    assert BookEvalConfig(checkpoint=tmp_path / "checkpoint.pt").rollout.max_seconds == 180.0
+    assert "position_error" in rows[0] and "best_stage" not in rows[0]
+    assert "mean_position_error" in summary and Path(rows[0]["video_path"]).is_file()
+    assert BookEvalConfig(checkpoint=tmp_path / "checkpoint.pt").evaluation.max_seconds == 180.0
 
 
-@pytest.mark.parametrize("scene", ["cube_stack", "book_insertion"])
-@pytest.mark.parametrize("repeat", [5, 10])
+@pytest.mark.parametrize("scene,repeat", [("cube_stack", 5), ("book_insertion", 10)])
 def test_rollout_env_converts_seconds_using_recorded_cadence(scene, repeat):
     recorded = metadata()
     replay = recorded["dataset_metadata"]["replay"]
@@ -99,7 +98,7 @@ def test_rollout_env_converts_seconds_using_recorded_cadence(scene, repeat):
             min_gap=0.01,
             cube_yaw_range_degrees=0.0,
         )
-    env, effective = create_rollout_env(recorded, RolloutConfig(max_seconds=15.0))
+    env, effective = create_rollout_env(recorded, EvaluationConfig(max_seconds=15.0))
     assert env.max_steps == (1500 if repeat == 5 else 750)
     assert env.max_steps * env.action_dt == pytest.approx(15.0)
     assert effective["action_execution_hz"] == pytest.approx(100.0 if repeat == 5 else 50.0)

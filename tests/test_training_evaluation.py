@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata
-from mujoco_lab.learning.config.config import RolloutConfig, TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig, EvaluationConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.trainers.train_bc import run_training
@@ -41,12 +41,12 @@ class TinyEnv:
 def test_training_split_preserves_seeded_random_split_order(tmp_path, monkeypatch, ratios):
     from mujoco_lab.learning import train as cli
 
-    config = TrainConfig(
+    config = BCTrainConfig(
         output_dir=tmp_path,
         validation_ratio=ratios[0],
         test_ratio=ratios[1],
         action_execution_hz=500,
-        eval_interval=0,
+        eval_interval_steps=0,
         seed=7,
     )
     demonstrations = [
@@ -57,7 +57,6 @@ def test_training_split_preserves_seeded_random_split_order(tmp_path, monkeypatc
                 "seed": index,
                 "replay": {
                     "physics_steps_per_action": 1,
-                    "gripper_action_units": "opening_width_m",
                 },
                 "observation": {"frame_dim": 1, "rotation_indices": []},
             },
@@ -111,7 +110,7 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
         },
     )
     demonstration.validate_training_data()
-    config = TrainConfig(
+    config = BCTrainConfig(
         policy_type="flow",
         hidden_dims=(8,),
         obs_horizon=1,
@@ -120,8 +119,8 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
         action_execution_hz=500,
         batch_size=2,
         num_epochs=2,
-        log_interval=100,
-        eval_interval=4,
+        log_interval_steps=100,
+        eval_interval_steps=4,
         ema_decay=ema_decay,
     )
     observed = []
@@ -131,7 +130,7 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
         metadata = checkpoint_metadata(model, normalizer, config, optimizer_step=step)
         rows, summary = PolicyEvaluator(
             TinyEnv(),
-            RolloutConfig(num_episodes=1, seed=100, max_seconds=0.002, video_episodes=0),
+            EvaluationConfig(num_episodes=1, seed=100, max_seconds=0.002, video_episodes=0),
             torch.device("cpu"),
         ).evaluate(model, normalizer, metadata, flow_num_steps=2)
         assert model.training == (ema_decay is None)
@@ -148,8 +147,8 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
         replace(
             config,
             num_epochs=1,
-            eval_interval=0,
-            rollout=RolloutConfig(num_episodes=0, max_seconds=0),
+            eval_interval_steps=0,
+            evaluation=EvaluationConfig(num_episodes=0, max_seconds=0),
         ),
         [demonstration],
         [],

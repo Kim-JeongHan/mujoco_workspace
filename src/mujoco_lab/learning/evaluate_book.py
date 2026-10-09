@@ -9,17 +9,18 @@ import tyro
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors.book import BookTask, create_book_controller
-from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig
-from mujoco_lab.learning.datasets.replay import require_width_actions
+from mujoco_lab.behaviors.task import BookTask
+from mujoco_lab.learning.config import BCEvalConfig, EvaluationConfig
 from mujoco_lab.learning.envs.book import BookEnv
 
 
 @dataclass
-class BookEvalConfig(EvalConfig):
+class BookEvalConfig(BCEvalConfig):
     """Allow enough simulated time for a complete book-insertion episode."""
 
-    rollout: RolloutConfig = field(default_factory=lambda: RolloutConfig(max_seconds=180.0))
+    evaluation: EvaluationConfig = field(
+        default_factory=lambda: EvaluationConfig(max_seconds=180.0)
+    )
 
 
 def create_book_evaluation_env(
@@ -31,11 +32,10 @@ def create_book_evaluation_env(
 ) -> tuple[BookEnv, dict[str, Any]]:
     """Restore the recorded book, robot, controller tuning, and action cadence."""
     replay = metadata["dataset_metadata"]["replay"]
-    require_width_actions(replay)
     if replay["scene"] != "book_insertion" or replay["environment"] != "book_shelf":
         raise ValueError("Expected a recorded book-insertion scene in book_shelf")
     repeat = replay["physics_steps_per_action"]
-    architecture_repeat = metadata.get("architecture", {}).get("physics_steps_per_action", repeat)
+    architecture_repeat = metadata["architecture"]["physics_steps_per_action"]
     if architecture_repeat != repeat:
         raise ValueError("Checkpoint action cadence differs from recorded book cadence")
     robot_type, robot_name = replay["robot"], replay["robot_name"]
@@ -45,8 +45,6 @@ def create_book_evaluation_env(
         robots=[RobotSpec(robot_name, robot_type, config=robot_config)],
         dt=replay["dt"],
     )
-    robot = simulator.robots[robot_name]
-    robot.change_controller(create_book_controller(robot, robot_config.controller))
     env = BookEnv(
         BookTask(simulator),
         xy_range=replay["xy_range"] if xy_range is None else xy_range,

@@ -8,7 +8,7 @@ import torch
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from torch.utils.data import DataLoader
 
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
@@ -19,7 +19,7 @@ from mujoco_lab.learning.policies.factory import build_policy
 
 
 def run_training(
-    config: TrainConfig,
+    config: BCTrainConfig,
     train_episodes: Sequence[Episode],
     validation_episodes: Sequence[Episode] = (),
     *,
@@ -89,7 +89,7 @@ def run_training(
         flow_time_embed_dim=config.flow_time_embed_dim,
     ).to(device)
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
     averaged = None
     if config.ema_decay is not None:
@@ -127,7 +127,7 @@ def run_training(
             step += 1
             logged_loss += loss.item() * state.shape[0]
             logged_samples += state.shape[0]
-            if step % config.log_interval == 0:
+            if step % config.log_interval_steps == 0:
                 value = logged_loss / logged_samples
                 if logger is not None:
                     logger.log(
@@ -143,8 +143,8 @@ def run_training(
                 logged_samples = 0
             if (
                 evaluate is not None
-                and config.eval_interval > 0
-                and step % config.eval_interval == 0
+                and config.eval_interval_steps > 0
+                and step % config.eval_interval_steps == 0
             ):
                 evaluate(evaluation_model, normalizer, step)
                 last_evaluation_step = step
@@ -185,6 +185,6 @@ def run_training(
                 },
                 step=step,
             )
-    if evaluate is not None and config.eval_interval > 0 and step != last_evaluation_step:
+    if evaluate is not None and config.eval_interval_steps > 0 and step != last_evaluation_step:
         evaluate(evaluation_model, normalizer, step)
     return evaluation_model, normalizer

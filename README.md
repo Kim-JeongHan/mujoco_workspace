@@ -22,6 +22,11 @@ uv run python examples/simulation.py
 
 [`examples/simulation.py`](examples/simulation.py) accepts an environment name or MJCF/URDF path, with an optional robot.
 
+Robot YAML settings select `position`, `pd`, or `computed_torque` control and an
+`analytic_jerk` or `min_jerk` reference. `Robot.set_goal()` accepts arm joint positions
+followed by optional gripper opening width in meters. `Simulator.step()` advances
+the reference, controller, and physics together.
+
 Task examples support `heuristic` and `sampling` methods:
 
 ```bash

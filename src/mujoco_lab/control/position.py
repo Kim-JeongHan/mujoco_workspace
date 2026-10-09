@@ -4,8 +4,8 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from mujoco_lab.control.base import Controller
-from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.state import JointState
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
 class PositionController(Controller):

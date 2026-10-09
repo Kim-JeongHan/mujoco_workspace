@@ -16,7 +16,6 @@ from mujoco_lab.behaviors import (
     CubeStackTask,
 )
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import create_controller
 from mujoco_lab.learning.config.replay import CubeStackReplayConfig
 from mujoco_lab.learning.datasets.replay import capture_frame, capture_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
@@ -35,7 +34,7 @@ from mujoco_lab.utils import Logger
 class Config:
     """Choose a Panda or Forte cube demonstration collection run."""
 
-    count: int = 900  # Total target attempts, including existing episodes when resuming.
+    count: int = 500  # Total target attempts, including existing episodes when resuming.
     seed: int = 42  # Starting seed for repeatable attempts.
 
     xy_range: float = 0.02  # Cube offset range, in meters.
@@ -97,9 +96,6 @@ def main() -> None:
             min_gap=config.min_gap,
         ),
     )
-    robot = simulator.robots[config.robot]
-    controller = create_controller(robot, robot_config.controller)
-    robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
     max_steps = config.max_steps
     env = CubeStackEnv(

@@ -29,9 +29,9 @@ class CubeStackEnv(JointActionEnv):
     append each cube's position, rotation, offsets to every grasp, and goal offset.
     Rotations flatten the first two matrix columns row-major. Arm positions
     and gripper targets use their joints' native radians or meters. Configure
-    joint-target arm controllers before stepping; this environment selects none.
-    Arm commands replan a minimum-jerk segment lasting one action period,
-    retaining the preceding target's position, velocity, and acceleration.
+    joint-target arm controllers through the robot settings.
+    Arm goals drive persistent analytic jerk references with configured velocity
+    and acceleration limits. New actions retain the current reference state.
     """
 
     action_space: spaces.Box
@@ -74,7 +74,7 @@ class CubeStackEnv(JointActionEnv):
         self._cube_half_sizes = np.array(cube_half_sizes)
 
         arm_values = sum(len(slots) for slots in self._arm_slots.values())
-        grippers = sum(robot.gripper is not None for robot in self.robots)
+        grippers = sum(robot.has_gripper() for robot in self.robots)
         size = 2 * arm_values + grippers + 9 * len(self.robots)
         size += task.cubes * (12 + 3 * len(self.robots))
         if len(self.robots) == 1 and arm_values == 7 and grippers == 1:
@@ -121,17 +121,18 @@ class CubeStackEnv(JointActionEnv):
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
-        self.task.reset()
+        self.simulator.reset()
         yaws = self._randomize_cubes()
         mujoco.mj_forward(self.model, self.data)
         for robot in self.robots:
             robot.update_state()
+        self.task.reset()
         self._steps = 0
         self._done = False
         return self._get_obs(), {"seed": seed, "cube_yaws_degrees": yaws}
 
     def _is_success(self) -> bool:
-        return self.task.status().released_stable_stack
+        return self.task.status().is_released_stable
 
     @property
     def camera_lookat(self) -> np.ndarray:

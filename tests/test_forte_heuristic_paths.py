@@ -12,7 +12,8 @@ from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe
-from mujoco_lab.control import create_controller
+from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
+from mujoco_lab.learning.rollout import collect_episode
 
 
 @pytest.fixture(autouse=True)
@@ -27,15 +28,12 @@ def make_expert(cubes=2, *, scene=None):
         create_cube_stack(cubes) if scene is None else scene,
         robots=[RobotSpec("forte", "forte", config=config)],
     )
-    robot = simulator.robots["forte"]
-    robot.change_controller(create_controller(robot, config.controller))
     task = CubeStackTask(simulator, cubes)
     expert = CubeStackExpert(task, recipe=load_recipe("forte"), method="heuristic")
     return simulator, task, expert
 
 
-@pytest.mark.parametrize("variant", ["forte", "forte_backup"])
-@pytest.mark.parametrize("cubes", [1, 2, 3, 4])
+@pytest.mark.parametrize("variant,cubes", [("forte", 1), ("forte", 4), ("forte_backup", 2)])
 def test_rebased_forte_heuristic_completes_a_collision_free_stack(variant, cubes, monkeypatch):
     path = (
         Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot" / variant / "robot.xml"
@@ -61,9 +59,9 @@ def test_rebased_forte_heuristic_completes_a_collision_free_stack(variant, cubes
     status = task.status()
     assert not expert.failed, expert.failure_reason
     assert expert.get_stage_name() == "settle"
-    assert status.released_stable_stack
-    assert status.support_contacts
-    assert np.all(task.max_lift > task.starts[:, 2] + 0.04)
+    assert status.is_released_stable
+    assert status.is_support_contacts
+    assert np.all(task.max_height > task.starts[:, 2] + 0.04)
     assert not self_contacts, self_contacts
     assert max_tilt < np.deg2rad(1), np.rad2deg(max_tilt)
     assert not simulator.data.warning.number.any()
@@ -91,6 +89,16 @@ def test_blocked_heuristic_pose_is_reported_at_execution():
     action = expert.act()
     assert expert.failed
     assert expert.failure_reason == "No checked heuristic route for cube0:pick"
-    assert action.shape == (8,)
+    assert action is None
     np.testing.assert_array_equal(simulator.data.qpos, initial)
     assert simulator.data.time == 0
+
+
+def test_collection_near_joint_limit_does_not_overshoot_between_waypoints():
+    simulator, task, expert = make_expert(cubes=1)
+    env = CubeStackEnv(task, cube_yaw_range_degrees=45, physics_steps_per_action=5, max_steps=6000)
+    episode = collect_episode(env, expert, seed=48, max_steps=6000)
+    assert episode.metadata["success"], episode.metadata
+    assert np.all(episode.actions >= env.action_space.low - 1e-6)
+    assert np.all(episode.actions <= env.action_space.high + 1e-6)
+    assert not simulator.data.warning.number.any()

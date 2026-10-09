@@ -8,13 +8,19 @@ from controller_config import create_test_controller
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.assets.robot.robot import ControllerConfig, GripperConfig, PoseConfig, RobotConfig
-from mujoco_lab.control import Controller, ControlTarget
+from mujoco_lab.assets.robot.robot import (
+    Constraints,
+    ControllerConfig,
+    GripperConfig,
+    PoseConfig,
+    RobotConfig,
+)
 from mujoco_lab.rendering.annotations import (
     NEGATIVE_TORQUE_RGBA,
     POSITIVE_TORQUE_RGBA,
     draw_joint_torques,
 )
+from mujoco_lab.trajectory_generation import ControlTarget
 
 
 def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
@@ -61,6 +67,11 @@ def small_robot(tmp_path, monkeypatch, mode, *, configure_gripper=True):
     """)
     (tmp_path / "robot.yaml").write_text("""pose:
   default: [0, 0, 0, 0]
+constraints:
+  joint_names: [alpha, passive, beta, grip]
+  position_limit: [[-180, 180], [-180, 180], [-180, 180], [-10, 10]]
+  velocity_limit: [1, 1, 2, 0.4]
+  acceleration_limit: [3, 3, 4, 2]
 controller:
   name: pd
   pd_gains:
@@ -73,6 +84,7 @@ controller:
 """)
     monkeypatch.setitem(ROBOT_ASSETS, "mini", RobotAsset(path))
     config = load_robot_config("mini")
+    config.controller.name = "pd" if mode == "pd" else "position"
     if configure_gripper:
         config.gripper = GripperConfig(actuator="grip_drive", joints=["grip"])
     sim = Simulator(
@@ -94,6 +106,10 @@ def test_pd_controls_shuffled_geared_motors_and_keeps_passive_joint(tmp_path, mo
     robot.change_controller(controller)
     assert robot.control_joint_names == ("beta", "alpha")
     assert robot.target.position.shape == (2,)
+    constraints = robot.get_reference_constraints()
+    assert constraints.joint_names == ["beta", "alpha"]
+    np.testing.assert_array_equal(robot.reference_generator.vmax, [2, 1])
+    np.testing.assert_array_equal(robot.reference_generator.amax, [4, 3])
     robot.target = ControlTarget([0.2, -0.1])
     assert not robot.control()
     np.testing.assert_allclose(sim.data.ctrl[robot.actuator_ids], [-2, 0, -1 / 3])
@@ -136,28 +152,21 @@ def test_unsupported_joint_controller_rejects_non_joint_transmission(tmp_path, m
         </mujoco>
     """)
     monkeypatch.setitem(ROBOT_ASSETS, "tendon_robot", RobotAsset(path))
-    sim = Simulator(
-        create_environment("empty"),
-        robots=[
-            RobotSpec(
-                "tendon",
-                "tendon_robot",
-                config=RobotConfig(ControllerConfig("none"), pose=PoseConfig([0])),
-            )
-        ],
-    )
-    robot = sim.robots["tendon"]
-    assert robot.control_joint_names == ()
-    assert robot.controller is None
-    sim.data.ctrl[robot.actuator_ids[0]] = 0.3
-    assert not robot.control()
-    assert sim.run_steps(1)[robot.name].steps == 1
-    assert sim.data.ctrl[robot.actuator_ids[0]] == pytest.approx(0.3)
     with pytest.raises(ValueError, match="direct joint transmissions"):
-        create_test_controller(robot, controller="pd")
-    with pytest.raises(ValueError, match="direct joint transmissions"):
-        robot.change_controller(Controller())
-    assert robot.controller is None
+        Simulator(
+            create_environment("empty"),
+            robots=[
+                RobotSpec(
+                    "tendon",
+                    "tendon_robot",
+                    config=RobotConfig(
+                        ControllerConfig("computed_torque"),
+                        Constraints(["hinge"], [[-np.pi, np.pi]], [1.0], [2.0]),
+                        pose=PoseConfig([0]),
+                    ),
+                )
+            ],
+        )
 
 
 def test_position_commands_drive_shuffled_geared_servos(tmp_path, monkeypatch):

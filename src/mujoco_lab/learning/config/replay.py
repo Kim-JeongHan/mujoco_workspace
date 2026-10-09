@@ -11,7 +11,6 @@ class ReplayMetadataConfig:
     robot: str
     physics_steps_per_action: int = 1
     xy_range: float = 0.02
-    gripper_action_units: Literal["opening_width_m"] = field(default="opening_width_m", init=False)
 
 
 @dataclass(frozen=True, kw_only=True)

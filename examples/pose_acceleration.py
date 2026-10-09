@@ -77,8 +77,6 @@ def main(config: Config) -> None:
         raise ValueError("samples must be nonnegative")
     robot_config = load_robot_config("forte")
     constraints = robot_config.constraints
-    if constraints is None:
-        raise ValueError("The example requires named arm constraints")
     names = constraints.joint_names
     count = len(names)
     bounds = np.asarray(constraints.position_limit)

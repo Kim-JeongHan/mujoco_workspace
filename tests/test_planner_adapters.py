@@ -36,7 +36,8 @@ def test_rrg_only_extends_the_exact_goal_over_a_collision_free_edge(monkeypatch,
         return collision_free
 
     monkeypatch.setattr("mujoco_lab.planning.planners.RRG", Search)
-    checker = SimpleNamespace(is_path_collision_free=check_edge)
+    checker = EmptyCollisionChecker()
+    monkeypatch.setattr(checker, "is_path_collision_free", check_edge)
     path = plan_path(RRGConfig(seed=7), start, goal, [(-2.0, 2.0)] * 2, checker)
     np.testing.assert_array_equal(checked, [(near_goal, goal)])
     if collision_free:
@@ -45,9 +46,9 @@ def test_rrg_only_extends_the_exact_goal_over_a_collision_free_edge(monkeypatch,
         assert path is None
 
 
-@pytest.mark.parametrize("nodes", [None, []])
 @pytest.mark.parametrize(
-    "config,search_name", [(RRTConnectConfig(), "RRTConnect"), (RRGConfig(), "RRG")]
+    "nodes,config,search_name",
+    [(None, RRTConnectConfig(), "RRTConnect"), ([], RRGConfig(), "RRG")],
 )
 def test_query_returns_none_for_failed_or_empty_search(monkeypatch, nodes, config, search_name):
     class Search:

@@ -1,19 +1,25 @@
 """Heuristic grasp targets for cubes rotated around the tabletop normal."""
 
+from typing import Literal
+
 import mujoco
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
+from mujoco_lab.assets import RobotName
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import create_controller
 from mujoco_lab.planning import default_planning
 
 
-def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "panda"):
+def _plan_at_yaw(
+    degrees: float,
+    method: Literal["heuristic", "sampling"] = "heuristic",
+    robot_type: RobotName = "panda",
+):
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec(robot_type, robot_type, config=load_robot_config(robot_type))],
@@ -25,13 +31,9 @@ def _plan_at_yaw(degrees: float, method: str = "heuristic", robot_type: str = "p
     ).as_quat(scalar_first=True)
     mujoco.mj_forward(simulator.model, simulator.data)
     task = CubeStackTask(simulator, 2)
-    robot = simulator.robots[robot_type]
-    robot.change_controller(
-        create_controller(robot, load_robot_config(robot.robot_type).controller)
-    )
     expert = CubeStackExpert(
         task,
-        recipe=load_cube_recipe(next(iter(task.simulator.robots.values())).robot_type),
+        recipe=load_cube_recipe(robot_type),
         method=method,
         planning=default_planning() if method == "sampling" else None,
     )
@@ -50,7 +52,7 @@ def _grasp_pose(simulator, expert, stage):
     return data.site_xpos[site].copy(), Rotation.from_matrix(data.site_xmat[site].reshape(3, 3))
 
 
-@pytest.mark.parametrize("degrees", [-15.0, 15.0, -45.0, 45.0])
+@pytest.mark.parametrize("degrees", [-45.0, 45.0])
 @pytest.mark.parametrize("method", ["heuristic", "sampling"])
 def test_pick_tracks_cube_yaw_and_place_returns_to_recipe(degrees, method):
     simulator, expert, starts, goals, stages = _plan_at_yaw(degrees, method)

@@ -7,10 +7,10 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors import BookTask, create_book_controller
-from mujoco_lab.control import ControlTarget, min_jerk
+from mujoco_lab.behaviors import BookTask
 from mujoco_lab.learning.envs import BookEnv
 from mujoco_lab.learning.envs.book import book_observation_layout
+from mujoco_lab.trajectory_generation import AnalyticJerkReference, ControlTarget
 
 
 def make_env(**kwargs):
@@ -18,8 +18,6 @@ def make_env(**kwargs):
     simulator = Simulator(
         create_book_insertion(), robots=[RobotSpec("forte", "forte", config=config)]
     )
-    robot = simulator.robots["forte"]
-    robot.change_controller(create_book_controller(robot, config.controller))
     return BookEnv(BookTask(simulator), **kwargs)
 
 
@@ -32,7 +30,7 @@ def test_reset_restores_physics_then_randomizes_and_resets_measurements():
     env.data.qpos[env._book_qpos + 2] += 1
     env.data.qvel[:] = 1
     env.data.time = 4
-    env.task._stable_since = 1
+    env.task._stable_since[0] = 1
     second, repeat_info = env.reset(seed=17)
     np.testing.assert_array_equal(first, second)
     np.testing.assert_array_equal(env.data.qpos, qpos)
@@ -42,7 +40,7 @@ def test_reset_restores_physics_then_randomizes_and_resets_measurements():
     np.testing.assert_array_equal(env.data.site_xpos[env.task.target], goal)
     assert info == repeat_info
     assert env.data.time == 0
-    assert env.task._stable_since is None
+    assert env.task._stable_since == [None]
     assert np.all(np.abs(qpos[env._book_qpos : env._book_qpos + 2] - env._home_xy) <= 0.02)
     assert np.linalg.norm(qpos[env._book_qpos + 3 : env._book_qpos + 7]) == pytest.approx(1)
     assert abs(info["book_yaw_degrees"]) <= 15
@@ -83,6 +81,11 @@ def test_book_action_preserves_target_derivatives_and_stops_on_success(monkeypat
     env.reset(seed=4)
     start = ControlTarget(env.robot.target.position, np.full(7, 0.1), np.full(7, -0.2))
     env.robot.target = start
+    env.robot.set_reference_generator(
+        AnalyticJerkReference(
+            start, env.robot.get_reference_constraints(), control_dt=env.simulator.dt
+        )
+    )
     action = np.r_[start.position - 0.001, 0.0]
     captured = []
     control = env.robot.control
@@ -93,19 +96,26 @@ def test_book_action_preserves_target_derivatives_and_stops_on_success(monkeypat
 
     monkeypatch.setattr(env.robot, "control", record_control)
     calls = iter([False, True])
-    monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(released_stable=next(calls)))
+    monkeypatch.setattr(env.task, "status", lambda: SimpleNamespace(is_released_stable=next(calls)))
     _, reward, terminated, truncated, info = env.step(action)
     assert (reward, terminated, truncated) == (1.0, True, False)
     assert info["physics_steps"] == 2
     assert info["elapsed_dt"] == pytest.approx(2 * env.simulator.dt)
-    for index, target in enumerate(captured):
-        expected = min_jerk(
-            start, ControlTarget(action[:7]), index * env.simulator.dt, env.action_dt
+    assert captured[0] is not start
+    h = env.simulator.dt
+    for before, after in zip([start, *captured[:-1]], captured, strict=True):
+        np.testing.assert_allclose(
+            after.velocity, before.velocity + h * (before.acceleration + after.acceleration) / 2
         )
-        for field in ("position", "velocity", "acceleration"):
-            np.testing.assert_allclose(getattr(target, field), getattr(expected, field))
+        np.testing.assert_allclose(
+            after.position,
+            before.position
+            + h * before.velocity
+            + h**2 * (2 * before.acceleration + after.acceleration) / 6,
+        )
     with pytest.raises(RuntimeError, match="Reset"):
         env.step(action)
     env.reset(seed=4)
     assert env._steps == 0 and not env._done
-    assert env.robot.target.velocity is None and env.robot.target.acceleration is None
+    np.testing.assert_array_equal(env.robot.target.velocity, 0)
+    np.testing.assert_array_equal(env.robot.target.acceleration, 0)

@@ -5,7 +5,7 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors import BookInsertionExpert, BookTask, create_book_controller
+from mujoco_lab.behaviors import BookInsertionExpert, BookTask
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe
 from mujoco_lab.learning.collect_book import Config
 from mujoco_lab.learning.config.replay import BookReplayConfig
@@ -24,8 +24,6 @@ def test_book_recording_round_trip_restores_geometry(tmp_path):
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
         dt=config.simulation_dt,
     )
-    robot = simulator.robots[config.robot]
-    robot.change_controller(create_book_controller(robot, robot_config.controller))
     task = BookTask(simulator)
     env = BookEnv(
         task,
@@ -34,9 +32,7 @@ def test_book_recording_round_trip_restores_geometry(tmp_path):
         max_steps=4,
         physics_steps_per_action=5,
     )
-    expert = BookInsertionExpert(
-        task, recipe=load_recipe(robot.robot_type), planning=config.planning
-    )
+    expert = BookInsertionExpert(task, recipe=load_recipe(config.robot), planning=config.planning)
     metadata = capture_metadata(
         simulator,
         BookReplayConfig(
@@ -59,6 +55,7 @@ def test_book_recording_round_trip_restores_geometry(tmp_path):
     path = tmp_path / "book.npz"
     save_episode(path, episode)
     loaded = load_episode(path)
+    assert loaded.qpos is not None
     assert loaded.metadata["replay"]["book"] == "medium"
     assert loaded.metadata["replay"]["xy_range"] == 0.01
     replay = EpisodeReplay(loaded)

@@ -10,11 +10,7 @@ import tyro
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets import BookType, RobotName
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors import (
-    BookInsertionExpert,
-    BookTask,
-    create_book_controller,
-)
+from mujoco_lab.behaviors import BookInsertionExpert, BookTask
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
 from mujoco_lab.learning.config.replay import BookReplayConfig
 from mujoco_lab.learning.datasets.replay import capture_frame, capture_metadata
@@ -40,7 +36,7 @@ class Config:
     xy_range: float = 0.0  # Book offset range, in meters; zero uses the fixed baseline.
     # Maximum absolute initial book yaw, in degrees.
     book_yaw_range_degrees: float = 0.0
-    simulation_hz: float = 500.0  # Physics and PD evaluations per simulated second.
+    simulation_hz: float = 500.0  # Physics and control evaluations per simulated second.
     action_execution_hz: float = 100.0  # 500 Hz / 100 Hz = 5 physics steps/action.
 
     output_dir: Path = Path("data/forte_book_medium")  # Directory for episode NPZ files.
@@ -91,9 +87,6 @@ def main() -> None:
             xy_range=config.xy_range,
         ),
     )
-    robot = simulator.robots[config.robot]
-    controller = create_book_controller(robot, robot_config.controller)
-    robot.change_controller(controller)
     task = BookTask(simulator)
     max_steps = max_steps_for_seconds(config.max_seconds, simulator.dt * repeat)
     env = BookEnv(

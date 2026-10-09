@@ -8,7 +8,7 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
@@ -41,20 +41,16 @@ def _episode(cubes: int = 2) -> Episode:
     )
 
 
-@pytest.mark.parametrize("repeated_indices", [False, True])
 def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scaled(
-    tmp_path, monkeypatch, repeated_indices
+    tmp_path, monkeypatch
 ):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     episode = _episode()
     validation = _episode()
-    if repeated_indices:
-        indices = episode.metadata["observation"]["rotation_indices"]
-        indices[:] = [*reversed(indices), indices[0]]
     episode.validate_training_data()
     validation.validate_training_data()
     original = episode.states.copy()
-    config = TrainConfig(
+    config = BCTrainConfig(
         policy_type="mse",
         obs_horizon=2,
         chunk_size=1,
@@ -63,8 +59,8 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
         hidden_dims=(8,),
         batch_size=3,
         num_epochs=1,
-        log_interval=100,
-        eval_interval=0,
+        log_interval_steps=100,
+        eval_interval_steps=0,
     )
 
     class SilentLogger:

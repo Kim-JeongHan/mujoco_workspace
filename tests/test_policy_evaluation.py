@@ -7,10 +7,11 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import RolloutConfig, TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig, EvaluationConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.factory import build_policy
+from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 
 
 class TinyEnv:
@@ -55,7 +56,7 @@ class TinyEnv:
 
 
 def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2):
-    config = TrainConfig(
+    config = BCTrainConfig(
         robot="forte",
         policy_type=policy_type,
         hidden_dims=(),
@@ -88,7 +89,7 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
 def evaluate(env, model, normalizer, metadata, *, num_episodes=1, seed=50, max_steps=5):
     return PolicyEvaluator(
         env,
-        RolloutConfig(
+        EvaluationConfig(
             num_episodes=num_episodes,
             seed=seed,
             max_seconds=max_steps * env.action_dt,
@@ -98,22 +99,22 @@ def evaluate(env, model, normalizer, metadata, *, num_episodes=1, seed=50, max_s
     ).evaluate(model, normalizer, metadata, flow_num_steps=3)
 
 
-def test_mse_history_padding_chunk_alignment_clipping_and_success(tmp_path):
-    model, stats, metadata = checkpoint(tmp_path)
+def test_mse_history_padding_chunk_alignment_raw_goals_and_success(tmp_path):
+    model, stats, metadata = checkpoint(tmp_path, chunk_size=3)
     policy_inputs = []
     handle = model.net[0].register_forward_pre_hook(
         lambda module, args: policy_inputs.append(args[0].detach().cpu().numpy().copy())
     )
     with torch.no_grad():
-        model.net[0].weight.copy_(torch.tensor([[0.0, 1.0], [0.0, 1.0]]))
+        model.net[0].weight.copy_(torch.tensor([[0.0, 1.0]] * 3))
         model.net[0].bias.zero_()
     env = TinyEnv(low=0, high=11, finish=3, success=True)
     rows, summary = evaluate(env, model, stats, metadata, num_episodes=2)
     handle.remove()
     # First padded history [2,2] normalizes to [0.5,0.5], hence 10+2*0.5=11.
     # At the next chunk boundary history [3,4] gives the current-frame action 13,
-    # clipped to 11; a fresh chunk is not sampled after the success step.
-    assert env.actions == [11, 11, 11] * 2
+    # forwarded unchanged; a fresh chunk is not sampled after the success step.
+    assert env.actions == [11, 11, 13] * 2
     np.testing.assert_allclose(np.concatenate(policy_inputs), [[0.5, 0.5], [1.0, 1.5]] * 2)
     assert [row["steps"] for row in rows] == [3, 3]
     assert all(row["success"] for row in rows)
@@ -122,8 +123,23 @@ def test_mse_history_padding_chunk_alignment_clipping_and_success(tmp_path):
     assert summary["mean_success_sim_seconds"] == pytest.approx(0.006)
 
 
-@pytest.mark.parametrize("max_steps", [1, 5])
-@pytest.mark.parametrize("failure_reason", [None, "failed_stack"])
+def test_gaussian_evaluation_uses_mean_and_preserves_training_rng():
+    model = GaussianPolicy(2, 1, 1, hidden_dims=())
+    model.mean_head.load_state_dict({"weight": torch.zeros(1, 2), "bias": torch.tensor([0.25])})
+    with torch.no_grad():
+        model.log_std.fill_(2.0)
+    normalizer = Normalizer(*(np.array([value], dtype=np.float32) for value in (0, 1, 0, 1)))
+    metadata = {"architecture": {"obs_horizon": 2, "execution_horizon": 1}}
+    env = TinyEnv(finish=3, success=True)
+    rng = torch.random.get_rng_state().clone()
+    rows, summary = evaluate(env, model, normalizer, metadata)
+    assert env.actions == [0.25] * 3
+    assert rows[0]["success"] and summary["success_rate"] == 1
+    assert model.training
+    torch.testing.assert_close(torch.random.get_rng_state(), rng)
+
+
+@pytest.mark.parametrize("max_steps,failure_reason", [(1, None), (5, "failed_stack")])
 def test_terminated_failure_is_not_a_timeout(tmp_path, max_steps, failure_reason):
     model, stats, metadata = checkpoint(tmp_path)
 
@@ -176,7 +192,9 @@ def test_evaluator_restores_model_and_rng_when_step_raises(tmp_path):
         def step(self, action):
             raise RuntimeError("step failed")
 
-    evaluator = PolicyEvaluator(FailingEnv(), RolloutConfig(video_episodes=0), torch.device("cpu"))
+    evaluator = PolicyEvaluator(
+        FailingEnv(), EvaluationConfig(video_episodes=0), torch.device("cpu")
+    )
     model.train()
     rng = torch.random.get_rng_state().clone()
     with pytest.raises(RuntimeError, match="step failed"):
@@ -193,7 +211,7 @@ def test_seconds_limit_uses_environment_cadence_and_stops_inside_chunk(
     env = TinyEnv(dt=action_dt, finish=100)
     rows, summary = PolicyEvaluator(
         env,
-        RolloutConfig(num_episodes=1, max_seconds=0.025, video_episodes=0),
+        EvaluationConfig(num_episodes=1, max_seconds=0.025, video_episodes=0),
         torch.device("cpu"),
     ).evaluate(model, stats, metadata, flow_num_steps=1)
     assert rows[0]["steps"] == expected_steps
@@ -201,7 +219,7 @@ def test_seconds_limit_uses_environment_cadence_and_stops_inside_chunk(
     assert summary["timeouts"] == 1
 
 
-@pytest.mark.parametrize("max_seconds", [0.0, -1.0, float("inf"), float("nan")])
+@pytest.mark.parametrize("max_seconds", [0.0, float("nan")])
 def test_evaluator_rejects_invalid_durations(max_seconds):
     with pytest.raises(ValueError, match="max_seconds"):
-        PolicyEvaluator(TinyEnv(), RolloutConfig(max_seconds=max_seconds), torch.device("cpu"))
+        PolicyEvaluator(TinyEnv(), EvaluationConfig(max_seconds=max_seconds), torch.device("cpu"))

@@ -17,7 +17,7 @@ def build_policy(
     action_dim: int,
     chunk_size: int,
     hidden_dims: tuple[int, ...] = (128, 128),
-    flow_time_embed_dim: int | None = 128,
+    flow_time_embed_dim: int = 128,
 ) -> BasePolicy:
     """Build a policy with the requested architecture and dimensions.
 
@@ -28,7 +28,7 @@ def build_policy(
         action_dim: Number of action features per step, N_a.
         chunk_size: Number of actions in each predicted chunk, C.
         hidden_dims: Width of each hidden MLP layer.
-        flow_time_embed_dim: Sinusoidal time width for Flow, or None for scalar time.
+        flow_time_embed_dim: Sinusoidal time feature width for Flow.
 
     Returns:
         BasePolicy: Configured policy instance.

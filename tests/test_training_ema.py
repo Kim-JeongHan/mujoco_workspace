@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
 from mujoco_lab.learning.trainers.train_bc import run_training
@@ -13,7 +13,7 @@ from mujoco_lab.learning.trainers.train_bc import run_training
 
 def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    config = TrainConfig(
+    config = BCTrainConfig(
         policy_type="mse",
         obs_horizon=1,
         chunk_size=1,
@@ -22,11 +22,11 @@ def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_pat
         hidden_dims=(),
         batch_size=1,
         num_epochs=1,
-        lr=0.05,
+        learning_rate=0.05,
         weight_decay=0,
         ema_decay=0.5,
-        eval_interval=1,
-        log_interval=100,
+        eval_interval_steps=1,
+        log_interval_steps=100,
     )
     episode = Episode(
         states=np.array([[0.0], [1.0], [2.0], [3.0]], dtype=np.float32),

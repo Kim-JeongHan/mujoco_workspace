@@ -4,8 +4,8 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from mujoco_lab.control.base import Controller
-from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.state import JointState
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
 class JointSpacePD(Controller):
@@ -34,7 +34,7 @@ class JointSpacePD(Controller):
 
     def compute(self, state: JointState, target: ControlTarget) -> np.ndarray:
         position = target.position
-        velocity = np.zeros_like(position) if target.velocity is None else target.velocity
+        velocity = target.velocity
         self._desired = position.copy()
         error = position - state.qpos
         self.tracking_error = float(np.abs(error).max())

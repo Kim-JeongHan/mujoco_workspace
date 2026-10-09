@@ -7,6 +7,14 @@ controller:
   gravity_compensation: true
   frame: grasp
 
+reference:
+  name: analytic_jerk # analytic_jerk or min_jerk; updated at Simulator.dt.
+  response_time: 0.15 # Analytic jerk: response time scale (s).
+  horizon: 0.6 # Analytic jerk: prediction horizon (s).
+  terminal_weight: 0.0 # Analytic jerk: terminal position-error weight.
+  duration: 0.01 # Min jerk: minimum segment duration (s), independent of dt.
+  constrain: true # Min jerk: extend duration to satisfy velocity/acceleration limits.
+
 constraints:
   joint_names:
     - panda_joint1

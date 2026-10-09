@@ -7,9 +7,8 @@ from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import demo_target_updater
-from mujoco_lab.control.trajectory import osc_circle_target
 from mujoco_lab.rendering.annotations import annotate_controller
+from mujoco_lab.trajectory_generation.demo import osc_circle_target
 from mujoco_lab.utils import Transform
 
 
@@ -20,22 +19,25 @@ def forte_simulator():
     )
 
 
-@pytest.mark.parametrize("mode", ["pd", "osc", "computed_torque"])
-def test_feedback_control_is_finite(mode):
+def test_computed_torque_tracks_joint_reference():
     sim = forte_simulator()
     robot = sim.robots["robot"]
-    robot.change_controller(create_test_controller(robot, controller=mode))
-    if mode == "osc":
-        sim.target_updater = demo_target_updater(sim, {robot.name: mode})
-    stats = sim.run_steps(400)[robot.name]
-    assert stats.steps == 400
+    robot.change_controller(create_test_controller(robot, controller="computed_torque"))
+    initial = robot.target.position.copy()
+    assert robot.gripper is not None
+    robot.set_goal(np.r_[initial + 0.05, robot.gripper.get_target()])
+    for _ in range(400):
+        sim.step()
+        error = robot.controller.get_tracking_error()
+        assert error is not None and error < 0.05
+    assert sim.data.time == pytest.approx(400 * sim.dt)
     assert np.isfinite(sim.data.qpos).all()
     assert np.isfinite(sim.data.qvel).all()
     assert not sim.data.warning.number.any()
-    assert max(stats.errors) < (0.15 if mode == "pd" else 0.05)
+    assert np.max(np.abs(robot.get_control_state().qpos - initial)) > 0.01
 
 
-def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
+def test_circle_targets_and_joint_annotations_follow_translated_rotated_mount():
     sim = forte_simulator()
     robot = sim.robots["robot"]
     moved_sim = Simulator(
@@ -51,8 +53,6 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
     )
     moved_model, moved_data = moved_sim.model, moved_sim.data
     moved_robot = moved_sim.robots["robot"]
-    moved_robot.change_controller(create_test_controller(moved_robot, controller="osc"))
-    moved_sim.target_updater = demo_target_updater(moved_sim, {"robot": "osc"})
     rotation = moved_data.body("robot/base_link").xmat.reshape(3, 3)
     translation = moved_data.body("robot/base_link").xpos
     center = robot.state.get_frame_position("grasp") - sim.data.body("robot/base_link").xpos
@@ -85,14 +85,15 @@ def test_osc_trajectory_and_annotations_follow_translated_rotated_mount():
         )
         np.testing.assert_allclose(actual.position, translation + rotation @ reference.position)
         np.testing.assert_allclose(actual.velocity, rotation @ reference.velocity)
-    moved_sim.physics_step()
+    expected_grasp = moved_robot.state.get_frame_position("grasp").copy()
+    moved_sim.step()
     scene = mujoco.MjvScene(moved_model, maxgeom=100)
     scene.ngeom = 0
-    annotate_controller(scene, moved_robot, moved_data, None)
-    np.testing.assert_allclose(scene.geoms[0].pos, moved_robot.target.position, atol=1e-6)
+    annotate_controller(scene, moved_robot, moved_data, mujoco.MjData(moved_model))
+    np.testing.assert_allclose(scene.geoms[0].pos, expected_grasp, atol=1e-6)
 
 
-@pytest.mark.parametrize("mode", ["pd", "osc", "computed_torque"])
+@pytest.mark.parametrize("mode", ["pd", "computed_torque"])
 def test_torque_control_rejects_position_actuators(mode):
     sim = Simulator(
         create_environment("empty"),

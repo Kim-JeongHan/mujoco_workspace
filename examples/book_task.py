@@ -11,7 +11,6 @@ from mujoco_lab import RobotSpec, Simulator, SimulatorManager, create_book_inser
 from mujoco_lab.assets import BookType, RobotName
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import BookInsertionExpert, BookTask
-from mujoco_lab.behaviors.book import create_book_controller
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
 from mujoco_lab.planning import (
     PlannerConfig,
@@ -43,8 +42,6 @@ def main() -> None:
         create_book_insertion(config.book),
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
     )
-    robot = sim.robots[config.robot]
-    robot.change_controller(create_book_controller(robot, robot_config.controller))
     task = BookTask(sim)
     recipe = load_book_recipe(config.robot)
     expert = BookInsertionExpert(
@@ -76,18 +73,18 @@ def main() -> None:
     status = task.status()
     failure = expert.failure_reason
     planner_label = planner_name(config.planning) if config.method == "sampling" else "none"
-    if config.headless and not status.released_stable and failure is None:
+    if config.headless and not status.is_released_stable and failure is None:
         failure = f"step budget exhausted during {expert.get_stage_name()}"
     manager.logger.info(
         f"stage={expert.get_stage_name()} method={expert.method} "
         f"planner={planner_label} "
-        f"released_stable={status.released_stable} "
+        f"released_stable={status.is_released_stable} "
         f"position_error_m={status.position_error:.4f} "
         f"rotation_error_rad={status.rotation_error:.4f} "
         f"lift_m={task.max_height - task.start_center[2]:.4f} "
         f"failure={failure}"
     )
-    if config.headless and not status.released_stable:
+    if config.headless and not status.is_released_stable:
         raise SystemExit(1)
 
 

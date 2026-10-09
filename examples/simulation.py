@@ -9,7 +9,6 @@ import tyro
 from mujoco_lab import ENVIRONMENT_NAMES, RobotSpec, Simulator, SimulatorManager, create_environment
 from mujoco_lab.assets import RobotName
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import create_controller
 
 
 @dataclass
@@ -37,8 +36,6 @@ def main() -> None:
     if config.robot is not None:
         robots.append(RobotSpec(config.robot, config.robot, config=load_robot_config(config.robot)))
     simulator = Simulator(scene, robots=robots, dt=config.dt)
-    for robot in simulator.robots.values():
-        robot.change_controller(create_controller(robot, robot.config.controller))
 
     if config.headless:
         simulator.run_steps(config.steps)

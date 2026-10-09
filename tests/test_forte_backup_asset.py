@@ -1,4 +1,4 @@
-"""Physical CAD finger grasp checks for both Forte collision models."""
+"""Detailed CAD fingers hold, lift, and release a heavy book under gravity."""
 
 import gc
 from pathlib import Path
@@ -10,15 +10,15 @@ import pytest
 from mujoco_lab import ControlTarget, RobotSpec, Simulator, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors.book import create_book_controller
+from mujoco_lab.control import create_controller
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture(params=["forte", "forte_backup"], autouse=True)
-def use_forte_asset(request, monkeypatch):
-    """Run the same physical grasp with proxy and detailed CAD arm collisions."""
-    path = ROOT / "src/mujoco_lab/assets/robot" / request.param / "robot.xml"
+@pytest.fixture(autouse=True)
+def use_forte_backup_asset(monkeypatch):
+    """Use the detailed CAD arm collision model for the physical grasp."""
+    path = ROOT / "src/mujoco_lab/assets/robot/forte_backup/robot.xml"
     monkeypatch.setitem(ROBOT_ASSETS, "forte", RobotAsset(path))
 
 
@@ -29,13 +29,9 @@ def release_native_models():
     gc.collect()
 
 
-@pytest.mark.parametrize(
-    ("dimensions", "mass"),
-    [((0.04, 0.04, 0.04), 0.07936), ((0.034, 0.236, 0.156), 0.45), ((0.05, 0.236, 0.156), 0.65)],
-    ids=["cube", "medium_book", "thick_book"],
-)
-def test_fingers_hold_lift_and_release_free_boxes_under_gravity(dimensions, mass):
-    """Hold cube and book shapes with native CAD finger contacts and payload PD control."""
+def test_cad_fingers_hold_lift_and_release_heavy_book():
+    """Keep the free book in the grasp through holding and lifting, then release it."""
+    dimensions, mass = (0.05, 0.236, 0.156), 0.65
     scene = create_environment("empty")
     cube = scene.worldbody.add_body(name="cube", pos=[1, 0, 1])
     cube.add_freejoint(name="cube_joint")
@@ -75,7 +71,7 @@ def test_fingers_hold_lift_and_release_free_boxes_under_gravity(dimensions, mass
         data.site_xmat[site],
     )
     mujoco.mj_forward(model, data)
-    controller = create_book_controller(robot, load_robot_config("forte").controller)
+    controller = create_controller(robot, load_robot_config("forte").controller)
     robot.change_controller(controller)
     # Prepare the grasp without gravity, then hold and lift the free box under gravity.
     model.opt.gravity[:] = 0
@@ -104,13 +100,14 @@ def test_fingers_hold_lift_and_release_free_boxes_under_gravity(dimensions, mass
 
     start_height = data.body("cube").xpos[2]
     robot.update_state()
+    assert robot.target is not None
     start_target = robot.target.position.copy()
     jacobian = robot.state.get_jacobian("grasp")[:3, :7]
     delta = np.linalg.pinv(jacobian) @ np.array([0, 0, 0.05])
     for fraction in np.linspace(0, 1, 2500):
         blend = 10 * fraction**3 - 15 * fraction**4 + 6 * fraction**5
         robot.target = ControlTarget(start_target + blend * delta)
-        sim.physics_step()
+        sim._physics_step()
     mujoco.mj_forward(model, data)
     assert data.body("cube").xpos[2] > start_height + 0.04
     assert gripper.has_contact_on_all_fingers(cube_contacts())

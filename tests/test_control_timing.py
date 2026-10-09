@@ -17,14 +17,12 @@ class RecordingController(Controller):
 
     def compute(self, state, target):
         self.times.append(state.time)
-        self.tracking_error = float(len(self.times))
         return np.full(
             state.qpos.shape, 0.1 * len(self.times) if self.value is None else self.value
         )
 
     def reset(self):
         self.times.clear()
-        self.tracking_error = 0.0
 
 
 def make_simulator():
@@ -42,13 +40,12 @@ def test_every_step_updates_control_and_chunks_preserve_results():
     sim, controller = make_simulator()
     reference, other = make_simulator()
     assert sim.model.opt.timestep == sim.dt == 0.001
-    assert sim.run_steps(0)["arm"].steps == 0
+    assert sim.run_steps(0) is None
+    assert sim.data.time == 0
     assert not controller.times
-    controls, errors = [], []
+    controls = []
     for _ in range(11):
-        result = sim.step()["arm"]
-        assert result.steps == 1
-        errors.extend(result.errors)
+        assert sim.step() is None
         controls.append(sim.data.ctrl[0])
     reference.run_steps(2)
     reference.step()
@@ -56,7 +53,6 @@ def test_every_step_updates_control_and_chunks_preserve_results():
     np.testing.assert_allclose(controller.times, np.arange(11) * 0.001, atol=1e-15)
     assert controller.times == other.times
     np.testing.assert_allclose(controls, 0.1 * np.arange(1, 12))
-    assert errors == list(range(1, 12))
     assert sim.data.time == pytest.approx(0.011)
     np.testing.assert_array_equal(sim.data.qpos, reference.data.qpos)
     np.testing.assert_array_equal(sim.data.ctrl, reference.data.ctrl)
@@ -73,13 +69,14 @@ def test_stop_ends_headless_run_after_current_tick_and_does_not_affect_next_run(
             current.stop()
 
     sim.target_updater = update
-    stats = sim.run_steps(100)["arm"]
-    assert stats.steps == len(controller.times) == 3
+    sim.run_steps(100)
+    assert len(controller.times) == 3
     np.testing.assert_allclose(updates, [0, 0.001, 0.002], atol=1e-15)
     assert sim.data.time == pytest.approx(0.003)
     assert sim._state.get_state() == "idle"
-    assert sim.run_steps(2)["arm"].steps == 2
+    sim.run_steps(2)
     assert len(controller.times) == 5
+    assert sim.data.time == pytest.approx(0.005)
 
 
 def test_passive_viewer_matches_headless_timing_and_rk4_trajectory_after_priming():
@@ -122,7 +119,8 @@ def test_viewing_blocks_same_simulator_operations_but_not_independent_headless_w
         assert sim._state.get_state() == "viewing"
         with pytest.raises(RuntimeError, match="Invalid state transition"):
             sim.step()
-        assert other.step() == {}
+        assert other.step() is None
+        assert other.data.time == pytest.approx(other.dt)
         other.reset()
 
     viewer = PassiveViewer(1, on_lock=inspect_open_scope)

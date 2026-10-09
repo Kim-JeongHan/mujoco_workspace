@@ -14,20 +14,19 @@ class ValueCritic(nn.Module):
     def __init__(
         self,
         ob_dim: int,
-        n_layers: int,
-        layer_size: int,
+        hidden_dims: tuple[int, ...],
         learning_rate: float,
         *,
         device: str | torch.device = "cpu",
     ) -> None:
         """Create an independent value MLP and its Adam optimizer."""
         super().__init__()
-        if ob_dim <= 0 or n_layers < 0 or layer_size <= 0:
-            raise ValueError("ob_dim and layer_size must be positive; n_layers must be nonnegative")
+        if ob_dim <= 0 or any(width <= 0 for width in hidden_dims):
+            raise ValueError("ob_dim and hidden layer widths must be positive")
         self.state_dim = ob_dim
-        self.network = build_mlp(
-            input_dim=ob_dim, output_dim=1, hidden_layers=[layer_size] * n_layers
-        ).to(device)
+        self.network = build_mlp(input_dim=ob_dim, output_dim=1, hidden_layers=hidden_dims).to(
+            device
+        )
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:

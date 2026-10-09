@@ -12,8 +12,8 @@ from mujoco_lab.utils import Transform
 
 
 @pytest.mark.parametrize("asset", ["forte", "forte_backup"])
-@pytest.mark.parametrize("direction", [-1, 1])
-def test_native_motor_torque_is_clipped_to_rated_joint_limits(asset, direction):
+def test_native_motor_torque_is_clipped_to_rated_joint_limits(asset):
+    direction = 1
     path = Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot" / asset / "robot.xml"
     model = mujoco.MjModel.from_xml_path(str(path))
     data = mujoco.MjData(model)

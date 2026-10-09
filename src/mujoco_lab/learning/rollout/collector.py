@@ -7,6 +7,7 @@ import re
 import zipfile
 from collections.abc import Callable, Iterator
 from copy import deepcopy
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ def collect_episode(
     ``mocap_pos``, and ``mocap_quat`` arrays after reset and every action.
     Timed environments supply action_dt so expert targets refer to the next
     action endpoint; untimed environments request the current target.
+    When the expert returns None, failures end collection without another step;
+    completed motion repeats the last action while waiting for task success.
     """
     if max_steps <= 0:
         raise ValueError("max_steps must be positive")
@@ -43,7 +46,7 @@ def collect_episode(
     obs, reset_info = env.reset(seed=seed, options=options)
     states = [obs.copy()]
     frames = [] if record_frame is None else [record_frame()]
-    expert.reset(obs, dict(reset_info))
+    expert.reset()
     action_dt = getattr(env, "action_dt", 0.0)
     actions: list[np.ndarray] = []
     rewards: list[float] = []
@@ -51,14 +54,23 @@ def collect_episode(
     truncated_flags: list[bool] = []
     final_info: dict[str, Any] = {}
     collector_timeout = False
+    terminated = truncated = False
 
     for step_index in range(max_steps):
-        next_act = expert.act(obs, dt=action_dt).astype(np.float32, copy=True)
+        action = expert.act(dt=action_dt)
+        if action is None and expert.failed:
+            if truncated_flags:
+                truncated_flags[-1] = True
+            break
+        if action is None:
+            if not actions:
+                break
+            action = actions[-1]
+        next_act = action.copy()
         if not np.isfinite(next_act).all():
             raise ValueError("Expert action must be finite")
         next_obs, reward, terminated, truncated, info = env.step(next_act.copy())
-        reward = float(reward)
-        if not np.isfinite(reward):
+        if not isfinite(reward):
             raise ValueError("Environment reward must be finite")
 
         expert_failed = expert.failed
@@ -69,13 +81,11 @@ def collect_episode(
         if record_frame is not None:
             frames.append(record_frame())
         actions.append(next_act)
-        rewards.append(reward)
-        terminated_flags.append(bool(terminated))
-        truncated_flags.append(
-            bool(truncated) or collector_timeout or (expert_failed and not terminated)
-        )
-        final_info = dict(info)
-        obs = next_obs
+        # Gymnasium types rewards as SupportsFloat; these environments return numeric scalars.
+        rewards.append(reward)  # ty: ignore[invalid-argument-type]
+        terminated_flags.append(terminated)
+        truncated_flags.append(truncated or collector_timeout or (expert_failed and not terminated))
+        final_info = info.copy()
         if terminated or truncated or collector_timeout or expert_failed:
             break
 
@@ -85,12 +95,14 @@ def collect_episode(
         reason = expert.failure_reason or "expert_failed"
     elif collector_timeout:
         reason = "collector_timeout"
+    elif not terminated_flags:
+        reason = "expert_complete"
     elif reason is None:
         reason = "terminated" if terminated_flags[-1] else "truncated"
     metadata = {
         "seed": seed,
         "success": None if success is None else bool(success),
-        "termination_reason": str(reason),
+        "termination_reason": reason,
         "collector_timeout": collector_timeout,
         "expert_failed": expert.failed,
         "length": len(actions),
@@ -111,9 +123,16 @@ def collect_episode(
         if frames
         else {}
     )
+    if actions:
+        action_array = np.stack(actions)
+    else:
+        action_shape = env.action_space.shape
+        if action_shape is None:
+            raise ValueError("Demonstration collection requires an array action space")
+        action_array = np.empty((0, *action_shape), dtype=np.float32)
     return Episode(
         states=np.stack(states),
-        actions=np.stack(actions),
+        actions=action_array,
         rewards=np.asarray(rewards, dtype=np.float32),
         terminated=np.asarray(terminated_flags, dtype=bool),
         truncated=np.asarray(truncated_flags, dtype=bool),
@@ -128,7 +147,6 @@ _RESUME_SETTINGS = (
     "environment",
     "robot",
     "robot_name",
-    "gripper_action_units",
     "dt",
     "physics_steps_per_action",
     "cubes",

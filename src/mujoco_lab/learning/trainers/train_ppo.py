@@ -54,8 +54,7 @@ def initialize_actor_critic(
     init_from: Path,
     *,
     initial_log_std: float = -2.0,
-    critic_n_layers: int = 2,
-    critic_layer_size: int = 128,
+    critic_hidden_dims: tuple[int, ...] = (128, 128),
     critic_learning_rate: float = 3e-4,
     device: str = "cpu",
 ) -> tuple[GaussianPolicy, ValueCritic, Normalizer, dict[str, Any]]:
@@ -69,8 +68,7 @@ def initialize_actor_critic(
     )
     critic = ValueCritic(
         ob_dim=actor.state_dim,
-        n_layers=critic_n_layers,
-        layer_size=critic_layer_size,
+        hidden_dims=critic_hidden_dims,
         learning_rate=critic_learning_rate,
         device=device,
     )

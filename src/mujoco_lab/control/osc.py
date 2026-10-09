@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 
 from mujoco_lab.control.base import Controller
-from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.state import JointState
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
 if TYPE_CHECKING:
     from mujoco_lab.state import RobotState
@@ -21,8 +21,13 @@ POSTURE_KD = 4.0
 
 
 class OperationalSpaceControl(Controller):
+    """Retained OSC implementation; construction is disabled in this workspace."""
+
     name = "operational-space control"
     output_kind = "torque"
+
+    def __new__(cls, *args, **kwargs) -> Self:
+        raise NotImplementedError("Operational-space control is disabled")
 
     def __init__(
         self,
@@ -68,8 +73,8 @@ class OperationalSpaceControl(Controller):
         mass_inverse = np.linalg.inv(mass)
 
         position = target.position
-        velocity = np.zeros(3) if target.velocity is None else target.velocity
-        acceleration = np.zeros(3) if target.acceleration is None else target.acceleration
+        velocity = target.velocity
+        acceleration = target.acceleration
         self._target = position.copy()
         error = position - self.robot_state.get_frame_position(self.frame)
         self.tracking_error = float(np.linalg.norm(error))

@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.policies.base import BasePolicy
 from mujoco_lab.learning.policies.factory import build_policy
@@ -20,7 +20,7 @@ def save_checkpoint(
     path: str | Path,
     model: BasePolicy,
     normalizer: Normalizer,
-    config: TrainConfig,
+    config: BCTrainConfig,
     *,
     optimizer_step: int,
     dataset_metadata: dict[str, Any] | None = None,
@@ -46,7 +46,7 @@ def save_checkpoint(
 def checkpoint_metadata(
     model: BasePolicy,
     normalizer: Normalizer,
-    config: TrainConfig,
+    config: BCTrainConfig,
     *,
     optimizer_step: int,
     dataset_metadata: dict[str, Any] | None = None,
@@ -83,13 +83,18 @@ def load_checkpoint(path: str | Path) -> tuple[BasePolicy, Normalizer, dict[str,
     """Restore policy and normalization on CPU with ``weights_only=True``."""
     payload = torch.load(path, map_location="cpu", weights_only=True)
     architecture = dict(payload["architecture"])
+    policy_options = (
+        {"flow_time_embed_dim": architecture["flow_time_embed_dim"]}
+        if architecture["policy_type"] == "flow"
+        else {}
+    )
     model = build_policy(
         architecture["policy_type"],
         state_dim=architecture["state_dim"],
         action_dim=architecture["action_dim"],
         chunk_size=architecture["chunk_size"],
         hidden_dims=tuple(architecture["hidden_dims"]),
-        flow_time_embed_dim=architecture.get("flow_time_embed_dim"),
+        **policy_options,
     )
     model.load_state_dict(payload["model_state"])
     model.eval()
@@ -103,7 +108,7 @@ def load_checkpoint(path: str | Path) -> tuple[BasePolicy, Normalizer, dict[str,
     metadata = {
         "architecture": architecture,
         "train_config": dict(payload["train_config"]),
-        "dataset_metadata": payload.get("dataset_metadata", {}),
+        "dataset_metadata": payload["dataset_metadata"],
         "optimizer_step": payload["optimizer_step"],
     }
     return model, normalizer, metadata

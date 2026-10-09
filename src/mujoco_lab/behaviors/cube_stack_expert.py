@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Literal
 
 import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from mujoco_lab.behaviors.cube_stack import CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import CubeStackRecipe, StageRecipe
 from mujoco_lab.behaviors.expert import Expert
 from mujoco_lab.behaviors.grasp import GraspMonitor
+from mujoco_lab.behaviors.task import CubeStackTask
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
-from mujoco_lab.control import ControlTarget
-from mujoco_lab.control.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
 from mujoco_lab.state import IKError
+from mujoco_lab.trajectory_generation.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.utils import Transform
 
 
@@ -70,8 +69,8 @@ class CubeStackExpert(Expert):
             raise ValueError("Cube stacking execution requires one robot")
         self.robot = next(iter(self.simulator.robots.values()))
         robot = self.robot
-        if robot.gripper is None or robot.controller is None or robot.target is None:
-            raise ValueError("Trajectory expert requires a joint controller and gripper")
+        if robot.gripper is None:
+            raise ValueError("Trajectory expert requires a gripper")
         if robot.target.position.shape != (7,) or robot.control_joint_names != tuple(
             robot.state.joint_names[:7]
         ):
@@ -86,8 +85,8 @@ class CubeStackExpert(Expert):
         self.motion = MotionPlanner(self.robot, planning)
         self.reset()
 
-    def reset(self, initial_obs: Any = None, info: dict[str, Any] | None = None) -> None:
-        """Replan from current physics after env reset; observation and info are unused.
+    def reset(self) -> None:
+        """Replan from current physics after the caller resets the environment.
 
         The expert uses privileged simulator state. This method does not reset
         physics, task measurements, controllers, or physical command targets.
@@ -115,21 +114,15 @@ class CubeStackExpert(Expert):
     def get_stage_name(self):
         return self._plan[self.stage].name if self.stage < len(self._plan) else "settle"
 
-    def _hold_action(self):
-        target = self.robot.target
-        if target is None:
-            raise RuntimeError("Trajectory expert requires a control target")
-        return np.r_[target.position[:7], self.gripper.get_target()]
-
-    def act(self, obs: Any = None, *, dt: float = 0.0) -> np.ndarray:
+    def act(self, *, dt: float = 0.0) -> np.ndarray | None:
         if self.failed or self.stage >= len(self._plan):
-            return self._hold_action()
+            return None
         now = self.simulator.data.time
         stage = self._plan[self.stage]
         reason = self._grasp_failure(stage, started=self.execution.trajectory is not None)
         if reason is not None:
             self.failed, self.failure_reason = True, reason
-            return self._hold_action()
+            return None
         current = self.robot.state.snapshot().qpos[:7]
         trajectory = self.execution.trajectory
         if trajectory is None:
@@ -139,7 +132,7 @@ class CubeStackExpert(Expert):
                 trajectory, reason = None, str(error)
             if trajectory is None:
                 self.failed, self.failure_reason = True, reason
-                return self._hold_action()
+                return None
             self.execution.start(trajectory, now)
         stage = self._plan[self.stage]
         required_lift = self.min_transport_lift(stage)
@@ -154,20 +147,22 @@ class CubeStackExpert(Expert):
         ):
             self.failed = True
             self.failure_reason = f"Insufficient physical lift during {stage.name}"
-            return next_act
+            return None
         if self._advance_stage(current, float(next_act[7]), path_complete=complete):
             return next_act
         timeout = self._plan[self.stage].settle_timeout
         if timeout is not None and now - self.execution.start_time > trajectory.duration + timeout:
             self.failed, self.failure_reason = True, f"Timed out executing {self.get_stage_name()}"
+            return None
         return next_act
 
     def update(self, simulator) -> None:
         if simulator is not self.simulator:
             raise ValueError("Expert is bound to a different simulator")
-        action = self.act()
-        self.robot.update_target(ControlTarget(action[:7]), float(action[7]))
-        success = self.task.status().released_stable_stack
+        action = self.act(dt=simulator.dt)
+        if action is not None:
+            self.robot.set_goal(action)
+        success = self.task.status().is_released_stable
         if self.failed or (self.stage >= len(self._plan) and success):
             simulator.stop()
 
@@ -299,7 +294,7 @@ class CubeStackExpert(Expert):
             gripper_target=stage.gripper_target,
             arm_ratio=arm_ratio,
             gripper_ratio=gripper_ratio,
-            shape_preserving=phase == "pick",
+            shape_preserving=True,
             cartesian_resolution=0.005 if phase == "pick" else 0.01,
             checker=None if hold else self.collision_checker(stage.cube_index, phase),
             failure_reason=reason,
@@ -442,8 +437,6 @@ class CubeStackExpert(Expert):
         if reason is not None:
             return None, reason
         target = self.robot.target
-        if target is None:
-            raise RuntimeError("Trajectory expert requires a control target")
         arm_path = np.vstack(
             (
                 target.position[:7],

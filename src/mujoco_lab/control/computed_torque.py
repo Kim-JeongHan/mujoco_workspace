@@ -6,8 +6,8 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from mujoco_lab.control.base import Controller
-from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.state import JointState, RobotState
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
 class JointSpaceComputedTorque(Controller):
@@ -48,10 +48,10 @@ class JointSpaceComputedTorque(Controller):
     def compute(self, state: JointState, target: ControlTarget) -> np.ndarray:
         """Return M @ (desired acceleration + PD feedback) plus optional bias."""
         for value in (target.position, target.velocity, target.acceleration):
-            if value is not None and value.shape != state.qpos.shape:
+            if value.shape != state.qpos.shape:
                 raise ValueError("Control targets must have one value per controlled joint")
-        velocity = 0.0 if target.velocity is None else target.velocity
-        acceleration = 0.0 if target.acceleration is None else target.acceleration
+        velocity = target.velocity
+        acceleration = target.acceleration
         error = target.position - state.qpos
         self.tracking_error = float(np.max(np.abs(error)))
         command = acceleration + self.kp * error + self.kd * (velocity - state.qvel)

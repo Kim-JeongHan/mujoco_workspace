@@ -10,25 +10,20 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import ControlTarget, create_controller
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout.collector import collect_episode
 from mujoco_lab.planning import (
-    PRMConfig,
-    RRTConfig,
     RRTConnectConfig,
     default_planning,
 )
 from mujoco_lab.planning.motion import grasp_pose
-from mujoco_lab.planning.sampling.sampler import GoalBiasedSampler
+from mujoco_lab.trajectory_generation import ControlTarget
 
 
 @pytest.fixture
 def approach_expert():
     config = load_robot_config("forte")
     simulator = Simulator(create_cube_stack(1), robots=[RobotSpec("forte", "forte", config=config)])
-    robot = simulator.robots["forte"]
-    robot.change_controller(create_controller(robot, config.controller))
     return CubeStackExpert(
         CubeStackTask(simulator, 1),
         recipe=load_cube_recipe("forte"),
@@ -103,7 +98,7 @@ def test_sampling_gripper_only_stages_hold_the_current_arm_command(approach_expe
     np.testing.assert_array_equal(trajectory.path[:, :7], np.tile(selected.position, (2, 1)))
 
 
-@pytest.mark.parametrize("seed", [44, 53, 91, 136])
+@pytest.mark.parametrize("seed", [44, 53, 91, 136, 1063])
 def test_randomized_sampling_collection_handles_previous_pick_failures(approach_expert, seed):
     expert = approach_expert
     env = CubeStackEnv(
@@ -116,6 +111,8 @@ def test_randomized_sampling_collection_handles_previous_pick_failures(approach_
     episode = collect_episode(env, expert, seed=seed, max_steps=18000)
     assert episode.metadata["success"], episode.metadata["termination_reason"]
     assert not expert.failed, expert.failure_reason
+    assert np.all(episode.actions >= env.action_space.low - 1e-6)
+    assert np.all(episode.actions <= env.action_space.high + 1e-6)
 
 
 def make_sampling_expert(task, planning):
@@ -129,22 +126,8 @@ def make_sampling_expert(task, planning):
     )
 
 
-@pytest.mark.parametrize(
-    "planning",
-    [
-        RRTConnectConfig(max_iterations=500, step_size=0.2, goal_tolerance=0.04, seed=7),
-        RRTConfig(max_iterations=500, step_size=0.2, goal_tolerance=0.04, goal_bias=0.8, seed=7),
-        PRMConfig(
-            sample_number=100,
-            max_retries=2,
-            radius=2.0,
-            sampler=GoalBiasedSampler,
-            goal_bias=0.3,
-            seed=7,
-        ),
-    ],
-)
-def test_sampling_planners_complete_released_two_cube_stack(planning):
+def test_sampling_completes_released_two_cube_stack():
+    planning = RRTConnectConfig(max_iterations=500, step_size=0.2, goal_tolerance=0.04, seed=7)
     simulator = Simulator(
         create_cube_stack(2),
         robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
@@ -156,9 +139,9 @@ def test_sampling_planners_complete_released_two_cube_stack(planning):
     status = task.status()
     assert not expert.failed, expert.failure_reason
     assert expert.get_stage_name() == "settle"
-    assert status.released_stable_stack
-    assert status.support_contacts
-    assert np.all(task.max_lift > task.starts[:, 2] + 0.04)
+    assert status.is_released_stable
+    assert status.is_support_contacts
+    assert np.all(task.max_height > task.starts[:, 2] + 0.04)
     assert not simulator.data.warning.number.any()
 
 
@@ -178,6 +161,7 @@ def test_sampling_no_route_stops_cleanly_and_reset_replans(monkeypatch):
     assert expert.get_stage_name() == "cube0:above_pick"
     assert simulator.data.time == pytest.approx(simulator.dt)
 
+    simulator.reset()
     task.reset()
     expert.reset()
     assert not expert.failed
@@ -187,6 +171,7 @@ def test_sampling_no_route_stops_cleanly_and_reset_replans(monkeypatch):
     simulator.run_steps(1)
     assert expert.execution.trajectory is not None
     first_path = expert.execution.trajectory.path.copy()
+    simulator.reset()
     task.reset()
     expert.reset()
     simulator.run_steps(1)
@@ -207,22 +192,6 @@ def test_sampling_rejects_cube_moved_from_precomputed_pick_pose():
     simulator.run_steps(1)
     assert expert.failed
     assert "moved more than 1 cm" in expert.failure_reason
-
-
-def test_sampling_missing_physical_grasp_returns_expected_failure(monkeypatch):
-    simulator = Simulator(
-        create_cube_stack(2),
-        robots=[RobotSpec("panda", "panda", config=load_robot_config("panda"))],
-    )
-    task = CubeStackTask(simulator, 2)
-    expert = make_sampling_expert(task, default_planning())
-    stage = next(stage for stage in expert._plan if stage.recipe.name == "place")
-    monkeypatch.setattr("mujoco_lab.behaviors.cube_stack.has_physical_grasp", lambda *_: False)
-
-    trajectory, reason = expert.make_trajectory(stage)
-
-    assert trajectory is None
-    assert reason == f"No two-finger physical grasp for {stage.name}"
 
 
 def test_sampling_unexpected_planner_error_propagates(monkeypatch):

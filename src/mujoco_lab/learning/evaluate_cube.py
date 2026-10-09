@@ -9,9 +9,7 @@ import tyro
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
-from mujoco_lab.control import create_controller
-from mujoco_lab.learning.config.config import EvalConfig
-from mujoco_lab.learning.datasets.replay import require_width_actions
+from mujoco_lab.learning.config import BCEvalConfig
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 
 
@@ -25,12 +23,7 @@ def create_cube_evaluation_env(
 ) -> tuple[CubeStackEnv, dict[str, Any]]:
     """Build the cube-stack environment from recorded scene metadata."""
     replay = metadata["dataset_metadata"]["replay"]
-    require_width_actions(replay)
-    action_repeat = (
-        metadata["architecture"]["physics_steps_per_action"]
-        if "architecture" in metadata
-        else replay["physics_steps_per_action"]
-    )
+    action_repeat = metadata["architecture"]["physics_steps_per_action"]
     robot_type = replay["robot"]
     robot_name = replay["robot_name"]
     cubes = replay["cubes"]
@@ -46,12 +39,9 @@ def create_cube_evaluation_env(
         robots=[RobotSpec(robot_name, robot_type, config=robot_config)],
         dt=dt,
     )
-    robot = simulator.robots[robot_name]
-    controller = create_controller(robot, robot_config.controller)
-    robot.change_controller(controller)
     task = CubeStackTask(simulator, cubes)
-    xy_range = replay.get("xy_range", 0.02) if xy_range is None else xy_range
-    min_gap = replay.get("min_gap", 0.01) if min_gap is None else min_gap
+    xy_range = replay["xy_range"] if xy_range is None else xy_range
+    min_gap = replay["min_gap"] if min_gap is None else min_gap
     env = CubeStackEnv(
         task,
         xy_range=xy_range,
@@ -61,7 +51,6 @@ def create_cube_evaluation_env(
         physics_steps_per_action=action_repeat,
     )
     scene = {
-        "gripper_action_units": replay["gripper_action_units"],
         "robot": robot_type,
         "robot_name": robot_name,
         "cubes": cubes,
@@ -83,7 +72,7 @@ def main() -> None:
     from mujoco_lab.learning.evaluate import run
     from mujoco_lab.utils.logger import Logger
 
-    config = tyro.cli(EvalConfig, description="Evaluate a saved cube-stack BC policy")
+    config = tyro.cli(BCEvalConfig, description="Evaluate a saved cube-stack BC policy")
     run_dir, summary = run(config, expected_scene="cube_stack")
     Logger().info(f"Saved {summary['attempted']} evaluation attempts to {run_dir}")
 

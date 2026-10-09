@@ -13,7 +13,7 @@ import torch
 import tyro
 
 from mujoco_lab.learning.checkpoint import load_checkpoint
-from mujoco_lab.learning.config.config import EvalConfig, RolloutConfig
+from mujoco_lab.learning.config import BCEvalConfig, EvaluationConfig
 from mujoco_lab.learning.evaluation import (
     PolicyEvaluator,
     evaluation_log_metrics,
@@ -33,7 +33,7 @@ def create_evaluation_env(
     book_yaw_range_degrees: float | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Choose the task builder using the scene recorded in the dataset."""
-    scene = metadata["dataset_metadata"]["replay"].get("scene", "cube_stack")
+    scene = metadata["dataset_metadata"]["replay"]["scene"]
     if scene == "book_insertion":
         from mujoco_lab.learning.evaluate_book import create_book_evaluation_env
 
@@ -57,13 +57,11 @@ def create_evaluation_env(
 
 
 def create_rollout_env(
-    metadata: dict[str, Any], rollout: RolloutConfig
+    metadata: dict[str, Any], rollout: EvaluationConfig
 ) -> tuple[Any, dict[str, Any]]:
     """Convert the rollout time limit using the checkpoint's recorded action cadence."""
     replay = metadata["dataset_metadata"]["replay"]
-    repeat = metadata.get("architecture", {}).get(
-        "physics_steps_per_action", replay["physics_steps_per_action"]
-    )
+    repeat = metadata["architecture"]["physics_steps_per_action"]
     max_steps = max_steps_for_seconds(rollout.max_seconds, replay["dt"] * repeat)
     return create_evaluation_env(
         metadata,
@@ -75,13 +73,13 @@ def create_rollout_env(
     )
 
 
-def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path, dict[str, Any]]:
+def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Path, dict[str, Any]]:
     """Load a checkpoint, evaluate it, and write one exclusive local run directory."""
     console = ConsoleLogger()
-    rollout = config.rollout
+    rollout = config.evaluation
     device = torch.device(config.device)
     model, normalizer, metadata = load_checkpoint(config.checkpoint)
-    scene_name = metadata["dataset_metadata"]["replay"].get("scene", "cube_stack")
+    scene_name = metadata["dataset_metadata"]["replay"]["scene"]
     if expected_scene is not None and scene_name != expected_scene:
         raise ValueError(f"Expected {expected_scene} checkpoint, recorded scene is {scene_name}")
     architecture = metadata["architecture"]
@@ -92,7 +90,7 @@ def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path,
     model.to(device)
 
     eval_seeds = list(range(rollout.seed, rollout.seed + rollout.num_episodes))
-    dataset = metadata.get("dataset_metadata", {})
+    dataset = metadata["dataset_metadata"]
     overlaps = {
         split: sorted(set(eval_seeds) & set(dataset.get(f"{split}_seeds", [])))
         for split in ("train", "validation", "test")
@@ -117,7 +115,7 @@ def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path,
         / architecture["policy_type"]
         / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}"
     )
-    name = config.wandb_name or (
+    name = config.run_name or (
         f"{scene['robot_name']}-{architecture['policy_type']}-eval-seed{rollout.seed}"
     )
     with Logger(
@@ -154,7 +152,7 @@ def run(config: EvalConfig, *, expected_scene: str | None = None) -> tuple[Path,
 
 
 def main() -> None:
-    config = tyro.cli(EvalConfig, description="Evaluate a saved BC policy in its recorded scene")
+    config = tyro.cli(BCEvalConfig, description="Evaluate a saved BC policy in its recorded scene")
     run_dir, summary = run(config)
     ConsoleLogger().info(f"Saved {summary['attempted']} evaluation attempts to {run_dir}")
 

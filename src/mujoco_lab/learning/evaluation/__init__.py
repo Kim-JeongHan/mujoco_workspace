@@ -1,4 +1,4 @@
-"""Closed-loop evaluation of saved behavior cloning policies."""
+"""Shared closed-loop evaluation of BC and Gaussian RL policies."""
 
 from mujoco_lab.learning.evaluation.evaluator import (
     PolicyEvaluator,

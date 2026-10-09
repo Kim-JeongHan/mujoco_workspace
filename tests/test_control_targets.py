@@ -10,6 +10,36 @@ from mujoco_lab.control import Controller
 from mujoco_lab.utils import Transform
 
 
+def test_default_target_derivatives_are_independent_zero_arrays():
+    position = np.arange(6).reshape(2, 3)
+    target = ControlTarget(position)
+    other = ControlTarget(position)
+    for derivative in (target.velocity, target.acceleration):
+        assert derivative.shape == position.shape
+        assert derivative.dtype == np.dtype(float)
+        np.testing.assert_array_equal(derivative, np.zeros(position.shape))
+    position[:] = -1
+    np.testing.assert_array_equal(target.position, np.arange(6).reshape(2, 3))
+    target.velocity[:] = 1
+    np.testing.assert_array_equal(target.acceleration, np.zeros(position.shape))
+    np.testing.assert_array_equal(other.velocity, np.zeros(position.shape))
+
+
+def test_control_target_owns_supplied_derivative_arrays():
+    position, velocity, acceleration = np.array([[1, 2], [3, 4], [5, 6]])
+    target = ControlTarget(position, velocity, acceleration)
+    position[:] = velocity[:] = acceleration[:] = -1
+    np.testing.assert_array_equal(target.position, [1, 2])
+    np.testing.assert_array_equal(target.velocity, [3, 4])
+    np.testing.assert_array_equal(target.acceleration, [5, 6])
+
+
+@pytest.mark.parametrize("derivative", ["velocity", "acceleration"])
+def test_target_rejects_derivative_shape_that_would_broadcast(derivative):
+    with pytest.raises(ValueError, match="match position shape"):
+        ControlTarget(np.zeros(7), **{derivative: np.zeros(1)})
+
+
 def forte_sim():
     sim = Simulator(
         create_environment("empty"),
@@ -108,18 +138,21 @@ def test_updater_and_controller_error_prevent_physics_step():
     sim.reset()
 
 
-def test_osc_supplied_derivatives_change_command_without_changing_target_position():
+def test_computed_torque_derivatives_change_command_without_changing_target_position():
     sim, robot = forte_sim()
-    osc = create_test_controller(robot, controller="osc")
-    robot.change_controller(osc)
+    controller = create_test_controller(robot, controller="computed_torque")
+    robot.change_controller(controller)
     robot.update_state()
     state = robot.get_control_state()
     position = robot.target.position.copy()
-    zero = osc.compute(state, ControlTarget(position))
-    derivative = osc.compute(
+    zero = controller.compute(state, ControlTarget(position))
+    velocity = np.zeros_like(position)
+    acceleration = np.zeros_like(position)
+    velocity[0], acceleration[1] = 0.01, 0.2
+    derivative = controller.compute(
         state,
-        ControlTarget(position, velocity=np.array([0.01, 0, 0]), acceleration=[0, 0.2, 0]),
+        ControlTarget(position, velocity=velocity, acceleration=acceleration),
     )
     assert not np.array_equal(zero, derivative)
-    assert osc.get_tracking_error() == pytest.approx(0)
-    np.testing.assert_array_equal(osc._target, position)
+    assert controller.get_tracking_error() == pytest.approx(0)
+    np.testing.assert_array_equal(robot.target.position, position)

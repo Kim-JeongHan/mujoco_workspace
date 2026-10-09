@@ -11,7 +11,6 @@ from mujoco_lab.assets import CubeCount, RobotName
 from mujoco_lab.assets.loader import load_robot_config, randomize_cube_positions
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import create_controller
 from mujoco_lab.planning import PlannerConfig, default_planning, planner_name
 
 
@@ -57,8 +56,6 @@ def main() -> None:
         scene,
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
     )
-    robot = simulator.robots[config.robot]
-    robot.change_controller(create_controller(robot, robot_config.controller))
     task = CubeStackTask(simulator, config.cubes)
     expert = CubeStackExpert(
         task,
@@ -81,19 +78,19 @@ def main() -> None:
 
         status = task.status()
         failure = expert.failure_reason
-        if config.headless and not status.released_stable_stack and failure is None:
+        if config.headless and not status.is_released_stable and failure is None:
             failure = f"step budget exhausted during {expert.get_stage_name()}"
         planner_label = planner_name(config.planning) if config.method == "sampling" else "none"
         manager.logger.info(
             f"robot={config.robot} cubes={config.cubes} method={expert.method} "
             f"planner={planner_label} simulated={simulator.data.time:.3f}s "
             f"stage={expert.get_stage_name()} "
-            f"released_stable_stack={status.released_stable_stack} "
-            f"support_contacts={status.support_contacts} "
-            f"goal_distances_m={status.goal_distances.round(4).tolist()} "
+            f"released_stable_stack={status.is_released_stable} "
+            f"support_contacts={status.is_support_contacts} "
+            f"position_errors_m={status.position_errors.round(4).tolist()} "
             f"failure={failure}"
         )
-        if config.headless and not status.released_stable_stack:
+        if config.headless and not status.is_released_stable:
             raise SystemExit(1)
     finally:
         manager.remove_simulator(name)

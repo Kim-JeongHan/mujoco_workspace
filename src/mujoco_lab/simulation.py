@@ -13,7 +13,6 @@ import numpy as np
 
 from mujoco_lab.assets.loader import load_asset
 from mujoco_lab.robot import Robot, RobotSpec
-from mujoco_lab.stats import RunStats
 from mujoco_lab.utils import StateMachine
 
 __all__ = ["Simulator"]
@@ -49,6 +48,8 @@ class Simulator:
     Lifecycle operations release ownership and return to idle on exit. Neither
     mode is an RL environment batch.
     """
+
+    ####### initialization #######
 
     def __init__(
         self,
@@ -89,29 +90,83 @@ class Simulator:
         model.opt.timestep = dt
         self.model = model
         self.data = mujoco.MjData(model)
+        self._state = StateMachine(SimulatorState.IDLE, STATE_TRANSITIONS)
+        self._stop_requested = False
+        self.target_updater = None
+        environment_home = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+        if environment_home >= 0:
+            mujoco.mj_resetDataKeyframe(model, self.data, environment_home)
         self.robots = MappingProxyType(
             {
                 spec.name: Robot(self, config, prefix, spec.robot_type)
                 for spec, prefix, config in robot_info
             }
         )
-        self._state = StateMachine(SimulatorState.IDLE, STATE_TRANSITIONS)
-        self._stop_requested = False
-        self.target_updater = None
-
-        environment_home = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
-        if environment_home >= 0:
-            mujoco.mj_resetDataKeyframe(model, self.data, environment_home)
-        for robot in self.robots.values():
-            robot._apply_initial_pose()
-            if robot.gripper is not None:
-                robot.gripper._capture_home()
         mujoco.mj_forward(model, self.data)
         for robot in self.robots.values():
             robot.update_state()
         self._initial_state_spec = mujoco.mjtState.mjSTATE_INTEGRATION
         self._initial_state = np.empty(mujoco.mj_stateSize(model, self._initial_state_spec))
         mujoco.mj_getState(model, self.data, self._initial_state, self._initial_state_spec)
+
+    ####### public methods: control #######
+
+    def step(self) -> None:
+        """Advance physics and control together for one tick."""
+        self.run_steps(1)
+
+    def run_steps(self, steps: int) -> None:
+        """Advance physics and control together for each tick."""
+
+        if steps < 0:
+            raise ValueError("steps must be zero or greater")
+        with self._state_scope(SimulatorState.RUNNING):
+            for _ in range(steps):
+                if self._stop_requested:
+                    break
+                self._physics_step()
+            if not np.isfinite(self.data.qpos).all() or not np.isfinite(self.data.qvel).all():
+                raise RuntimeError("Simulation diverged")
+
+    def stop(self) -> None:
+        """Request the active run or viewer to stop after its current physics step."""
+        if self._state.get_state() in (SimulatorState.RUNNING, SimulatorState.VIEWING):
+            self._stop_requested = True
+
+    ####### public methods: reset #######
+
+    def reset(self) -> None:
+        """Restore the complete initial state and clear controller history, not gains."""
+
+        with self._state_scope(SimulatorState.RESETTING):
+            mujoco.mj_resetData(self.model, self.data)
+            mujoco.mj_setState(
+                self.model,
+                self.data,
+                self._initial_state,
+                self._initial_state_spec,
+            )
+            mujoco.mj_forward(self.model, self.data)
+            for robot in self.robots.values():
+                robot.reset()
+
+    ####### private methods: physics #######
+
+    def _physics_step(self) -> None:
+        """Advance references, evaluate control, step physics, and refresh robot state."""
+        for robot in self.robots.values():
+            robot.update_state()
+        if self.target_updater is not None:
+            self.target_updater(self)
+        for robot in self.robots.values():
+            robot.step_reference()
+            robot.control()
+        mujoco.mj_step(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)
+        for robot in self.robots.values():
+            robot.update_state()
+
+    ####### private methods: lifecycle #######
 
     def _require_idle(self):
         if self._state.get_state() is not SimulatorState.IDLE:
@@ -127,66 +182,3 @@ class Simulator:
         finally:
             self._state.transition(SimulatorState.IDLE)
             self._stop_requested = False
-
-    def physics_step(self):
-        """Evaluate control and advance one physics tick."""
-        samples = {}
-        for robot in self.robots.values():
-            robot.update_state()
-        if self.target_updater is not None:
-            self.target_updater(self)
-        for name, robot in self.robots.items():
-            if robot.controller is None and (
-                robot.gripper is None or not robot.gripper.is_active()
-            ):
-                continue
-            saturated = robot.control()
-            samples[name] = (saturated, robot.get_tracking_error())
-        mujoco.mj_step(self.model, self.data)
-        return samples
-
-    def step(self):
-        """Advance the shared scene once and return fresh per-robot statistics."""
-        return self.run_steps(1)
-
-    def run_steps(self, steps: int):
-        """Advance physics and control together for each tick."""
-
-        if steps < 0:
-            raise ValueError("steps must be zero or greater")
-        with self._state_scope(SimulatorState.RUNNING):
-            stats = {name: RunStats() for name in self.robots}
-            for _ in range(steps):
-                if self._stop_requested:
-                    break
-                samples = self.physics_step()
-                for name, result in stats.items():
-                    result.update(*samples.get(name, (False, None)))
-            if not np.isfinite(self.data.qpos).all() or not np.isfinite(self.data.qvel).all():
-                raise RuntimeError("Simulation diverged")
-            return stats
-
-    def stop(self) -> None:
-        """Request the active run or viewer to stop after its current physics step."""
-        if self._state.get_state() in (SimulatorState.RUNNING, SimulatorState.VIEWING):
-            self._stop_requested = True
-
-    def reset(self) -> None:
-        """Restore the complete initial state and clear controller history, not gains."""
-
-        with self._state_scope(SimulatorState.RESETTING):
-            mujoco.mj_resetData(self.model, self.data)
-            mujoco.mj_setState(
-                self.model,
-                self.data,
-                self._initial_state,
-                self._initial_state_spec,
-            )
-            mujoco.mj_forward(self.model, self.data)
-            for robot in self.robots.values():
-                if robot.controller is not None:
-                    robot.controller.reset()
-                if robot.gripper is not None:
-                    robot.gripper.reset()
-                robot.update_state()
-                robot.target = robot.initial_target()

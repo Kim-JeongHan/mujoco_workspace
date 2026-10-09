@@ -1,4 +1,4 @@
-"""Typed robot controller settings loaded from robot.yaml."""
+"""Typed robot controller, reference, and asset settings loaded from robot.yaml."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ import mujoco
 import yaml
 from dacite import Config, from_dict
 
-# dacite requires a runtime Literal alias rather than a PEP 695 alias.
-ControllerType = Literal["none", "pd", "position", "osc", "computed_torque"]  # noqa: UP040
+# dacite requires runtime Literal aliases rather than PEP 695 aliases.
+ControllerType = Literal["pd", "position", "computed_torque"]  # noqa: UP040
+ReferenceType = Literal["analytic_jerk", "min_jerk"]  # noqa: UP040
 
 
 @dataclass(frozen=True)
@@ -120,12 +121,25 @@ class ControllerConfig:
 
 
 @dataclass
+class ReferenceConfig:
+    """Algorithm selection and tuning for robot-owned arm references, with times in seconds."""
+
+    name: ReferenceType = "analytic_jerk"
+    response_time: float = 0.15
+    horizon: float = 0.6
+    terminal_weight: float = 0.0
+    duration: float = 0.01
+    constrain: bool = True
+
+
+@dataclass
 class RobotConfig:
     controller: ControllerConfig
-    constraints: Constraints | None = None
+    constraints: Constraints
     gripper: GripperConfig | None = None
     pose: PoseConfig = field(kw_only=True)
     model_info: RobotModelInfo = RobotModelInfo()
+    reference: ReferenceConfig = field(default_factory=ReferenceConfig)
 
     @classmethod
     def load(cls, path: str | Path) -> Self:
@@ -135,10 +149,9 @@ class RobotConfig:
             data["pose"], has_gripper=data.get("gripper") is not None
         )
         config = from_dict(data_class=cls, data=data)
-        if config.constraints is not None:
-            config.constraints.position_limit = [
-                [radians(value) for value in bounds] for bounds in config.constraints.position_limit
-            ]
+        config.constraints.position_limit = [
+            [radians(value) for value in bounds] for bounds in config.constraints.position_limit
+        ]
         return config
 
     def update_model_info(self, spec: mujoco.MjSpec) -> None:

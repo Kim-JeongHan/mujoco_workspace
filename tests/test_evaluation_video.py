@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from mujoco_lab.learning.config.config import RolloutConfig
+from mujoco_lab.learning.config import EvaluationConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.policies.mse import MSEPolicy
@@ -86,7 +86,7 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
     }
     return PolicyEvaluator(
         env,
-        RolloutConfig(
+        EvaluationConfig(
             num_episodes=3,
             seed=100,
             max_seconds=0.004,

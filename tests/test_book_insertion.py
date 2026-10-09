@@ -5,27 +5,21 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors.book import (
-    BookTask,
-    create_book_controller,
-)
 from mujoco_lab.behaviors.book_expert import BookInsertionExpert
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe as load_book_recipe
-from mujoco_lab.control.trajectory import JointTrajectory
+from mujoco_lab.behaviors.task import BookTask
 from mujoco_lab.planning import default_planning
+from mujoco_lab.trajectory_generation.trajectory import JointTrajectory
 
 
 def make_expert(planning=None, *, method="sampling"):
     sim = Simulator(
         create_book_insertion(),
         robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
-    )
-    robot = sim.robots["forte"]
-    robot.change_controller(
-        create_book_controller(robot, load_robot_config(robot.robot_type).controller)
     )
     task = BookTask(sim)
     expert = BookInsertionExpert(
@@ -35,6 +29,37 @@ def make_expert(planning=None, *, method="sampling"):
         planning=(planning or default_planning()) if method == "sampling" else None,
     )
     return sim, task, expert
+
+
+def test_status_grasp_pose_tracks_book_and_preserves_reset_snapshot():
+    sim, task, expert = make_expert()
+    initial = task.status()
+    initial_pose = initial.grasp_pose.as_matrix()
+    np.testing.assert_allclose(expert.pick_pose.as_matrix(), initial_pose)
+    address = int(sim.model.jnt_qposadr[task.joint])
+    sim.data.qpos[address : address + 3] += [0.1, -0.1, 0.2]
+    sim.data.qpos[address + 3 : address + 7] = Rotation.from_euler("x", np.pi / 4).as_quat(
+        scalar_first=True
+    )
+    mujoco.mj_forward(sim.model, sim.data)
+    moved = task.status()
+    rotation = sim.data.xmat[task.body].reshape(3, 3)
+    center = sim.data.xpos[task.body]
+    np.testing.assert_allclose(
+        rotation.T @ (moved.grasp_pose.as_translation() - center),
+        [-task.depth / 2 + 0.012, 0, 0],
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        rotation.T @ moved.grasp_pose.as_rotation().as_matrix(),
+        [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
+        atol=1e-12,
+    )
+    np.testing.assert_array_equal(initial.grasp_pose.as_matrix(), initial_pose)
+    np.testing.assert_array_equal(expert.pick_pose.as_matrix(), initial_pose)
+    assert not np.allclose(moved.grasp_pose.as_matrix(), initial_pose)
+    expert.reset()
+    np.testing.assert_allclose(expert.pick_pose.as_matrix(), moved.grasp_pose.as_matrix())
 
 
 @pytest.mark.parametrize("method", ["sampling", "heuristic"])
@@ -96,63 +121,6 @@ def test_sampling_replaces_a_colliding_joint_goal_without_changing_its_grasp_pos
     np.testing.assert_array_equal(sim.data.qpos, before)
 
 
-def test_close_mode_waits_for_contact_then_completes(monkeypatch):
-    _, task, expert = make_expert(method="heuristic")
-    expert.stage = expert.STAGES.index("close")
-    monkeypatch.setattr(task, "has_grasp", lambda: False)
-    expert.act()
-    assert not expert.failed
-    current = expert.robot.target.position.copy()
-    expert.simulator.data.time = expert.execution.trajectory.duration + expert.recipe.stage_dwell_s
-    assert not expert._advance_stage(current, path_complete=True)
-    monkeypatch.setattr(task, "has_grasp", lambda: True)
-    assert expert._advance_stage(current, path_complete=True)
-
-
-@pytest.mark.parametrize("phase", ["approach", "lift"])
-@pytest.mark.parametrize("gripper_mode", [0, 1])
-def test_gripper_mode_controls_grasp_requirement_independently_of_stage_name(
-    phase, gripper_mode, monkeypatch
-):
-    _, task, expert = make_expert(method="heuristic")
-    expert.stage = expert.STAGES.index(phase)
-    expert.recipe = expert.recipe.model_copy(
-        update={
-            "stages": tuple(
-                stage.model_copy(update={"gripper_mode": gripper_mode})
-                if stage.name == phase
-                else stage
-                for stage in expert.recipe.stages
-            ),
-        }
-    )
-    monkeypatch.setattr(task, "has_grasp", lambda: False)
-    expected = f"No two-finger physical grasp for {phase}" if gripper_mode == 1 else None
-    assert expert._execution_failure() == expected
-
-
-def test_required_grasp_allows_transient_loss_and_resets_on_recovery(monkeypatch):
-    sim, task, expert = make_expert(method="heuristic")
-    expert.stage = expert.STAGES.index("insert")
-    current = expert.robot.state.snapshot().qpos[:7]
-    path = np.tile(np.r_[current, 0.0], (2, 1))
-    expert.execution.start(JointTrajectory(path, 1.0, 1.0), sim.data.time)
-    grasped = False
-    monkeypatch.setattr(task, "has_grasp", lambda: grasped)
-    assert expert._execution_failure() is None
-    sim.data.time = expert.recipe.lost_grasp_grace_s
-    assert expert._execution_failure() is None
-    grasped = True
-    assert expert._execution_failure() is None
-    grasped = False
-    sim.data.time = 1.0
-    assert expert._execution_failure() is None
-    sim.data.time += expert.recipe.lost_grasp_grace_s + sim.dt
-    assert expert._execution_failure() == "Lost two-finger grasp during insert"
-    expert.stage = len(expert.STAGES)
-    assert expert._execution_failure() is None
-
-
 @pytest.mark.parametrize("method", ["sampling", "heuristic"])
 def test_medium_book_is_lifted_inserted_and_released(method):
     sim, task, expert = make_expert(method=method)
@@ -162,8 +130,8 @@ def test_medium_book_is_lifted_inserted_and_released(method):
     assert expert.get_stage_name() == "settle"
     assert task.max_height > task.start_center[2] + 0.04
     status = task.status()
-    assert status.released_stable
-    assert status.supported and not status.touching_robot
+    assert status.is_released_stable
+    assert status.is_touch_shelf and not status.is_touch_robot
     assert status.position_error < 0.015
     assert status.rotation_error < 0.12
     if method == "heuristic":
@@ -174,12 +142,8 @@ def test_medium_book_is_lifted_inserted_and_released(method):
 @pytest.mark.parametrize(
     ("method", "phase", "dwell"),
     [
-        *(
-            ("heuristic", phase, 0.0)
-            for phase in ("approach", "pick", "preinsert", "insert", "lower", "retract")
-        ),
+        ("heuristic", "approach", 0.0),
         ("heuristic", "close", 0.4),
-        ("heuristic", "release", 0.4),
         ("sampling", "approach", 0.4),
     ],
 )

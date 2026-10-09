@@ -11,12 +11,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from mujoco_lab.behaviors.book import BookTask
-from mujoco_lab.behaviors.cube_stack import CubeStackTask
-from mujoco_lab.learning.config.config import RolloutConfig
+from mujoco_lab.behaviors.task import BookTask, CubeStackTask
+from mujoco_lab.learning.config import EvaluationConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation.progress import BookProgressTracker, CubeProgressTracker
 from mujoco_lab.learning.policies.base import BasePolicy
+from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
@@ -37,29 +37,23 @@ def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
     if episodes and all("best_progress" in row for row in episodes):
         for name in (
             "best_progress",
-            "final_goal_distance",
+            "final_position_error",
             "grasp_fraction",
             "lift_fraction",
             "place_fraction",
         ):
             summary[f"mean_{name}"] = float(np.mean([row[name] for row in episodes]))
-        summary["cube_grasp_fraction"] = np.mean(
-            [row["cube_grasped"] for row in episodes], axis=0
-        ).tolist()
-        summary["cube_lift_fraction"] = np.mean(
-            [row["cube_lifted"] for row in episodes], axis=0
-        ).tolist()
-        summary["cube_place_fraction"] = np.mean(
-            [row["cube_placed"] for row in episodes], axis=0
-        ).tolist()
-    if episodes and all("book_grasped" in row for row in episodes):
+        summary["grasp_fraction"] = np.mean([row["grasped"] for row in episodes], axis=0).tolist()
+        summary["lift_fraction"] = np.mean([row["lifted"] for row in episodes], axis=0).tolist()
+        summary["place_fraction"] = np.mean([row["placed"] for row in episodes], axis=0).tolist()
+    if episodes and all("inserted" in row for row in episodes):
         for name in (
-            "book_grasped",
-            "book_lifted",
-            "book_inserted",
-            "book_released",
-            "book_position_error",
-            "book_rotation_error",
+            "grasped",
+            "lifted",
+            "inserted",
+            "released",
+            "position_error",
+            "rotation_error",
         ):
             summary[f"mean_{name}"] = float(np.mean([row[name] for row in episodes]))
     return summary
@@ -77,16 +71,19 @@ def evaluation_log_metrics(summary: Mapping[str, Any]) -> dict[str, int | float]
         metrics["eval/mean_success_sim_seconds"] = summary["mean_success_sim_seconds"]
     for name in (
         "mean_best_progress",
-        "mean_final_goal_distance",
+        "mean_final_position_error",
         "mean_grasp_fraction",
         "mean_lift_fraction",
         "mean_place_fraction",
+        "mean_grasped",
+        "mean_lifted",
+        "mean_inserted",
+        "mean_released",
+        "mean_position_error",
+        "mean_rotation_error",
     ):
         if name in summary:
             metrics[f"eval/{name}"] = summary[name]
-    for name, value in summary.items():
-        if name.startswith("mean_book_"):
-            metrics[f"eval/{name}"] = value
     return metrics
 
 
@@ -95,9 +92,10 @@ class PolicyEvaluator:
 
     Episode history, progress, and recordings are local to each evaluation call.
     The caller owns the environment and chooses output paths for each run.
+    Gaussian policies execute their mean; BC policies retain their sampling interface.
     """
 
-    def __init__(self, env: Any, config: RolloutConfig, device: torch.device):
+    def __init__(self, env: Any, config: EvaluationConfig, device: torch.device):
         if config.num_episodes <= 0:
             raise ValueError("num_episodes must be positive")
         self.max_steps = max_steps_for_seconds(config.max_seconds, env.action_dt)
@@ -144,7 +142,11 @@ class PolicyEvaluator:
         state = torch.as_tensor(
             normalized.astype(np.float32, copy=False), device=self.device
         ).unsqueeze(0)
-        chunk = model.sample_actions(state, num_steps=flow_num_steps)
+        chunk = (
+            model(state).mean
+            if isinstance(model, GaussianPolicy)
+            else model.sample_actions(state, num_steps=flow_num_steps)
+        )
         predicted = chunk[0].detach().cpu().numpy()
         return normalizer.denormalize_action(predicted)
 
@@ -184,7 +186,6 @@ class PolicyEvaluator:
         max_steps = self.max_steps
         obs_horizon = metadata["architecture"]["obs_horizon"]
         execution_horizon = metadata["architecture"]["execution_horizon"]
-        low, high = env.action_space.low, env.action_space.high
         raw_obs, _ = env.reset(seed=env_seed)
         start_sim_time = float(env.simulator.data.time)
         task = env.task
@@ -209,9 +210,6 @@ class PolicyEvaluator:
                 while steps < max_steps:
                     physical = self._predict_actions(model, normalizer, history, flow_num_steps)
                     for next_act in physical[:execution_horizon]:
-                        next_act = np.clip(next_act, low, high).astype(
-                            env.action_space.dtype, copy=False
-                        )
                         next_obs, reward, terminated, truncated, info = env.step(next_act)
                         if progress is not None:
                             progress.observe()

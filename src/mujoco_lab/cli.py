@@ -14,7 +14,6 @@ from mujoco_lab.behaviors import (
     CubeStackTask,
 )
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import create_controller
 from mujoco_lab.planning import (
     PlannerConfig,
     default_planning,
@@ -62,9 +61,6 @@ def main() -> None:
         create_cube_stack(config.cubes, environment=config.environment),
         robots=[RobotSpec(config.robot, config.robot, config=robot_config)],
     )
-    robot = simulator.robots[config.robot]
-    controller = create_controller(robot, robot_config.controller)
-    robot.change_controller(controller)
     task = CubeStackTask(simulator, config.cubes)
     recipe = load_cube_recipe(config.robot)
     if config.method == "sampling":
@@ -129,7 +125,7 @@ def main() -> None:
                     logger.info(f"Saved video: {video_path}")
         status = task.status()
         failure = expert.failure_reason
-        if config.headless and not status.released_stable_stack and failure is None:
+        if config.headless and not status.is_released_stable and failure is None:
             completed_steps = round(simulator.data.time / simulator.dt)
             failure = (
                 f"step budget exhausted at {expert.get_stage_name()} after {completed_steps} steps"
@@ -140,14 +136,14 @@ def main() -> None:
             f"robot={config.robot} cubes={config.cubes} method={config.method} "
             f"planner={planner_label} "
             f"simulated={simulator.data.time:.3f}s "
-            f"stage={expert.get_stage_name()} ogbench_goal={status.ogbench_success} "
-            f"released_stable_stack={status.released_stable_stack} "
-            f"support_contacts={status.support_contacts} "
-            f"goal_distances_m={status.goal_distances.round(4).tolist()} "
-            f"max_heights_m={task.max_lift.round(3).tolist()} "
+            f"stage={expert.get_stage_name()} ogbench_goal={status.is_final_success} "
+            f"released_stable_stack={status.is_released_stable} "
+            f"support_contacts={status.is_support_contacts} "
+            f"position_errors_m={status.position_errors.round(4).tolist()} "
+            f"max_heights_m={task.max_height.round(3).tolist()} "
             f"failure={failure}"
         )
-        if config.headless and not status.released_stable_stack:
+        if config.headless and not status.is_released_stable:
             raise SystemExit(1)
     finally:
         manager.remove_simulator(name)

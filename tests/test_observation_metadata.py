@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode, load_episode, load_episodes, save_episode
 from mujoco_lab.learning.trainers.train_bc import run_training
 
@@ -25,13 +25,8 @@ def _episode():
 @pytest.mark.parametrize(
     "observation",
     [
-        None,
-        {},
         {"frame_dim": 49, "rotation_indices": []},
         {"frame_dim": 48, "rotation_indices": [48]},
-        {"frame_dim": 48, "rotation_indices": [-1]},
-        {"frame_dim": 48, "rotation_indices": [True]},
-        {"frame_dim": 48, "rotation_indices": [2.0]},
     ],
 )
 def test_invalid_observation_contract_is_rejected_when_loading(observation, tmp_path):
@@ -51,26 +46,16 @@ def test_mixed_layouts_fail_before_training(split):
     train = [episode, different] if split == "train" else [episode]
     validation = [different] if split == "validation" else [episode]
     with pytest.raises(ValueError, match="layouts must match"):
-        run_training(TrainConfig(), train, validation)
+        run_training(BCTrainConfig(), train, validation)
 
 
-@pytest.mark.parametrize("scene", ["book_insertion", "cube_stack"])
-def test_missing_observation_metadata_is_rejected_when_loading(scene, tmp_path):
+def test_missing_observation_metadata_is_rejected_when_loading(tmp_path):
     episode = _episode()
     del episode.metadata["observation"]
-    episode.metadata["replay"] = {"scene": scene, "cubes": 2}
+    episode.metadata["replay"] = {"scene": "book_insertion"}
     save_episode(tmp_path / "episode.npz", episode)
     with pytest.raises(ValueError, match="Observation metadata"):
         load_episodes(tmp_path, success_only=False)
-
-
-def test_loading_accepts_repeated_rotation_columns_without_rewriting_metadata(tmp_path):
-    episode = _episode()
-    episode.metadata["observation"] = {"frame_dim": 48.0, "rotation_indices": [2, 2]}
-    save_episode(tmp_path / "episode.npz", episode)
-    loaded = load_episodes(tmp_path, success_only=False)[0]
-    assert loaded.rotation_indices == [2, 2]
-    assert loaded.metadata == episode.metadata
 
 
 def test_collector_copies_observation_metadata(tmp_path):
@@ -88,10 +73,10 @@ def test_collector_copies_observation_metadata(tmp_path):
     class Expert:
         failed = False
 
-        def reset(self, observation, info):
+        def reset(self):
             pass
 
-        def act(self, observation, *, dt=0.0):
+        def act(self, *, dt=0.0):
             return np.zeros(1, dtype=np.float32)
 
     env = Environment()

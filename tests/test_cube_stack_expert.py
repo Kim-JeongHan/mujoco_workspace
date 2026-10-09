@@ -10,10 +10,10 @@ from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
-from mujoco_lab.control import ControlTarget
-from mujoco_lab.control.trajectory import JointTrajectory
-from mujoco_lab.learning.rollout import Expert, collect_episode
+from mujoco_lab.learning.rollout import Expert
 from mujoco_lab.planning import default_planning
+from mujoco_lab.trajectory_generation import ControlTarget
+from mujoco_lab.trajectory_generation.trajectory import JointTrajectory
 
 
 def _forte_expert(method="heuristic"):
@@ -93,9 +93,10 @@ def test_constructor_and_reset_keep_caller_controller_and_targets(tmp_path, monk
     task = CubeStackTask(simulator, 2)
     robot = simulator.robots["forte"]
     gains = {name: {"kp": 19, "kd": 3} for name in robot.get_arm_joint_mapping()[0]}
-    (tmp_path / "robot.yaml").write_text(
-        yaml.safe_dump({"pose": {"default": []}, "controller": {"name": "pd", "pd_gains": gains}})
-    )
+    config = yaml.safe_load(ROBOT_ASSETS["forte"].path.with_name("robot.yaml").read_text())
+    config["pose"] = {"default": []}
+    config["controller"] = {"name": "pd", "pd_gains": gains}
+    (tmp_path / "robot.yaml").write_text(yaml.safe_dump(config))
     monkeypatch.setitem(ROBOT_ASSETS, "forte", RobotAsset(tmp_path / "robot.xml"))
     controller = create_test_controller(robot, controller="pd", frame="grasp")
     robot.change_controller(controller)
@@ -137,8 +138,9 @@ def test_act_returns_physical_action_without_applying_it(method, monkeypatch):
     before_gripper = robot.gripper.get_target()
     before_time = simulator.data.time
 
-    action = expert.act(np.zeros(24, dtype=np.float32))
+    action = expert.act()
 
+    assert action is not None
     assert action.shape == (8,)
     assert np.isfinite(action).all()
     assert expert.execution.start_time == before_time
@@ -172,51 +174,3 @@ def test_cube_execution_rejects_invalid_method_and_planner_combinations(
             method=method,
             planning=planning,
         )
-
-
-def test_collector_accepts_another_expert_and_stops_after_its_failure():
-    class FailingExpert(Expert):
-        def __init__(self):
-            super().__init__()
-            self.calls = 0
-
-        def reset(self, initial_obs=None, info=None):
-            self.calls = 0
-            self.failed = False
-            self.failure_reason = None
-
-        def act(self, obs=None, *, dt=0.0):
-            self.calls += 1
-            if self.calls == 2:
-                self.failed = True
-                self.failure_reason = "no route"
-            return np.zeros(8, dtype=np.float32)
-
-    class SmallEnv:
-        def __init__(self):
-            self.steps = 0
-            self.obs = np.zeros(54, dtype=np.float32)
-
-        def reset(self, *, seed=None, options=None):
-            self.steps = 0
-            self.obs.fill(0)
-            return self.obs, {}
-
-        def step(self, action):
-            self.steps += 1
-            self.obs.fill(self.steps)
-            return self.obs, 0.0, False, False, {}
-
-    env = SmallEnv()
-    episode = collect_episode(env, FailingExpert(), max_steps=10)
-    assert env.steps == len(episode) == 2
-    assert episode.states.shape == (3, 54)
-    np.testing.assert_array_equal(
-        episode.states, np.repeat(np.arange(3, dtype=np.float32)[:, None], 54, axis=1)
-    )
-    assert episode.actions.shape == (2, 8)
-    np.testing.assert_array_equal(episode.terminated, [False, False])
-    np.testing.assert_array_equal(episode.truncated, [False, True])
-    assert episode.metadata["success"] is None
-    assert episode.metadata["expert_failed"] is True
-    assert episode.metadata["termination_reason"] == "no route"

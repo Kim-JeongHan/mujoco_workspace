@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
@@ -70,7 +70,7 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
     )
     episode.validate_training_data()
     validation.validate_training_data()
-    config = TrainConfig(
+    config = BCTrainConfig(
         policy_type=policy_type,
         obs_horizon=2,
         chunk_size=1,
@@ -79,7 +79,7 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
         hidden_dims=(16,),
         batch_size=4,
         num_epochs=1,
-        log_interval=100,
+        log_interval_steps=100,
     )
 
     model, normalizer = run_training(config, [episode], [validation])

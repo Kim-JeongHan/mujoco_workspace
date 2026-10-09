@@ -47,7 +47,7 @@ class RobotState:
         root_name: str,
         joint_names: tuple[str, ...],
         site_names: tuple[str, ...],
-        constraints: Constraints | None = None,
+        constraints: Constraints,
         ik_frame: str = "grasp",
     ) -> None:
         self.model, self.data = model, data
@@ -90,8 +90,6 @@ class RobotState:
     def get_joint_limits(self, slots: list[int]) -> np.ndarray:
         """Return configured position limits in the selected robot joint order."""
         constraints = self.constraints
-        if constraints is None:
-            raise ValueError("Joint limits require configured constraints")
         limits = np.asarray(constraints.position_limit, dtype=float)
         if (
             limits.shape != (len(constraints.joint_names), 2)
@@ -227,6 +225,4 @@ class RobotState:
 
     def get_constraint(self, index: int) -> tuple[str, list[float], list[float], list[float]]:
         """Return a configured constraint by index, in the order they were added."""
-        if self.constraints is None:
-            raise ValueError("Robot state has no configured constraints")
         return self.constraints.get_info(index)

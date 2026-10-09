@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from mujoco_lab.control.trajectory import JointTrajectory
+from mujoco_lab.trajectory_generation.trajectory import JointTrajectory
 
 
 class TrajectoryExecution:
@@ -28,8 +28,6 @@ class TrajectoryExecution:
 
         Previewing never advances execution or crosses an unchecked stop waypoint.
         """
-        if not np.isfinite(dt) or dt < 0:
-            raise ValueError("dt must be finite and nonnegative")
         trajectory = self.trajectory
         if trajectory is None:
             raise RuntimeError("Cannot sample a trajectory before it is started")

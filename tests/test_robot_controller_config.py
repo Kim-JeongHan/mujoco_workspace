@@ -5,19 +5,87 @@ from dataclasses import replace
 import numpy as np
 import pytest
 import yaml
-from dacite import UnexpectedDataError
+from dacite import WrongTypeError
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack, create_environment
 from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.robot import (
+    Constraints,
     ControllerConfig,
     PoseConfig,
     RobotConfig,
 )
 from mujoco_lab.behaviors import CubeStackTask
-from mujoco_lab.control import create_controller
+from mujoco_lab.control import (
+    JointSpaceComputedTorque,
+    PositionController,
+    create_controller,
+)
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
+
+
+@pytest.mark.parametrize(
+    ("robot_type", "mode", "algorithm"),
+    [
+        ("forte", "computed_torque", JointSpaceComputedTorque),
+        ("panda", "position", PositionController),
+    ],
+)
+def test_robot_creates_configured_controller_and_target_at_initial_pose(
+    robot_type, mode, algorithm
+):
+    config = load_robot_config(robot_type)
+    config.controller.name = mode
+    simulator = Simulator(
+        create_environment("empty"), robots=[RobotSpec("robot", robot_type, config=config)]
+    )
+    robot = simulator.robots["robot"]
+    assert isinstance(robot.controller, algorithm)
+    np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
+    np.testing.assert_array_equal(robot.reference_generator.state().position, robot.target.position)
+    np.testing.assert_array_equal(robot.target.velocity, 0)
+    np.testing.assert_array_equal(robot.target.acceleration, 0)
+
+
+def test_yaml_rejects_controller_none(tmp_path):
+    path = tmp_path / "robot.yaml"
+    path.write_text("controller:\n  name: none\npose:\n  default: [0]\n")
+    with pytest.raises(WrongTypeError, match="controller.name"):
+        RobotConfig.load(path)
+
+
+def test_controller_replacement_resets_target_and_reference():
+    simulator = Simulator(
+        create_environment("empty"),
+        robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
+    )
+    robot = simulator.robots["robot"]
+    reference = robot.reference_generator
+    replacement = create_controller(
+        robot, ControllerConfig("computed_torque", natural_frequency=20)
+    )
+    robot.change_controller(replacement)
+    assert robot.controller is replacement
+    assert robot.reference_generator is not reference
+    np.testing.assert_array_equal(robot.target.position, robot.get_control_state().qpos)
+
+
+def test_robotless_simulator_can_run_native_actuators():
+    import mujoco
+
+    scene = create_environment("empty")
+    body = scene.worldbody.add_body(name="native", pos=[0, 0, 1])
+    body.add_joint(name="hinge", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 0, 1])
+    body.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.1, 0, 0], mass=1)
+    scene.add_actuator(name="native_drive", target="hinge", trntype=mujoco.mjtTrn.mjTRN_JOINT)
+    simulator = Simulator(scene)
+    simulator.data.ctrl[:] = 0.3
+    assert simulator.run_steps(3) is None
+    assert not simulator.robots
+    np.testing.assert_array_equal(simulator.data.ctrl, [0.3])
+    assert simulator.data.qvel[0] > 0
+    assert simulator.data.time == pytest.approx(3 * simulator.dt)
 
 
 def test_yaml_position_limits_use_degrees_without_changing_motion_limits(tmp_path):
@@ -26,7 +94,7 @@ def test_yaml_position_limits_use_degrees_without_changing_motion_limits(tmp_pat
         yaml.safe_dump(
             {
                 "pose": {"default": [0, 0]},
-                "controller": {"name": "none"},
+                "controller": {"name": "position"},
                 "constraints": {
                     "joint_names": ["joint1", "joint2"],
                     "position_limit": [[-180, 90], [-45, 0]],
@@ -38,6 +106,7 @@ def test_yaml_position_limits_use_degrees_without_changing_motion_limits(tmp_pat
     )
     for _ in range(2):
         config = RobotConfig.load(path)
+        assert config.constraints is not None
         np.testing.assert_allclose(
             config.constraints.position_limit, [[-np.pi, np.pi / 2], [-np.pi / 4, 0]]
         )
@@ -56,7 +125,16 @@ def test_yaml_pose_preserves_gripper_position_and_converts_arm_angles(
 ):
     default = [-90, 90]
     zero = [180, -45]
-    settings = {"controller": {"name": "none"}, "pose": {"default": default}}
+    settings = {
+        "controller": {"name": "position"},
+        "pose": {"default": default},
+        "constraints": {
+            "joint_names": ["joint1", "joint2"],
+            "position_limit": [[-180, 180], [-180, 180]],
+            "velocity_limit": [1.0, 1.0],
+            "acceleration_limit": [2.0, 2.0],
+        },
+    }
     if with_zero:
         settings["pose"]["zero"] = zero
     if with_gripper:
@@ -75,6 +153,7 @@ def test_yaml_pose_preserves_gripper_position_and_converts_arm_angles(
         expected_zero = [np.pi, -np.pi / 4]
         if with_gripper:
             expected_zero.append(0.03)
+        assert config.pose.zero is not None
         np.testing.assert_allclose(config.pose.zero, expected_zero)
         assert config.pose.named_poses() == {"default": expected, "zero": expected_zero}
     else:
@@ -83,20 +162,6 @@ def test_yaml_pose_preserves_gripper_position_and_converts_arm_angles(
     assert yaml.safe_load(path.read_text())["pose"]["default"] == default
     if with_zero:
         assert yaml.safe_load(path.read_text())["pose"]["zero"] == zero
-
-
-def test_yaml_pose_rejects_unsupported_pose_names(tmp_path):
-    path = tmp_path / "robot.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "controller": {"name": "none"},
-                "pose": {"default": [0], "ready": [90]},
-            }
-        )
-    )
-    with pytest.raises(UnexpectedDataError, match="ready"):
-        RobotConfig.load(path)
 
 
 @pytest.mark.parametrize("robot_type", ["forte", "panda"])
@@ -117,7 +182,6 @@ def test_default_pose_initializes_joints_controls_and_environment_reset(robot_ty
     assert sim.data.ctrl[robot.gripper.actuator_id] == pytest.approx(
         finger_position * robot.gripper.gear
     )
-    robot.change_controller(create_controller(robot, config.controller))
     assert robot.target is not None
     np.testing.assert_allclose(robot.target.position, pose[:-1])
     expected = {name: getattr(sim.data, name).copy() for name in ("qpos", "qvel", "ctrl")}
@@ -143,9 +207,14 @@ def test_shared_config_gets_independent_asset_metadata(tmp_path, monkeypatch):
           <worldbody><body name="root_{name}">
             <joint name="joint_{name}"/><geom size=".1"/><site name="tip_{name}"/>
           </body></worldbody>
+          <actuator><motor name="drive_{name}" joint="joint_{name}"/></actuator>
         </mujoco>""")
         monkeypatch.setitem(ROBOT_ASSETS, name, RobotAsset(path))
-    config = RobotConfig(ControllerConfig(name="none"), pose=PoseConfig([0]))
+    config = RobotConfig(
+        ControllerConfig(name="computed_torque"),
+        Constraints(["joint_a", "joint_b"], [[-np.pi, np.pi]] * 2, [1.0] * 2, [2.0] * 2),
+        pose=PoseConfig([0]),
+    )
     initial_info = config.model_info
     sim = Simulator(
         create_environment("empty"),

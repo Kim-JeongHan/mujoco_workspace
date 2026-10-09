@@ -75,7 +75,7 @@ def test_recorded_episode_round_trip_and_seek_restore_scene(recording, tmp_path,
     assert loaded.qpos.shape[1] != loaded.states.shape[1]
     assert np.ptp(loaded.mocap_pos[:, 0, 0]) > 0
     replay = EpisodeReplay(loaded)
-    monkeypatch.setattr(replay.simulator, "physics_step", Mock(side_effect=AssertionError))
+    monkeypatch.setattr(replay.simulator, "_physics_step", Mock(side_effect=AssertionError))
     monkeypatch.setattr(mujoco, "mj_step", Mock(side_effect=AssertionError))
     for index in (4, 0, 2, 1):
         replay.set_frame(index)
@@ -223,7 +223,7 @@ def playback(
     change_episode=None,
 ):
     simulator = Simulator(mujoco.MjSpec.from_string("<mujoco/>"))
-    simulator.physics_step = Mock(side_effect=AssertionError("Physics must not advance"))
+    simulator._physics_step = Mock(side_effect=AssertionError("Physics must not advance"))
     simulator.target_updater = Mock(side_effect=AssertionError("Control must not run"))
     manager = SimulatorManager()
     manager.add_simulator("replay", simulator)
@@ -284,7 +284,7 @@ def playback(
             change_episode=change_episode,
         )
         assert viewer.cam.distance == camera.distance
-    simulator.physics_step.assert_not_called()
+    simulator._physics_step.assert_not_called()
     simulator.target_updater.assert_not_called()
     return simulator, viewer, frames
 

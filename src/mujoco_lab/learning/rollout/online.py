@@ -33,10 +33,10 @@ def history_state(
     return torch.as_tensor(state, dtype=torch.float32, device=device)
 
 
-def physical_action(action: torch.Tensor, normalizer: Normalizer, space: spaces.Box) -> np.ndarray:
-    """Convert a single normalized chunk (1, 1, A) to bounded physical targets."""
+def physical_action(action: torch.Tensor, normalizer: Normalizer) -> np.ndarray:
+    """Denormalize a single chunk (1, 1, A); Robot bounds the resulting goals."""
     physical = normalizer.denormalize_action(action[0, 0].detach().cpu().numpy())
-    return np.clip(physical, space.low, space.high).astype(space.dtype, copy=False)
+    return physical
 
 
 @torch.no_grad()
@@ -77,9 +77,7 @@ def collect_rollout(
         actions = policy(state).sample()
         log_probs = policy.log_prob(state, actions)
         values = critic(state)
-        obs, reward, terminated, truncated, info = env.step(
-            physical_action(actions, normalizer, env.action_space)
-        )
+        obs, reward, terminated, truncated, info = env.step(physical_action(actions, normalizer))
         history.append(obs.copy())
         next_values = (
             torch.zeros_like(values)
@@ -137,9 +135,7 @@ def evaluate_policy(
         history = deque([obs.copy()] * obs_horizon, maxlen=obs_horizon)
         for _ in range(max_steps):
             action = policy(history_state(history, normalizer, device)).mean
-            obs, reward, terminated, truncated, info = env.step(
-                physical_action(action, normalizer, env.action_space)
-            )
+            obs, reward, terminated, truncated, info = env.step(physical_action(action, normalizer))
             history.append(obs.copy())
             total_return += reward
             total_steps += 1

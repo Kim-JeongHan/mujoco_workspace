@@ -118,8 +118,6 @@ def annotate_controller(scene, robot, data, target_data) -> None:
     """Draw cached targets using rendering data and shared joint kinematics scratch."""
     model, controller = robot.model, robot.controller
     if isinstance(controller, (JointSpacePD, JointSpaceComputedTorque)):
-        if robot.target is None:
-            return
         target_data.qpos[:] = data.qpos
         indices = robot.control_qpos_indices
         target_data.qpos[indices] = robot.target.position
@@ -129,7 +127,7 @@ def annotate_controller(scene, robot, data, target_data) -> None:
         add_marker(scene, data.site_xpos[site], ACTUAL_RGBA, 0.016)
     elif isinstance(controller, OperationalSpaceControl):
         actual = data.site_xpos[robot.state.site_id(controller.frame)]
-        target = actual if robot.target is None else robot.target.position
+        target = robot.target.position
         add_marker(scene, target, TARGET_RGBA, 0.032)
         add_marker(scene, actual, ACTUAL_RGBA, 0.014)
         add_arrow(
@@ -156,13 +154,9 @@ def annotate(scene, simulator, data) -> None:
     """Draw scoped annotations without changing live state or controller caches."""
     target_data = None
     for robot in simulator.robots.values():
-        if robot.controller is not None:
-            controller = robot.controller
-            if (
-                isinstance(controller, (JointSpacePD, JointSpaceComputedTorque))
-                and target_data is None
-            ):
-                target_data = mujoco.MjData(simulator.model)
-                mujoco.mj_copyData(target_data, simulator.model, data)
-            draw_joint_torques(scene, robot, data)
-            annotate_controller(scene, robot, data, target_data)
+        controller = robot.controller
+        if isinstance(controller, (JointSpacePD, JointSpaceComputedTorque)) and target_data is None:
+            target_data = mujoco.MjData(simulator.model)
+            mujoco.mj_copyData(target_data, simulator.model, data)
+        draw_joint_torques(scene, robot, data)
+        annotate_controller(scene, robot, data, target_data)

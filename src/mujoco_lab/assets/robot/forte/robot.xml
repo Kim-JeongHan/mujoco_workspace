@@ -200,7 +200,7 @@
     <motor name="lower_arm_roll_motor" joint="lower_arm_roll" gear="2" ctrlrange="-1.8 1.8" />
     <motor name="wrist_pitch_motor" joint="wrist_pitch" gear="2" ctrlrange="-1.8 1.8" />
     <motor name="wrist_roll_motor" joint="wrist_roll" gear="1" ctrlrange="-1.8 1.8" />
-    <position name="gripper_motor" joint="gripper_left_joint" kp="2000" kv="5" ctrlrange="0 0.037" forcerange="-20 20" />
+    <position name="gripper_motor" joint="gripper_left_joint" kp="2000" kv="25" ctrlrange="0 0.037" forcerange="-20 20" />
   </actuator>
   <keyframe>
     <key name="home" qpos="0 -1.57079632679 0 -1.57079632679 0 1.57079632679 0 0.037 0.037" />

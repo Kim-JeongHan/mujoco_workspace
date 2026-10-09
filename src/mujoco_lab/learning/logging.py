@@ -20,7 +20,8 @@ class Logger:
     """Own one fresh experiment directory and one optional W&B run.
 
     Each log call is an independent JSONL row. W&B history uses the actual
-    optimizer step and merges calls made at the same step.
+    optimizer step and merges calls made at the same step. ``step_metric``
+    selects the default chart axis, such as collected environment steps for RL.
     """
 
     def __init__(
@@ -33,6 +34,7 @@ class Logger:
         run_name: str | None = None,
         wandb_entity: str | None = None,
         wandb_group: str | None = None,
+        step_metric: str = "optimizer_step",
     ) -> None:
         load_dotenv(".env", override=False)
         mode = wandb_mode if wandb_mode is not None else os.getenv("WANDB_MODE", "online")
@@ -47,6 +49,7 @@ class Logger:
             else os.getenv("WANDB_PROJECT", "mujoco_workspace_bc")
         )
         self.run_name = run_name
+        self.step_metric = step_metric
         self.wandb_entity = wandb_entity if wandb_entity is not None else os.getenv("WANDB_ENTITY")
         self.wandb_group = wandb_group if wandb_group is not None else os.getenv("WANDB_RUN_GROUP")
         self._console = ConsoleLogger()
@@ -74,8 +77,8 @@ class Logger:
                     dir=str(self.run_dir),
                     config=self.config,
                 )
-                self._run.define_metric("optimizer_step")
-                self._run.define_metric("*", step_metric="optimizer_step")
+                self._run.define_metric(self.step_metric)
+                self._run.define_metric("*", step_metric=self.step_metric)
         except Exception:
             if self._run is not None:
                 with suppress(Exception):

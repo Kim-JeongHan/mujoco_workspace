@@ -9,7 +9,8 @@ from mujoco_lab import (
     create_environment,
 )
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import Controller, ControlTarget
+from mujoco_lab.control import Controller
+from mujoco_lab.trajectory_generation import ControlTarget
 from mujoco_lab.utils import Transform
 
 
@@ -123,32 +124,48 @@ class ConstantController(Controller):
         return self.values
 
 
-def test_scoped_input_clipping_stats_and_one_shared_step():
+def test_scoped_input_clipping_and_one_shared_step(monkeypatch):
     sim = make_pair("panda")
     left, right = sim.robots.values()
     sentinel = sim.data.ctrl[right.actuator_ids].copy()
     sentinel[0] += 0.01
     sim.data.ctrl[right.actuator_ids] = sentinel
     left.change_controller(ConstantController(np.full(7, 1000.0)))
-    previous = right.joint_state
-    stats = sim.run_steps(3)
-    assert right.joint_state is not previous
-    assert right.joint_state.time == pytest.approx(2 * sim.model.opt.timestep)
+    left.control()
     np.testing.assert_array_equal(sim.data.ctrl[right.actuator_ids], sentinel)
+    right_times = []
+    compute = right.controller.compute
+
+    def record_right_control(state, target):
+        right_times.append(state.time)
+        return compute(state, target)
+
+    monkeypatch.setattr(right.controller, "compute", record_right_control)
+    previous = right.joint_state
+    sim.run_steps(3)
+    assert right.joint_state is not previous
+    for robot in sim.robots.values():
+        current = robot.state.snapshot()
+        assert robot.joint_state.time == current.time == sim.data.time
+        np.testing.assert_array_equal(robot.joint_state.qpos, current.qpos)
+        np.testing.assert_array_equal(robot.joint_state.qvel, current.qvel)
+        np.testing.assert_array_equal(robot.joint_state.bias_forces, current.bias_forces)
+    np.testing.assert_allclose(right_times, np.arange(3) * sim.dt)
     arm_ids = np.asarray(left.actuator_ids)[left.control_actuator_slots]
     np.testing.assert_array_equal(sim.data.ctrl[arm_ids], sim.model.actuator_ctrlrange[arm_ids, 1])
     assert sim.data.time == pytest.approx(3 * sim.model.opt.timestep)
-    assert stats["left"].saturated_steps == 3
-    assert stats["right"].saturated_steps == 0
-    assert stats["left"].steps == stats["right"].steps == 3
-    assert stats["right"].errors == []
-    following = sim.step()
-    assert following["left"].steps == 1 and stats["left"].steps == 3
+    sim.step()
+    assert sim.data.time == pytest.approx(4 * sim.dt)
+    np.testing.assert_allclose(right_times, np.arange(4) * sim.dt)
 
 
 @pytest.mark.parametrize(
     ("bad", "message"),
-    [(np.zeros(8), "finite joint commands"), (np.full(7, np.nan), "finite actuator inputs")],
+    [
+        (np.zeros(8), "joint commands"),
+        (np.ones(1), "joint commands"),
+        (np.full(7, np.nan), "finite actuator inputs"),
+    ],
 )
 def test_later_invalid_command_does_not_advance_physics(bad, message):
     sim = make_pair()
@@ -157,7 +174,8 @@ def test_later_invalid_command_does_not_advance_physics(bad, message):
     right.change_controller(ConstantController(bad))
     before = sim.data.ctrl.copy()
     expected_left = before[left.actuator_ids].copy()
-    expected_left[left.control_actuator_slots] = 1
+    arm_ids = [left.actuator_ids[slot] for slot in left.control_actuator_slots]
+    expected_left[left.control_actuator_slots] = 1 / sim.model.actuator_gear[arm_ids, 0]
     with pytest.raises(ValueError, match=message):
         sim.step()
     np.testing.assert_array_equal(sim.data.ctrl[left.actuator_ids], expected_left)
@@ -170,7 +188,10 @@ def test_later_invalid_command_does_not_advance_physics(bad, message):
     clean_left = clean.robots["left"]
     clean_left.change_controller(ConstantController(np.ones(7)))
     clean_expected = clean.data.ctrl[clean_left.actuator_ids].copy()
-    clean_expected[clean_left.control_actuator_slots] = 1
+    clean_arm_ids = [clean_left.actuator_ids[slot] for slot in clean_left.control_actuator_slots]
+    clean_expected[clean_left.control_actuator_slots] = (
+        1 / clean.model.actuator_gear[clean_arm_ids, 0]
+    )
     clean.step()
     np.testing.assert_array_equal(clean.data.ctrl[clean_left.actuator_ids], clean_expected)
 
@@ -202,17 +223,17 @@ def test_controller_gains_and_targets_are_not_shared_and_reset_keeps_configurati
     left.controller.kp[0] += 5
     left.target = ControlTarget(left.target.position + 0.02)
     np.testing.assert_array_equal(another.kp, old_gain)
-    right.change_controller(create_test_controller(right, controller="osc"))
-    right.controller.task_kp = 850
-    stats = sim.run_steps(50)
-    assert right.controller._target is not None
+    right.change_controller(create_test_controller(right, controller="computed_torque"))
+    right.controller.kp = 850
+    sim.run_steps(50)
+    assert sim.data.time == pytest.approx(50 * sim.dt)
+    np.testing.assert_array_equal(right.target.position, right.reference_generator.state().position)
     gains = left.controller.kp.copy()
     sim.reset()
-    assert sim.data.time == 0 and right.controller._target is None
+    assert sim.data.time == 0 and right.controller.get_tracking_error() == 0
     np.testing.assert_array_equal(left.controller.kp, gains)
     np.testing.assert_array_equal(left.target.position, left.joint_state.qpos[:7])
-    assert right.controller.task_kp == 850
-    assert all(value.steps == 50 for value in stats.values())
+    assert right.controller.kp == 850
     np.testing.assert_array_equal(sim.data.qpos, initial_qpos)
     np.testing.assert_array_equal(sim.data.ctrl, initial_ctrl)
 
@@ -257,6 +278,6 @@ def test_environment_prefix_and_free_joint_do_not_corrupt_ownership():
     assert sim.model.body("left/helper").id not in sim.model.jnt_bodyid[left.state.joint_ids]
     with pytest.raises(KeyError, match="helper_site"):
         left.state.get_frame_position("helper_site")
-    left.change_controller(create_test_controller(left, controller="osc"))
+    left.change_controller(create_test_controller(left, controller="computed_torque"))
     sim.step()
     assert left.state.get_jacobian("grasp").shape == (6, 9)

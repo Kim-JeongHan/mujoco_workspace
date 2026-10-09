@@ -8,10 +8,11 @@ import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.control import ControlTarget, JointTrajectory, create_controller
+from mujoco_lab.control import create_controller
 from mujoco_lab.planning import RRTConnectConfig
 from mujoco_lab.planning.collision.collision_checker import EmptyCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest
+from mujoco_lab.trajectory_generation import ControlTarget, JointTrajectory
 
 
 @pytest.fixture
@@ -23,59 +24,6 @@ def motion():
     robot = simulator.robots["panda"]
     robot.change_controller(create_controller(robot, robot.config.controller))
     return MotionPlanner(robot)
-
-
-@pytest.mark.parametrize("derivative", ["velocity", "acceleration"])
-@pytest.mark.parametrize("smooth", [True, False])
-def test_stage_ratios_bound_both_interpolation_modes(motion, derivative, smooth, monkeypatch):
-    robot = motion.robot
-    robot.target = ControlTarget(np.zeros(7))
-    robot.gripper.set_target(0)
-    config = robot.config
-    config.constraints.velocity_limit = [100.0] * 7
-    config.constraints.acceleration_limit = [100.0] * 7
-    config.gripper.velocity_limit = 100.0
-    config.gripper.acceleration_limit = 100.0
-    field = f"{derivative}_limit"
-    setattr(config.constraints, field, [0.1] * 7)
-    setattr(config.gripper, field, 0.02)
-    before = deepcopy(config)
-
-    # Exercise the checked polyline fallback as well as the smooth curve.
-    monkeypatch.setattr(motion, "smooth_path_collision_free", lambda *_: smooth)
-    request = MotionRequest(
-        name="hold",
-        mode="hold",
-        waypoints=(np.full(7, 0.1),),
-        gripper_target=0.02,
-        arm_ratio=(0.5, 0.5),
-        gripper_ratio=(0.5, 0.5),
-        checker=EmptyCollisionChecker(),
-    )
-    trajectory, reason = motion.make_trajectory(request)
-    assert reason is None
-    assert trajectory.smooth is smooth
-    samples = [trajectory.sample(t) for t in np.linspace(0, trajectory.duration, 1001)]
-    peaks = np.max(np.abs([getattr(sample, derivative) for sample in samples]), axis=0)
-    assert np.all(peaks <= np.array([*[0.05] * 7, 0.01]) + 1e-10)
-    assert peaks[-1] > 0.009  # The reduced gripper limit is actually active.
-    np.testing.assert_allclose(trajectory.sample(trajectory.duration).position, [*[0.1] * 7, 0.02])
-    assert config == before
-
-
-def test_configured_joint_order_does_not_change_ratio_timing(motion):
-    config = motion.robot.config.constraints
-    config.velocity_limit = [0.1 * (i + 1) for i in range(7)]
-    config.acceleration_limit = [0.2 * (i + 1) for i in range(7)]
-    start = motion.robot.state.snapshot().qpos[:7]
-    path = np.vstack((start, start + 0.1))
-    baseline = motion.trajectory(path, 0.02, arm_ratio=(0.4, 0.7), gripper_ratio=(0.2, 0.8))
-    for field in ("joint_names", "position_limit", "velocity_limit", "acceleration_limit"):
-        setattr(config, field, list(reversed(getattr(config, field))))
-    reordered = motion.trajectory(path, 0.02, arm_ratio=(0.4, 0.7), gripper_ratio=(0.2, 0.8))
-    assert reordered.duration == baseline.duration
-    for time in np.linspace(0, baseline.duration, 21):
-        np.testing.assert_allclose(reordered.sample(time).position, baseline.sample(time).position)
 
 
 def test_arm_and_gripper_ratios_apply_independently_without_mutating_limits(motion):

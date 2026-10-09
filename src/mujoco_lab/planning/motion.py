@@ -10,11 +10,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 from mujoco_lab.assets.robot.robot import Constraints
-from mujoco_lab.control.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.planning.collision.collision_checker import CollisionChecker
 from mujoco_lab.planning.planners import PlannerConfig, plan_path, planner_name
 from mujoco_lab.robot import Robot
 from mujoco_lab.state import IKError
+from mujoco_lab.trajectory_generation.trajectory import JointTrajectory, MotionRatio
 from mujoco_lab.utils import Transform
 
 
@@ -61,12 +61,7 @@ class MotionPlanner:
         """Combine configured arm and gripper constraints in trajectory joint order."""
         constraints = self.robot.state.constraints
         config = self.robot.config
-        if (
-            constraints is None
-            or config is None
-            or config.gripper is None
-            or self.robot.gripper is None
-        ):
+        if config.gripper is None or self.robot.gripper is None:
             raise ValueError("Motion planning requires arm constraints and gripper motion limits")
         slots = self.robot.state.get_frame_joint_slots("grasp")
         names = [self.robot.state.joint_names[slot] for slot in slots]
@@ -99,11 +94,12 @@ class MotionPlanner:
         slots = self.robot.state.get_frame_joint_slots("grasp")
         current = self.robot.state.snapshot().qpos[slots].copy()
         previous_target = self.robot.target
-        if previous_target is None:
-            raise ValueError("Motion planning requires a joint-target controller")
         previous = previous_target.position.copy()
         checker = request.checker
         if request.mode == "hold":
+            # The moving reference can overshoot its bounded position goal.
+            bounds = self.robot.state.get_joint_limits(slots)
+            previous = np.clip(previous, bounds[:, 0], bounds[:, 1])
             target = request.waypoints[-1]
             target = target if isinstance(target, np.ndarray) else previous
             path = np.vstack((previous, target))
@@ -305,6 +301,7 @@ class MotionPlanner:
             checker,
             arm_ratio=arm_ratio,
             gripper_ratio=gripper_ratio,
+            shape_preserving=True,
         )
         if trajectory is None:
             trajectory = self.branch_trajectory(
@@ -314,6 +311,7 @@ class MotionPlanner:
                 checker,
                 arm_ratio=arm_ratio,
                 gripper_ratio=gripper_ratio,
+                shape_preserving=True,
             )
         return trajectory
 

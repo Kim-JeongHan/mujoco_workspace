@@ -100,7 +100,6 @@ def test_resume_accepts_auxiliary_metadata_changes(tmp_path, monkeypatch):
     recorded = {
         "scene": "cube_stack",
         "model_sha256": "same",
-        "visual_sha256": "legacy",
         "mujoco_version": "older",
     }
     current = {"scene": "cube_stack", "model_sha256": "same", "mujoco_version": "newer"}
@@ -127,7 +126,6 @@ def test_resume_accepts_auxiliary_metadata_changes(tmp_path, monkeypatch):
         ("robot", "panda", "forte"),
         ("cubes", 1, 2),
         ("book", "small", "medium"),
-        ("gripper_action_units", "joint_position", "opening_width_m"),
         ("dt", 0.001, 0.002),
         ("physics_steps_per_action", 1, 5),
         ("xy_range", 0.02, 0.04),

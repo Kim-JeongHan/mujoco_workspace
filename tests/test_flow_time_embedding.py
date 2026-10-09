@@ -1,11 +1,11 @@
-"""Sinusoidal flow time and checkpoint compatibility."""
+"""Sinusoidal flow time features and checkpoint round trips."""
 
 import numpy as np
 import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.models import SinusoidalTimeEmbedding
 from mujoco_lab.learning.policies.factory import build_policy
@@ -36,7 +36,7 @@ def _normalizer():
 
 
 def _config(policy_type, flow_time_embed_dim=128):
-    return TrainConfig(
+    return BCTrainConfig(
         policy_type=policy_type,
         flow_time_embed_dim=flow_time_embed_dim,
         hidden_dims=(8,),
@@ -62,33 +62,6 @@ def test_flow_embedding_checkpoint_round_trip(tmp_path, width):
     loaded, _, metadata = load_checkpoint(path)
     assert metadata["architecture"]["flow_time_embed_dim"] == width
     assert loaded.time_embed_dim == width
-    states = torch.randn(2, 4)
-    torch.manual_seed(5)
-    before = model.sample_actions(states, num_steps=3)
-    torch.manual_seed(5)
-    after = loaded.sample_actions(states, num_steps=3)
-    torch.testing.assert_close(after, before)
-
-
-def test_old_scalar_flow_checkpoint_loads_with_identical_prediction(tmp_path):
-    model = build_policy(
-        "flow",
-        state_dim=4,
-        action_dim=1,
-        chunk_size=2,
-        hidden_dims=(8,),
-        flow_time_embed_dim=None,
-    )
-    path = tmp_path / "scalar.pt"
-    save_checkpoint(path, model, _normalizer(), _config("flow", None), optimizer_step=3)
-    payload = torch.load(path, weights_only=True)
-    del payload["architecture"]["flow_time_embed_dim"]
-    old_path = tmp_path / "old_scalar.pt"
-    torch.save(payload, old_path)
-    loaded, _, metadata = load_checkpoint(old_path)
-    assert metadata["architecture"].get("flow_time_embed_dim") is None
-    assert loaded.time_embed_dim is None
-    assert loaded.net[0].in_features == 4 + 2 + 1
     states = torch.randn(2, 4)
     torch.manual_seed(5)
     before = model.sample_actions(states, num_steps=3)

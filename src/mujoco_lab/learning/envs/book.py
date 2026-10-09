@@ -44,9 +44,7 @@ class BookEnv(JointActionEnv):
         self._book_qpos = int(self.model.jnt_qposadr[task.joint])
         self._home_xy = self.data.qpos[self._book_qpos : self._book_qpos + 2].copy()
         self._home_quat = self.data.qpos[self._book_qpos + 3 : self._book_qpos + 7].copy()
-        robot_width = 2 * len(self._arm_slots[self.robot.name]) + int(
-            self.robot.gripper is not None
-        )
+        robot_width = 2 * len(self._arm_slots[self.robot.name]) + int(self.robot.has_gripper())
         rotation_start = robot_width + 3
         self._rotation_indices = [
             *range(rotation_start, rotation_start + 6),
@@ -80,7 +78,7 @@ class BookEnv(JointActionEnv):
         return self._get_obs(), {"seed": seed, "book_yaw_degrees": yaw}
 
     def _is_success(self) -> bool:
-        return self.task.status().released_stable
+        return self.task.status().is_released_stable
 
     @property
     def camera_lookat(self) -> np.ndarray:

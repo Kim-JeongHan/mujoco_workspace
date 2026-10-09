@@ -12,7 +12,7 @@ from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.assets.robot.robot import GripperConfig, PoseConfig
 
 
-def test_forte_gripper_controls_without_arm_controller_and_resets_home():
+def test_forte_gripper_controls_alongside_arm_controller_and_resets_home():
     sim = Simulator(
         create_environment("empty"),
         robots=[RobotSpec("robot", "forte", config=load_robot_config("forte"))],
@@ -47,6 +47,7 @@ def test_gripper_clamps_endpoint_roundoff_and_rejects_larger_errors(robot_type):
         robots=[RobotSpec("robot", robot_type, config=load_robot_config(robot_type))],
     )
     gripper = sim.robots["robot"].gripper
+    assert gripper is not None
     lower, upper = gripper.get_control_limits()
     roundoff = np.finfo(float).eps * max(abs(lower), abs(upper))
 
@@ -109,6 +110,11 @@ def test_custom_gripper_opt_in_reserves_middle_actuator_slot(tmp_path, monkeypat
     """)
     (tmp_path / "robot.yaml").write_text("""pose:
   default: [0, 0, 0]
+constraints:
+  joint_names: [alpha, beta, grip]
+  position_limit: [[-180, 180], [-180, 180], [-10, 10]]
+  velocity_limit: [1, 2, 0.4]
+  acceleration_limit: [3, 4, 2]
 controller:
   name: pd
   pd_gains:
@@ -157,6 +163,5 @@ controller:
         .replace("</actuator>", '<motor name="grip_extra" joint="grip"/></actuator>')
         .replace('ctrl="0 .06 0"', 'ctrl="0 .06 0 0"')
     )
-    shared = Simulator(scene, robots=[RobotSpec("shared", "mini", config=config)])
     with pytest.raises(ValueError, match="also drive the configured gripper joint"):
-        create_test_controller(shared.robots["shared"], controller="pd")
+        Simulator(scene, robots=[RobotSpec("shared", "mini", config=config)])

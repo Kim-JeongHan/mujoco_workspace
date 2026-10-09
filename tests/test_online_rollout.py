@@ -36,16 +36,19 @@ class HistoryEnv:
             {"success": done and self.terminal},
         )
 
+    def close(self):
+        pass
+
 
 def setup_policy():
     policy = GaussianPolicy(2, 1, 1, hidden_dims=())
-    critic = ValueCritic(2, 0, 8, 1e-3)
+    critic = ValueCritic(2, (), 1e-3)
     with torch.no_grad():
-        policy.mean_head.weight.zero_()
-        policy.mean_head.bias.fill_(5)
+        policy.mean_head.load_state_dict(
+            {"weight": torch.zeros(1, 2), "bias": torch.full((1,), 5.0)}
+        )
         policy.log_std.fill_(-2)
-        critic.network[0].weight.fill_(1)
-        critic.network[0].bias.zero_()
+        critic.network[0].load_state_dict({"weight": torch.ones(1, 2), "bias": torch.zeros(1)})
     normalizer = Normalizer(
         np.array([10], dtype=np.float32),
         np.array([2], dtype=np.float32),
@@ -72,7 +75,9 @@ def test_collection_preserves_raw_actions_history_and_boundary_values(terminal):
     )
     assert buffer.truncated[-1, 0]
     assert buffer.terminated[1, 0].item() == terminal
-    assert all(action[0] == 1 for action in env.actions)
+    np.testing.assert_allclose(
+        np.stack(env.actions), normalizer.denormalize_action(buffer.actions[:, 0, 0].numpy())
+    )
     assert (buffer.actions > 4).all()
     torch.testing.assert_close(
         buffer.log_probs[:, 0], policy.log_prob(buffer.states[:, 0], buffer.actions[:, 0])
@@ -90,5 +95,5 @@ def test_evaluation_uses_mean_without_consuming_sampling_rng():
         env, policy, normalizer, obs_horizon=2, episodes=2, max_steps=4, seed=10
     )
     assert metrics == {"eval/success_rate": 1.0, "eval/mean_return": 2.0, "eval/mean_length": 2.0}
-    assert all(action[0] == 1 for action in env.actions)
+    assert all(action[0] == 13 for action in env.actions)
     torch.testing.assert_close(torch.get_rng_state(), rng)

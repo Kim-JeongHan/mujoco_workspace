@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 
-from mujoco_lab.behaviors.book import BookTask, center_grasp_pose
 from mujoco_lab.behaviors.bookshelf_recipe import STAGE_ORDER, BookshelfRecipe
 from mujoco_lab.behaviors.expert import Expert
 from mujoco_lab.behaviors.grasp import GraspMonitor
+from mujoco_lab.behaviors.task import BookTask
 from mujoco_lab.behaviors.trajectory import TrajectoryExecution
-from mujoco_lab.control import ControlTarget
 from mujoco_lab.planning import PlannerConfig
 from mujoco_lab.planning.collision.manipulation import ManipulationCollisionChecker
 from mujoco_lab.planning.motion import MotionPlanner, MotionRequest, grasp_pose
@@ -47,8 +46,8 @@ class BookInsertionExpert(Expert):
         self.task = task
         self.simulator, self.robot = task.simulator, task.robot
         robot = self.robot
-        if robot.gripper is None or robot.controller is None or robot.target is None:
-            raise ValueError("Trajectory expert requires a joint controller and gripper")
+        if robot.gripper is None:
+            raise ValueError("Trajectory expert requires a gripper")
         if robot.target.position.shape != (7,) or robot.control_joint_names != tuple(
             robot.state.joint_names[:7]
         ):
@@ -60,32 +59,22 @@ class BookInsertionExpert(Expert):
         self.motion = MotionPlanner(self.robot, planning)
         self.reset()
 
-    def reset(self, initial_obs: Any = None, info: dict[str, Any] | None = None) -> None:
+    def reset(self) -> None:
         data = self.simulator.data
-        self.pick_pose = center_grasp_pose(
-            data.xpos[self.task.body].copy(),
-            data.xmat[self.task.body].reshape(3, 3).copy(),
-            self.task.depth,
-        )
+        self.pick_pose = self.task.status().grasp_pose
         self.stage = 0
         self.execution = TrajectoryExecution(data.time)
         self.failed = False
         self.failure_reason = None
         self._grasp.reset()
 
-    def _hold_action(self):
-        target = self.robot.target
-        if target is None:
-            raise RuntimeError("Trajectory expert requires a control target")
-        return np.r_[target.position[:7], self.gripper.get_target()]
-
-    def act(self, obs: Any = None, *, dt: float = 0.0) -> np.ndarray:
+    def act(self, *, dt: float = 0.0) -> np.ndarray | None:
         if self.failed or self.stage >= len(self.STAGES):
-            return self._hold_action()
+            return None
         reason = self._execution_failure()
         if reason is not None:
             self.failed, self.failure_reason = True, reason
-            return self._hold_action()
+            return None
         now = self.simulator.data.time
         current = self.robot.state.snapshot().qpos[:7]
         trajectory = self.execution.trajectory
@@ -98,7 +87,7 @@ class BookInsertionExpert(Expert):
                 trajectory, reason = None, str(error)
             if trajectory is None:
                 self.failed, self.failure_reason = True, reason
-                return self._hold_action()
+                return None
             self.execution.start(trajectory, now)
         next_act, complete = self.execution.sample(
             now, current, self.recipe.waypoint_tolerance, dt=dt
@@ -107,14 +96,16 @@ class BookInsertionExpert(Expert):
             return next_act
         if now - self.execution.start_time > trajectory.duration + self.recipe.stage_timeout_s:
             self.failed, self.failure_reason = True, f"Timed out executing {self.get_stage_name()}"
+            return None
         return next_act
 
     def update(self, simulator) -> None:
         if simulator is not self.simulator:
             raise ValueError("Expert is bound to a different simulator")
-        action = self.act()
-        self.robot.update_target(ControlTarget(action[:7]), float(action[7]))
-        success = self.task.status().released_stable
+        action = self.act(dt=simulator.dt)
+        if action is not None:
+            self.robot.set_goal(action)
+        success = self.task.status().is_released_stable
         if self.failed or (self.stage >= len(self.STAGES) and success):
             simulator.stop()
 
@@ -150,7 +141,7 @@ class BookInsertionExpert(Expert):
                 > self.task.start_center[2] + self.recipe.min_lift_height_m
             )
         elif phase == "release":
-            ready = ready and not self.task.status().touching_robot
+            ready = ready and not self.task.touches_robot()
         dwell = self.recipe.stage_dwell_s
         if self.method == "heuristic" and phase not in ("close", "release"):
             dwell = 0.0

@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from mujoco_lab.control.target import ControlTarget
 from mujoco_lab.state import JointState, RobotState
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
 class Controller:

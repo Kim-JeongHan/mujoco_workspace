@@ -1,4 +1,4 @@
-"""Time-based joint trajectories and bundled robot demo references."""
+"""Time and sample joint paths with configured derivative limits."""
 
 from typing import Annotated
 
@@ -6,57 +6,11 @@ import numpy as np
 from pydantic import Field
 from scipy.interpolate import CubicHermiteSpline, PchipInterpolator
 
-from mujoco_lab.control.target import ControlTarget
+from mujoco_lab.trajectory_generation.interpolation import min_jerk
+from mujoco_lab.trajectory_generation.target import ControlTarget
 
-CIRCLE_RADIUS = 0.025
-CIRCLE_PERIOD = 5.0
-LEAD_IN = 2.0
-
-# A plain pair: fractions of the configured velocity and acceleration limits.
+# Fractions of configured velocity and acceleration limits.
 type MotionRatio = tuple[Annotated[float, Field(gt=0, le=1)], Annotated[float, Field(gt=0, le=1)]]
-
-
-def min_jerk(
-    start: ControlTarget,
-    end: ControlTarget,
-    elapsed: float,
-    duration: float,
-) -> ControlTarget:
-    """Sample a minimum-jerk segment with position, velocity, and acceleration boundaries.
-
-    Times are in seconds; elapsed is clamped to the segment's endpoints. Missing
-    derivatives are zero. Replan from the previous segment's sampled target to
-    preserve position, velocity, and acceleration when a new goal arrives.
-    This interpolation does not impose velocity, acceleration, or joint limits.
-    """
-    if not np.isfinite(duration) or duration <= 0 or not np.isfinite(elapsed):
-        raise ValueError("duration must be finite and positive; elapsed must be finite")
-    if start.position.shape != end.position.shape:
-        raise ValueError("start and end must have matching position shapes")
-
-    def derivatives(target: ControlTarget) -> tuple[np.ndarray, np.ndarray]:
-        velocity = np.zeros_like(target.position) if target.velocity is None else target.velocity
-        acceleration = (
-            np.zeros_like(target.position) if target.acceleration is None else target.acceleration
-        )
-        return velocity, acceleration
-
-    start_velocity, start_acceleration = derivatives(start)
-    end_velocity, end_acceleration = derivatives(end)
-    u = float(np.clip(elapsed / duration, 0.0, 1.0))
-    p = start.position
-    v = start_velocity * duration
-    a = start_acceleration * duration**2 / 2
-    position_delta = end.position - p - v - a
-    velocity_delta = end_velocity * duration - v - 2 * a
-    acceleration_delta = end_acceleration * duration**2 - 2 * a
-    c3 = 10 * position_delta - 4 * velocity_delta + acceleration_delta / 2
-    c4 = -15 * position_delta + 7 * velocity_delta - acceleration_delta
-    c5 = 6 * position_delta - 3 * velocity_delta + acceleration_delta / 2
-    position = p + u * (v + u * (a + u * (c3 + u * (c4 + u * c5))))
-    velocity = (v + u * (2 * a + u * (3 * c3 + u * (4 * c4 + u * 5 * c5)))) / duration
-    acceleration = (2 * a + u * (6 * c3 + u * (12 * c4 + u * 20 * c5))) / duration**2
-    return ControlTarget(position, velocity, acceleration)
 
 
 class JointTrajectory:
@@ -174,10 +128,10 @@ class JointTrajectory:
             raise ValueError("elapsed must be finite")
         if elapsed <= 0:
             position = self.path[0]
-            return ControlTarget(position, np.zeros_like(position), np.zeros_like(position))
+            return ControlTarget(position)
         if elapsed >= self.duration:
             position = self.path[-1]
-            return ControlTarget(position, np.zeros_like(position), np.zeros_like(position))
+            return ControlTarget(position)
         if self._coefficients is not None:
             index = int(np.searchsorted(self._knot_times, elapsed, side="right") - 1)
             local = elapsed - self._knot_times[index]
@@ -195,73 +149,3 @@ class JointTrajectory:
             elapsed - self.waypoint_times[index],
             duration,
         )
-
-
-def osc_circle_target(
-    time: float,
-    *,
-    start_time: float,
-    start_position: np.ndarray,
-    base_position: np.ndarray,
-    base_rotation: np.ndarray,
-    center: np.ndarray | None = None,
-    radius: float = CIRCLE_RADIUS,
-    period: float = CIRCLE_PERIOD,
-    lead_in: float = LEAD_IN,
-) -> ControlTarget:
-    """Return the Forte lead-in and circle in world coordinates."""
-
-    elapsed = time - start_time
-    omega = 2.0 * np.pi / period
-    if center is None:
-        center = base_rotation.T @ (start_position - base_position)
-
-    def circle(phase):
-        angle = omega * phase
-        offset = np.array([0.0, np.sin(angle), np.cos(angle)])
-        tangent = np.array([0.0, np.cos(angle), -np.sin(angle)])
-        return ControlTarget(
-            base_position + base_rotation @ (center + radius * offset),
-            base_rotation @ (radius * omega * tangent),
-            base_rotation @ (-radius * omega**2 * offset),
-        )
-
-    if elapsed >= lead_in:
-        return circle(elapsed - lead_in)
-    entry = circle(0.0).position
-    return min_jerk(ControlTarget(start_position), ControlTarget(entry), elapsed, lead_in)
-
-
-def demo_target_updater(simulator, modes: dict[str, str]):
-    """Build one explicit-time reference updater for the OSC circle demo.
-
-    The start epoch and controlled poses are captured now. Simulator.reset restores
-    the same initial time and pose, so this updater replays from the beginning.
-    """
-    from functools import partial
-
-    epoch = simulator.data.time
-    trajectories = {}
-    for name, mode in modes.items():
-        if mode != "osc":
-            raise ValueError(f"No demo motion is defined for controller {mode!r}")
-        robot = simulator.robots[name]
-        frame = robot.config.controller.frame
-        base = simulator.data.body(robot.state.root_body_id)
-        start = robot.state.get_frame_position(frame).copy()
-        rotation = base.xmat.reshape(3, 3).copy()
-        center = rotation.T @ (start - base.xpos)
-        trajectories[name] = partial(
-            osc_circle_target,
-            start_time=epoch,
-            start_position=start,
-            base_position=base.xpos.copy(),
-            base_rotation=rotation,
-            center=center,
-        )
-
-    def update(sim):
-        for name, trajectory in trajectories.items():
-            sim.robots[name].update_target(trajectory(sim.data.time))
-
-    return update

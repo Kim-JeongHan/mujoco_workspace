@@ -169,7 +169,7 @@ class SimulatorManager:
             while not simulator._stop_requested and viewer.is_running():
                 started = time.monotonic()
                 with viewer.lock():
-                    simulator.physics_step()
+                    simulator._physics_step()
                     if draw is not None:
                         scene = viewer.user_scn
                         if scene is None:
@@ -241,7 +241,7 @@ class SimulatorManager:
                         break
                     with viewer.lock():
                         if recorder is not None:
-                            simulator.physics_step()
+                            simulator._physics_step()
                             completed += 1
                             recorder.record_due(_copy_camera(viewer.cam))
                         if draw is not None:
@@ -287,7 +287,7 @@ class SimulatorManager:
                 for _ in range(steps):
                     if simulator._stop_requested:
                         break
-                    simulator.physics_step()
+                    simulator._physics_step()
                     recorder.record_due(camera)
             return Path(output).expanduser().resolve()
 

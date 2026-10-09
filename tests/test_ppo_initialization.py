@@ -5,15 +5,15 @@ import pytest
 import torch
 
 from mujoco_lab.learning.checkpoint import save_checkpoint
-from mujoco_lab.learning.config.config import TrainConfig
+from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.learning.trainers.train_ppo import initialize_actor, initialize_actor_critic
 
 
-@pytest.mark.parametrize("hidden_dims", [(), (16, 8)])
-def test_initialize_actor_from_bc_checkpoint(tmp_path, hidden_dims):
-    config = TrainConfig(
+def test_initialize_actor_from_bc_checkpoint(tmp_path):
+    hidden_dims = (16, 8)
+    config = BCTrainConfig(
         policy_type="mse",
         hidden_dims=hidden_dims,
         obs_horizon=2,
@@ -30,7 +30,9 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path, hidden_dims):
     path = tmp_path / "bc.pt"
     save_checkpoint(path, bc, normalizer, config, optimizer_step=12)
 
-    actor, critic, restored, metadata = initialize_actor_critic(path, initial_log_std=-1.5)
+    actor, critic, restored, metadata = initialize_actor_critic(
+        path, initial_log_std=-1.5, critic_hidden_dims=(12, 5)
+    )
     state = torch.randn(4, 6)
     torch.testing.assert_close(actor(state).mean, bc(state), rtol=0, atol=0)
     torch.testing.assert_close(actor.log_std, torch.full((3, 2), -1.5))
@@ -44,6 +46,8 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path, hidden_dims):
     actor_storage = {parameter.data_ptr() for parameter in actor.parameters()}
     assert all(parameter.data_ptr() not in actor_storage for parameter in critic.parameters())
     assert next(critic.parameters()).device == next(actor.parameters()).device
+    assert critic.network[0].out_features == 12
+    assert critic.network[2].out_features == 5
     values = critic(state)
     assert values.shape == (4,)
     assert critic(state[:1]).shape == (1,)
@@ -54,7 +58,7 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path, hidden_dims):
 
 
 def test_initialize_actor_rejects_flow_checkpoint(tmp_path):
-    config = TrainConfig(policy_type="flow", hidden_dims=(8,), obs_horizon=1, chunk_size=1)
+    config = BCTrainConfig(policy_type="flow", hidden_dims=(8,), obs_horizon=1, chunk_size=1)
     bc = build_policy("flow", state_dim=3, action_dim=2, chunk_size=1, hidden_dims=(8,))
     normalizer = Normalizer(
         state_mean=np.zeros(3, dtype=np.float32),

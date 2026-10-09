@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from numbers import Integral
 from typing import Any
 
 import gymnasium as gym
-import mujoco
 import numpy as np
 from gymnasium import spaces
-
-from mujoco_lab.control import ControlTarget, min_jerk
 
 
 class JointActionEnv(gym.Env):
     """Apply arm joint and gripper opening-width targets in robot insertion order.
 
-    Arm targets in next_act refer to the end of the upcoming action_dt interval.
-    Each segment starts from the current commanded act, retaining its position,
-    velocity, and acceleration. Gripper width commands are applied immediately.
+    Policy actions replace position goals without resetting the reference.
+    Each Robot owns its reference, advanced by Simulator before every control tick.
+    Gripper width commands are applied immediately.
     Success is checked after every physics tick, allowing an action to finish early.
     """
 
@@ -37,13 +33,10 @@ class JointActionEnv(gym.Env):
         self.model = self.simulator.model
         self.data = self.simulator.data
         self.max_steps = max_steps
-        if (
-            isinstance(physics_steps_per_action, bool)
-            or not isinstance(physics_steps_per_action, Integral)
-            or physics_steps_per_action <= 0
-        ):
-            raise ValueError("physics_steps_per_action must be a positive integer")
+
         self.physics_steps_per_action = int(physics_steps_per_action)
+        if self.physics_steps_per_action <= 0:
+            raise ValueError("physics_steps_per_action must be positive")
         self._steps = 0
         self._done = False
         self._grasp_sites = {robot.name: robot.state.site_id("grasp") for robot in self.robots}
@@ -65,11 +58,9 @@ class JointActionEnv(gym.Env):
                 highs.append(gripper_limits[1])
             self._action_slices[robot.name] = slice(start, len(lows))
 
-        self._action_low = np.asarray(lows, dtype=float)
-        self._action_high = np.asarray(highs, dtype=float)
         self.action_space = spaces.Box(
-            low=self._action_low.astype(np.float32),
-            high=self._action_high.astype(np.float32),
+            low=np.asarray(lows, dtype=np.float32),
+            high=np.asarray(highs, dtype=np.float32),
         )
 
     @property
@@ -92,59 +83,25 @@ class JointActionEnv(gym.Env):
         return self.simulator.dt * self.physics_steps_per_action
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
-        """Advance from the current commanded act toward next_act over action_dt."""
-        next_act = action
+        """Advance an arm reference with bounded derivatives for action_dt seconds."""
         if self._done:
             raise RuntimeError("Reset the environment before stepping after an episode ends")
-        if next_act.shape != self.action_space.shape or not np.isfinite(next_act).all():
-            raise ValueError(f"Action must contain {self.action_space.shape[0]} finite targets")
-        low, high = self._action_low, self._action_high
-        if np.any(next_act < low - 1e-6) or np.any(next_act > high + 1e-6):
-            raise ValueError("Action is outside the robot joint or gripper limits")
-        next_act = np.clip(next_act, low, high)
-        orders = {
-            robot.name: robot.get_control_target_order(self._arm_names[robot.name])
-            for robot in self.robots
-        }
+        if action.shape != self.action_space.shape:
+            raise ValueError("Action must match the environment action shape")
         start_time = float(self.data.time)
-        transit = self.action_dt
-        arm_segments = {}
         for robot in self.robots:
-            block = next_act[self._action_slices[robot.name]]
-            names = self._arm_names[robot.name]
-            if names:
-                arm_pos = block[: len(names)]
-                if robot.target is None:
-                    raise ValueError("Configure a joint-target controller before stepping")
-                arm_segments[robot.name] = (
-                    robot.target,
-                    ControlTarget(arm_pos[orders[robot.name]]),
-                )
-            if robot.gripper is not None:
-                gripper_width = block[len(names)]
-                robot.gripper.set_target(float(gripper_width))
-
-        def update_arm_targets():
-            elapsed = float(self.data.time) - start_time
-            for robot in self.robots:
-                if robot.name in arm_segments:
-                    act, next_act = arm_segments[robot.name]
-                    robot.update_target(min_jerk(act, next_act, elapsed, transit))
+            robot.set_goal(
+                action[self._action_slices[robot.name]], joint_names=self._arm_names[robot.name]
+            )
 
         terminated = False
         physics_steps = 0
         for _ in range(self.physics_steps_per_action):
-            update_arm_targets()
             self.simulator.run_steps(1)
             physics_steps += 1
-            mujoco.mj_forward(self.model, self.data)
-            for robot in self.robots:
-                robot.update_state()
             if self._is_success():
                 terminated = True
                 break
-        # Carry the target at the exact action endpoint into the next segment.
-        update_arm_targets()
         self._steps += 1
         truncated = self._steps >= self.max_steps and not terminated
         self._done = terminated or truncated

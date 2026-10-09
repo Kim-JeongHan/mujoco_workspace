@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
 
@@ -30,15 +29,6 @@ def capture_frame(simulator: Simulator) -> dict[str, np.ndarray]:
         "mocap_pos": data.mocap_pos.copy(),
         "mocap_quat": data.mocap_quat.copy(),
     }
-
-
-def require_width_actions(metadata: Mapping[str, Any]) -> None:
-    """Reject legacy per-finger joint targets before training or policy execution."""
-    if metadata.get("gripper_action_units") != "opening_width_m":
-        raise ValueError(
-            "Gripper actions must use total opening width in meters. "
-            "Convert legacy joint-position actions or recollect the dataset."
-        )
 
 
 def capture_metadata(
