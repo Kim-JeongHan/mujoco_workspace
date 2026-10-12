@@ -83,9 +83,9 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
     if expected_scene is not None and scene_name != expected_scene:
         raise ValueError(f"Expected {expected_scene} checkpoint, recorded scene is {scene_name}")
     architecture = metadata["architecture"]
-    flow_num_steps = metadata["train_config"]["flow_num_steps"]
-    if not isinstance(flow_num_steps, int) or flow_num_steps <= 0:
-        raise ValueError("flow_num_steps must be a positive integer")
+    sampling_num_steps = metadata["train_config"]["sampling_num_steps"]
+    if not isinstance(sampling_num_steps, int) or sampling_num_steps <= 0:
+        raise ValueError("sampling_num_steps must be a positive integer")
     env, scene = create_rollout_env(metadata, rollout)
     model.to(device)
 
@@ -103,7 +103,7 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
     settings["output_dir"] = str(config.output_dir)
     settings["effective"] = {
         "device": str(device),
-        "flow_num_steps": flow_num_steps,
+        "sampling_num_steps": sampling_num_steps,
         **scene,
         "env_seeds": eval_seeds,
         "seed_overlaps": overlaps,
@@ -138,7 +138,7 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
                 model,
                 normalizer,
                 metadata,
-                flow_num_steps=flow_num_steps,
+                sampling_num_steps=sampling_num_steps,
                 on_episode=record,
                 video_dir=run_dir / "videos",
             )

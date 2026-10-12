@@ -23,7 +23,13 @@ dependencies = [
 mujoco-lab = "mujoco_lab.cli:main"
 
 [project.optional-dependencies]
-learning = ["gymnasium", "python-dotenv>=1.0", "torch==2.14.0", "wandb[media]"]
+learning = [
+    "diffusers>=0.41.0",
+    "gymnasium",
+    "python-dotenv>=1.0",
+    "torch==2.14.0",
+    "wandb[media]",
+]
 viewer = [
     "trimesh>=4,<6",
     "viser>=1.0,<2",

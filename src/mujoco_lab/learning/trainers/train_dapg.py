@@ -225,7 +225,7 @@ def evaluate_training_policy(
             state.actor,
             state.normalizer,
             state.metadata,
-            flow_num_steps=1,
+            sampling_num_steps=1,
             on_episode=record,
             video_dir=output_dir / "videos",
         )

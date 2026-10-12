@@ -96,7 +96,9 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
             video_height=48,
         ),
         torch.device("cpu"),
-    ).evaluate(model, stats, metadata, flow_num_steps=1, video_dir=video_dir, on_episode=on_episode)
+    ).evaluate(
+        model, stats, metadata, sampling_num_steps=1, video_dir=video_dir, on_episode=on_episode
+    )
 
 
 def test_records_first_seeds_and_closes_before_callback(tmp_path, monkeypatch):

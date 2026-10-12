@@ -12,6 +12,7 @@ import torch
 from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.policies.base import BasePolicy
+from mujoco_lab.learning.policies.diffusion import DiffusionPolicy
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.learning.policies.flow import FlowMatchingPolicy
 
@@ -68,6 +69,16 @@ def checkpoint_metadata(
     }
     if isinstance(model, FlowMatchingPolicy):
         architecture["flow_time_embed_dim"] = model.time_embed_dim
+    elif isinstance(model, DiffusionPolicy):
+        architecture.update(
+            diffusion_down_dims=list(model.denoiser.down_dims),
+            diffusion_time_embed_dim=model.denoiser.time_embed_dim,
+            diffusion_scheduler_config={
+                key: value
+                for key, value in model.scheduler.config.items()
+                if not key.startswith("_")
+            },
+        )
     settings = asdict(config)
     settings["data_dir"] = str(config.data_dir)
     settings["output_dir"] = str(config.output_dir)
@@ -83,11 +94,15 @@ def load_checkpoint(path: str | Path) -> tuple[BasePolicy, Normalizer, dict[str,
     """Restore policy and normalization on CPU with ``weights_only=True``."""
     payload = torch.load(path, map_location="cpu", weights_only=True)
     architecture = dict(payload["architecture"])
-    policy_options = (
-        {"flow_time_embed_dim": architecture["flow_time_embed_dim"]}
-        if architecture["policy_type"] == "flow"
-        else {}
-    )
+    policy_options: dict[str, Any] = {}
+    if architecture["policy_type"] == "flow":
+        policy_options["flow_time_embed_dim"] = architecture["flow_time_embed_dim"]
+    elif architecture["policy_type"] == "diffusion":
+        policy_options.update(
+            diffusion_down_dims=tuple(architecture["diffusion_down_dims"]),
+            diffusion_time_embed_dim=architecture["diffusion_time_embed_dim"],
+            diffusion_scheduler_config=architecture["diffusion_scheduler_config"],
+        )
     model = build_policy(
         architecture["policy_type"],
         state_dim=architecture["state_dim"],

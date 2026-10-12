@@ -140,7 +140,7 @@ def main() -> None:
                     model,
                     normalizer,
                     metadata,
-                    flow_num_steps=config.flow_num_steps,
+                    sampling_num_steps=config.sampling_num_steps,
                     on_episode=record,
                     video_dir=step_dir / "videos",
                 )

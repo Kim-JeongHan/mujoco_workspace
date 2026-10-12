@@ -96,7 +96,7 @@ def evaluate(env, model, normalizer, metadata, *, num_episodes=1, seed=50, max_s
             video_episodes=0,
         ),
         torch.device("cpu"),
-    ).evaluate(model, normalizer, metadata, flow_num_steps=3)
+    ).evaluate(model, normalizer, metadata, sampling_num_steps=3)
 
 
 def test_mse_history_padding_chunk_alignment_raw_goals_and_success(tmp_path):
@@ -198,7 +198,7 @@ def test_evaluator_restores_model_and_rng_when_step_raises(tmp_path):
     model.train()
     rng = torch.random.get_rng_state().clone()
     with pytest.raises(RuntimeError, match="step failed"):
-        evaluator.evaluate(model, normalizer, metadata, flow_num_steps=3)
+        evaluator.evaluate(model, normalizer, metadata, sampling_num_steps=3)
     assert model.training
     torch.testing.assert_close(torch.random.get_rng_state(), rng)
 
@@ -213,7 +213,7 @@ def test_seconds_limit_uses_environment_cadence_and_stops_inside_chunk(
         env,
         EvaluationConfig(num_episodes=1, max_seconds=0.025, video_episodes=0),
         torch.device("cpu"),
-    ).evaluate(model, stats, metadata, flow_num_steps=1)
+    ).evaluate(model, stats, metadata, sampling_num_steps=1)
     assert rows[0]["steps"] == expected_steps
     assert rows[0]["sim_seconds"] == pytest.approx(expected_steps * action_dt)
     assert summary["timeouts"] == 1

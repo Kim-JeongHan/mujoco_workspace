@@ -109,7 +109,7 @@ class PolicyEvaluator:
         normalizer: Normalizer,
         metadata: Mapping[str, Any],
         *,
-        flow_num_steps: int,
+        sampling_num_steps: int,
         on_episode: Callable[[dict[str, Any]], None] | None = None,
         video_dir: Path | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -121,7 +121,7 @@ class PolicyEvaluator:
             with torch.inference_mode():
                 for index in range(self.config.num_episodes):
                     row = self._run_episode(
-                        model, normalizer, metadata, index, flow_num_steps, video_dir
+                        model, normalizer, metadata, index, sampling_num_steps, video_dir
                     )
                     episodes.append(row)
                     if on_episode is not None:
@@ -135,7 +135,7 @@ class PolicyEvaluator:
         model: BasePolicy,
         normalizer: Normalizer,
         history: deque[np.ndarray],
-        flow_num_steps: int,
+        sampling_num_steps: int,
     ) -> np.ndarray:
         """Normalize observation history and return physical action targets."""
         normalized = np.stack([normalizer.normalize_state(frame) for frame in history]).reshape(-1)
@@ -145,7 +145,7 @@ class PolicyEvaluator:
         chunk = (
             model(state).mean
             if isinstance(model, GaussianPolicy)
-            else model.sample_actions(state, num_steps=flow_num_steps)
+            else model.sample_actions(state, num_steps=sampling_num_steps)
         )
         predicted = chunk[0].detach().cpu().numpy()
         return normalizer.denormalize_action(predicted)
@@ -177,7 +177,7 @@ class PolicyEvaluator:
         normalizer: Normalizer,
         metadata: Mapping[str, Any],
         index: int,
-        flow_num_steps: int,
+        sampling_num_steps: int,
         video_dir: Path | None,
     ) -> dict[str, Any]:
         """Run one fresh episode using the environment's physics timestep."""
@@ -208,7 +208,7 @@ class PolicyEvaluator:
             with torch.random.fork_rng():
                 torch.manual_seed(env_seed)
                 while steps < max_steps:
-                    physical = self._predict_actions(model, normalizer, history, flow_num_steps)
+                    physical = self._predict_actions(model, normalizer, history, sampling_num_steps)
                     for next_act in physical[:execution_horizon]:
                         next_obs, reward, terminated, truncated, info = env.step(next_act)
                         if progress is not None:

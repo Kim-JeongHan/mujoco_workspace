@@ -40,11 +40,20 @@ def metadata():
     }
 
 
-def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(tmp_path, monkeypatch):
+@pytest.mark.parametrize("policy_type", ["mse", "diffusion"])
+def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(
+    tmp_path, monkeypatch, policy_type
+):
     rollout = EvaluationConfig(num_episodes=1, xy_range=None, max_seconds=0.02, video_episodes=1)
     env, _ = create_rollout_env(metadata(), rollout)
     model = build_policy(
-        "mse", state_dim=48, action_dim=env.action_space.shape[0], chunk_size=1, hidden_dims=()
+        policy_type,
+        state_dim=48,
+        action_dim=env.action_space.shape[0],
+        chunk_size=1,
+        hidden_dims=(),
+        diffusion_down_dims=(16,),
+        diffusion_time_embed_dim=16,
     )
     with torch.no_grad():
         for parameter in model.parameters():
@@ -75,7 +84,7 @@ def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(tmp_path, m
 
     monkeypatch.setattr("mujoco_lab.learning.evaluation.evaluator.VideoRecorder", Recorder)
     rows, summary = PolicyEvaluator(env, rollout, torch.device("cpu")).evaluate(
-        model, normalizer, metadata(), flow_num_steps=1, video_dir=tmp_path
+        model, normalizer, metadata(), sampling_num_steps=1, video_dir=tmp_path
     )
     np.testing.assert_allclose(lookats[0], env.camera_lookat)
     assert rows[0]["steps"] == 2 and rows[0]["sim_seconds"] == pytest.approx(0.02)

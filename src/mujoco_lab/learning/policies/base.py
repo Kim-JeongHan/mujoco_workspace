@@ -46,7 +46,7 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         self,
         state: torch.Tensor,
         *,
-        num_steps: int = 10,  # only applicable for flow policy
+        num_steps: int = 10,
     ) -> torch.Tensor:
         """Generate an action chunk from a batch of states.
 

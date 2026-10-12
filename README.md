@@ -69,7 +69,27 @@ uv run python -m mujoco_lab.learning.evaluate_cube --checkpoint <PATH>
 uv run python -m mujoco_lab.learning.evaluate_book --checkpoint <PATH>
 ```
 
-See [`TrainConfig`, `EvalConfig`, and `RolloutConfig`](src/mujoco_lab/learning/config/config.py) for settings.
+BC supports `--policy-type mse`, `flow`, and `diffusion`. Diffusion uses an
+observation-conditioned temporal U-Net, epsilon-prediction training, and DDIM
+sampling. It shares the dataset, normalization, EMA, and action-chunk execution
+pipeline with the other BC policies.
+
+```bash
+uv run python -m mujoco_lab.learning.train --policy-type diffusion \
+  --data-dir data/forte_mixed_1 --run-name forte-diffusion-cube1 \
+  --diffusion-num-train-timesteps 100 --sampling-num-steps 20
+```
+
+`sampling_num_steps` controls Flow Euler steps or Diffusion DDIM steps. Diffusion
+defaults to a cosine noise schedule, U-Net widths `(128, 256, 512)`, observation
+history 2, action chunk 16, and execution horizon 4. DDIM uses fresh initial
+Gaussian noise and `eta=0`; standardized actions are not clipped to `[-1, 1]`.
+Checkpoints preserve the U-Net architecture and complete scheduler settings;
+evaluation uses the saved sampling step count. Diffusion validation loss measures
+noise prediction, while rollout success measures physical task performance.
+
+See [`BCTrainConfig` and `BCEvalConfig`](src/mujoco_lab/learning/config/bc.py) and
+[`EvaluationConfig`](src/mujoco_lab/learning/config/evaluation.py) for settings.
 
 Run from the project root. Training and evaluation load W&B credentials from `.env`:
 

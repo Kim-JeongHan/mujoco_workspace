@@ -47,7 +47,7 @@ def test_normalizer_applies_to_each_raw_frame_before_flattening_without_mutation
     np.testing.assert_array_equal(episode.actions, before_actions)
 
 
-@pytest.mark.parametrize("policy_type", ["mse", "flow"])
+@pytest.mark.parametrize("policy_type", ["mse", "flow", "diffusion"])
 def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     rng = np.random.default_rng(7)
@@ -77,6 +77,8 @@ def test_one_epoch_bc_uses_flattened_history_and_raw_frame_stats(policy_type, mo
         execution_horizon=1,
         action_execution_hz=500,
         hidden_dims=(16,),
+        diffusion_down_dims=(16, 32),
+        diffusion_time_embed_dim=16,
         batch_size=4,
         num_epochs=1,
         log_interval_steps=100,

@@ -33,7 +33,7 @@ def run_training(
     rescanning observation and action arrays. Inference checkpoints are saved separately;
     State statistics are fitted on raw training frames and applied to each frame before
     history flattening. An optional callback evaluates the current in-memory model.
-    Flow validation loss is a sampled flow-matching objective, not task success.
+    Flow and Diffusion validation losses sample their training objectives, not task success.
     Callers supplying episodes directly must validate their arrays, observation metadata,
     and cadence first.
     """
@@ -41,6 +41,13 @@ def run_training(
         raise ValueError("num_epochs must be positive")
     if not 1 <= config.execution_horizon <= config.chunk_size:
         raise ValueError("execution_horizon must be between 1 and chunk_size")
+    if config.sampling_num_steps <= 0:
+        raise ValueError("sampling_num_steps must be positive")
+    if (
+        config.policy_type == "diffusion"
+        and config.sampling_num_steps > config.diffusion_num_train_timesteps
+    ):
+        raise ValueError("Diffusion sampling steps must not exceed training timesteps")
     if config.ema_decay is not None and not 0 <= config.ema_decay < 1:
         raise ValueError("ema_decay must be None or in [0, 1)")
     if not train_episodes:
@@ -87,6 +94,10 @@ def run_training(
         chunk_size=config.chunk_size,
         hidden_dims=config.hidden_dims,
         flow_time_embed_dim=config.flow_time_embed_dim,
+        diffusion_down_dims=config.diffusion_down_dims,
+        diffusion_time_embed_dim=config.diffusion_time_embed_dim,
+        diffusion_num_train_timesteps=config.diffusion_num_train_timesteps,
+        diffusion_beta_schedule=config.diffusion_beta_schedule,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay

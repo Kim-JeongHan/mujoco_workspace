@@ -110,7 +110,8 @@ def test_training_split_preserves_seeded_random_split_order(
 
 
 @pytest.mark.parametrize("ema_decay", [None, 0.5])
-def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay):
+@pytest.mark.parametrize("policy_type", ["flow", "diffusion"])
+def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay, policy_type):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     demonstration = Episode(
         states=np.arange(6, dtype=np.float32).reshape(-1, 1),
@@ -122,8 +123,10 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
     )
     demonstration.validate_training_data()
     config = BCTrainConfig(
-        policy_type="flow",
+        policy_type=policy_type,
         hidden_dims=(8,),
+        diffusion_down_dims=(16,),
+        diffusion_time_embed_dim=16,
         obs_horizon=1,
         chunk_size=1,
         execution_horizon=1,
@@ -143,7 +146,7 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay)
             TinyEnv(),
             EvaluationConfig(num_episodes=1, seed=100, max_seconds=0.002, video_episodes=0),
             torch.device("cpu"),
-        ).evaluate(model, normalizer, metadata, flow_num_steps=2)
+        ).evaluate(model, normalizer, metadata, sampling_num_steps=2)
         assert model.training == (ema_decay is None)
         observed.append((step, rows[0]["env_seed"], summary["attempted"]))
 

@@ -17,6 +17,11 @@ from mujoco_lab.learning.trainers.train_bc import run_training
         ({"execution_horizon": 0}, "execution_horizon"),
         ({"execution_horizon": 17}, "execution_horizon"),
         ({"num_epochs": 0}, "num_epochs"),
+        ({"sampling_num_steps": 0}, "sampling_num_steps"),
+        (
+            {"policy_type": "diffusion", "sampling_num_steps": 101},
+            "Diffusion sampling steps",
+        ),
     ],
 )
 def test_training_rejects_project_invariants(overrides, field):

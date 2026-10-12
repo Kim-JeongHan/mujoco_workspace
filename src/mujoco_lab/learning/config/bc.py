@@ -19,15 +19,19 @@ class BCTrainConfig:
     robot: RobotName = "forte"
 
     # Policy architecture and observation/action timing.
-    policy_type: Literal["mse", "flow"] = "mse"
+    policy_type: Literal["mse", "flow", "diffusion"] = "mse"
     hidden_dims: tuple[int, ...] = (512, 512, 512)
     obs_horizon: int = 2  # Observation frames per policy input.
     chunk_size: int = 16  # Actions predicted per policy output.
     execution_horizon: int = 4  # Actions before replanning; 100 Hz / 4 = 25 Hz inference.
     simulation_hz: float = 500.0  # Physics and controller evaluations per simulated second.
     action_execution_hz: float = 100.0  # 500 Hz / 100 Hz = 5 physics steps/action.
-    flow_num_steps: int = 20  # Euler inference steps for the flow policy.
+    sampling_num_steps: int = 20  # Euler steps for Flow or DDIM steps for Diffusion.
     flow_time_embed_dim: int = 256  # Sinusoidal time feature width.
+    diffusion_down_dims: tuple[int, ...] = (128, 256, 512)
+    diffusion_time_embed_dim: int = 256
+    diffusion_num_train_timesteps: int = 100  # Training noise levels, separate from sampling steps.
+    diffusion_beta_schedule: Literal["linear", "squaredcos_cap_v2"] = "squaredcos_cap_v2"
 
     # Optimization.
     batch_size: int = 128
