@@ -38,7 +38,10 @@ class TinyEnv:
 
 
 @pytest.mark.parametrize("ratios", [(0.0, 0.0), (0.25, 0.0), (0.0, 0.25), (0.25, 0.25)])
-def test_training_split_preserves_seeded_random_split_order(tmp_path, monkeypatch, ratios):
+@pytest.mark.parametrize("eval_interval_steps", [0, 30_000])
+def test_training_split_preserves_seeded_random_split_order(
+    tmp_path, monkeypatch, ratios, eval_interval_steps
+):
     from mujoco_lab.learning import train as cli
 
     config = BCTrainConfig(
@@ -46,7 +49,7 @@ def test_training_split_preserves_seeded_random_split_order(tmp_path, monkeypatc
         validation_ratio=ratios[0],
         test_ratio=ratios[1],
         action_execution_hz=500,
-        eval_interval_steps=0,
+        eval_interval_steps=eval_interval_steps,
         seed=7,
     )
     demonstrations = [
@@ -81,12 +84,20 @@ def test_training_split_preserves_seeded_random_split_order(tmp_path, monkeypatc
     def stop_before_training(*args, **kwargs):
         raise RuntimeError("split captured")
 
+    def capture_rollout_env(metadata, rollout):
+        captured["evaluation_metadata"] = metadata
+        assert metadata["architecture"]["physics_steps_per_action"] == 1
+        assert rollout is config.evaluation
+        return object(), {}
+
+    monkeypatch.setattr(cli, "create_rollout_env", capture_rollout_env)
     monkeypatch.setattr(cli.tyro, "cli", lambda *args, **kwargs: config)
     monkeypatch.setattr(cli, "load_episodes", lambda _path: demonstrations)
     monkeypatch.setattr(cli, "Logger", CaptureLogger)
     monkeypatch.setattr(cli, "run_training", stop_before_training)
     with pytest.raises(RuntimeError, match="split captured"):
         cli.main()
+    assert ("evaluation_metadata" in captured) == (eval_interval_steps > 0)
     validation_count = round(8 * ratios[0])
     test_count = round(8 * ratios[1])
     reference = torch.utils.data.random_split(

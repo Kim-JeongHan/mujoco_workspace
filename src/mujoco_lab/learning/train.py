@@ -71,7 +71,11 @@ def main() -> None:
     eval_env = None
     if config.eval_interval_steps > 0:
         eval_env, _ = create_rollout_env(
-            {"train_config": settings, "dataset_metadata": dataset_metadata},
+            {
+                "architecture": {"physics_steps_per_action": repeat},
+                "train_config": settings,
+                "dataset_metadata": dataset_metadata,
+            },
             rollout,
         )
     config.output_dir.mkdir(parents=True, exist_ok=True)
