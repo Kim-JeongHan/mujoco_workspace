@@ -22,9 +22,7 @@ from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout.collector import iter_episodes
 from mujoco_lab.learning.timing import max_steps_for_seconds, physics_steps_per_action
 from mujoco_lab.planning import (
-    PRMConfig,
-    RRTConfig,
-    RRTConnectConfig,
+    PlannerConfig,
     default_planning,
 )
 from mujoco_lab.utils import Logger
@@ -51,9 +49,7 @@ class Config:
     method: Literal["heuristic", "sampling"] = "heuristic"  # Expert execution method.
     # Maximum simulated duration per attempt; None uses 60 s heuristic or 180 s sampling.
     max_seconds: float | None = None
-    planning: RRTConnectConfig | RRTConfig | PRMConfig = field(
-        default_factory=default_planning
-    )  # Sampling planner settings.
+    planning: PlannerConfig = field(default_factory=default_planning)  # Sampling planner settings.
 
     @property
     def simulation_dt(self) -> float:

@@ -44,6 +44,19 @@ uv run python -m mujoco_lab.learning.replay --path <PATH>
 
 The [cube](src/mujoco_lab/learning/collect_cube.py) and [book](src/mujoco_lab/learning/collect_book.py) collectors save NPZ episodes and support resuming. Training uses successful episodes.
 
+Cube sampling collection supports the shared planner configurations, including RRT*:
+
+```bash
+uv run python -m mujoco_lab.learning.collect_cube --method sampling --cubes 4 \
+  --count 1000 --seed 30000 --output-dir data/forte_cube4_rrt_star_1000 \
+  planning:rrt-star-config --planning.max-iterations 1000 \
+  --planning.step-size 0.2 --planning.goal-tolerance 0.04 --planning.seed 7 \
+  --planning.no-return-first-solution
+```
+
+`--count` includes failed attempts. Disabling `return_first_solution` lets RRT*
+continue optimizing within its iteration budget after finding a route.
+
 ## Download a dataset
 
 Install the [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/guides/cli) and set your token in the project-root `.env` file:

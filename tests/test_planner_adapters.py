@@ -77,6 +77,7 @@ def test_query_returns_none_for_failed_or_empty_search(monkeypatch, nodes, confi
         RRTConnectConfig(max_iterations=20, goal_tolerance=2.0, seed=7),
         RRTConfig(max_iterations=20, goal_bias=1.0, seed=7),
         RRTStarConfig(max_iterations=20, goal_bias=1.0, seed=7),
+        RRTStarConfig(max_iterations=20, goal_bias=1.0, seed=7, return_first_solution=False),
         PRMConfig(sample_number=8, max_retries=1, radius=10.0, seed=7),
         PRMStarConfig(sample_number=8, max_retries=1, radius_gain=10.0, seed=7),
         RRGConfig(max_iterations=20, goal_bias=1.0, seed=7),

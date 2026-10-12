@@ -3,12 +3,43 @@
 from dataclasses import replace
 
 import pytest
+import tyro
 
 from mujoco_lab.learning.collect_book import Config as BookConfig
 from mujoco_lab.learning.collect_cube import Config as CubeConfig
 from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.learning.trainers.train_bc import run_training
+from mujoco_lab.planning import RRTStarConfig, planner_name
+
+
+def test_cube_collection_cli_selects_rrt_star_and_continued_optimization():
+    config = tyro.cli(
+        CubeConfig,
+        args=[
+            "--method",
+            "sampling",
+            "--cubes",
+            "4",
+            "--count",
+            "1000",
+            "planning:rrt-star-config",
+            "--planning.max-iterations",
+            "1000",
+            "--planning.step-size",
+            "0.2",
+            "--planning.goal-tolerance",
+            "0.04",
+            "--planning.seed",
+            "7",
+            "--planning.no-return-first-solution",
+        ],
+    )
+    assert config.cubes == 4 and config.count == 1000 and config.method == "sampling"
+    assert isinstance(config.planning, RRTStarConfig)
+    assert planner_name(config.planning) == "rrt_star"
+    assert config.planning.max_iterations == 1000
+    assert config.planning.seed == 7 and not config.planning.return_first_solution
 
 
 @pytest.mark.parametrize(
