@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -22,6 +23,7 @@ from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
 from mujoco_lab.simulator_manager import _passive_viewer
+from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 if TYPE_CHECKING:
     from mujoco.viewer import Handle
@@ -61,6 +63,8 @@ def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
             "rotation_error",
         ):
             summary[f"mean_{name}"] = float(np.mean([row[name] for row in episodes]))
+    if episodes and all("goal_success" in row for row in episodes):
+        summary["goal_success_rate"] = float(np.mean([row["goal_success"] for row in episodes]))
     return summary
 
 
@@ -86,6 +90,9 @@ def evaluation_log_metrics(summary: Mapping[str, Any]) -> dict[str, int | float]
         "mean_released",
         "mean_position_error",
         "mean_rotation_error",
+        "mean_return",
+        "mean_length",
+        "goal_success_rate",
     ):
         if name in summary:
             metrics[f"eval/{name}"] = summary[name]
@@ -145,6 +152,47 @@ class PolicyEvaluator:
         finally:
             model.train(was_training)
         return episodes, summarize(episodes)
+
+    def evaluate_to_directory(
+        self,
+        model: BasePolicy,
+        normalizer: Normalizer,
+        metadata: Mapping[str, Any],
+        output_dir: Path,
+        *,
+        sampling_num_steps: int = 1,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Save episode outcomes, a summary, and optional videos for periodic evaluation."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        console = ConsoleLogger()
+        with (output_dir / "episodes.jsonl").open("x", encoding="utf-8") as file:
+
+            def record(row):
+                file.write(json.dumps(row, allow_nan=False) + "\n")
+                file.flush()
+                console.info(
+                    f"Evaluation seed={row['env_seed']} success={row['success']} "
+                    f"steps={row['steps']}"
+                )
+
+            episodes, summary = self.evaluate(
+                model,
+                normalizer,
+                metadata,
+                sampling_num_steps=sampling_num_steps,
+                on_episode=record,
+                video_dir=output_dir / "videos",
+            )
+        summary["mean_return"] = (
+            float(np.mean([row["return"] for row in episodes])) if episodes else 0.0
+        )
+        summary["mean_length"] = (
+            float(np.mean([row["steps"] for row in episodes])) if episodes else 0.0
+        )
+        with (output_dir / "summary.json").open("x", encoding="utf-8") as file:
+            json.dump(summary, file, indent=2, allow_nan=False)
+            file.write("\n")
+        return episodes, summary
 
     def _predict_actions(
         self,
@@ -218,6 +266,8 @@ class PolicyEvaluator:
         steps = 0
         episode_return = 0.0
         success = False
+        goal_success = False
+        goal_rewards = metadata.get("algorithm") == "ddpg"
         reason = "time_limit"
         recording, camera, video_path = self._create_recording(index, env_seed, video_dir)
         with recording as recorder:
@@ -254,6 +304,11 @@ class PolicyEvaluator:
                             )
                             if remaining > 0:
                                 time.sleep(remaining)
+                        if goal_rewards:
+                            reward = env.compute_goal_reward(
+                                env.achieved_goal(next_obs), env.desired_goal(next_obs)
+                            )
+                            goal_success |= float(reward) == 0
                         episode_return += float(reward)
                         success = bool(info["success"]) and terminated and not truncated
                         history.append(next_obs.copy())
@@ -279,6 +334,8 @@ class PolicyEvaluator:
         }
         if progress is not None:
             row.update(progress.result())
+        if goal_rewards:
+            row["goal_success"] = goal_success
         if video_path is not None:
             row["video_path"] = str(video_path)
         return row

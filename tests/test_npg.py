@@ -6,13 +6,14 @@ import pytest
 import torch
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
-from mujoco_lab.learning.algorithms.dapg import Demonstrations, dapg_step
+from mujoco_lab.learning.agents import DAPGAgent, Demonstrations, NPGAgent
 from mujoco_lab.learning.algorithms.npg import (
-    NPGConfig,
     conjugate_gradient,
     fisher_vector_product,
-    npg_step,
 )
+from mujoco_lab.learning.config.dapg import DAPGConfig
+from mujoco_lab.learning.config.npg import NPGConfig
+from mujoco_lab.learning.models.critic import ValueCritic
 from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.rollout.buffer import RolloutBatch
 
@@ -40,6 +41,12 @@ def make_policy():
     return policy
 
 
+def make_agent(policy, config=None):
+    return NPGAgent(
+        policy, ValueCritic(policy.state_dim, (), 0.001), NPGConfig() if config is None else config
+    )
+
+
 def test_conjugate_gradient_solves_spd_system_and_zero_gradient():
     matrix = torch.tensor([[4.0, 1.0], [1.0, 3.0]], dtype=torch.float64)
     rhs = torch.tensor([1.0, 2.0], dtype=torch.float64)
@@ -56,7 +63,8 @@ def test_gaussian_rl_probabilities_and_kl_match_torch_distributions():
     old = deepcopy(policy)(states)
     actions = old.sample()
     with torch.no_grad():
-        policy.mean_head.bias.add_(0.2)
+        # PyTorch types Sequential indexing as Module, obscuring the Linear bias tensor.
+        policy.mean_head.bias.add_(0.2)  # ty: ignore[call-non-callable]
         policy.log_std.add_(0.1)
     current = policy(states)
     torch.testing.assert_close(
@@ -98,7 +106,7 @@ def test_npg_improves_bandit_policy_within_kl_budget():
     policy = make_policy()
     batch = make_batch(policy)
     old = deepcopy(policy)
-    metrics = npg_step(policy, batch, NPGConfig(max_kl=0.02))
+    metrics = make_agent(policy, NPGConfig(max_kl=0.02)).update_policy(batch)
 
     assert metrics["policy/accepted"] == 1
     assert metrics["policy/objective_after"] > metrics["policy/objective_before"]
@@ -115,7 +123,7 @@ def test_npg_improves_bandit_policy_within_kl_budget():
 def test_npg_leaves_zero_gradient_policy_unchanged():
     policy = make_policy()
     original = parameters_to_vector(policy.parameters()).detach().clone()
-    metrics = npg_step(policy, make_batch(policy, zero_advantages=True), NPGConfig())
+    metrics = make_agent(policy).update_policy(make_batch(policy, zero_advantages=True))
     assert metrics["policy/accepted"] == 0
     torch.testing.assert_close(parameters_to_vector(policy.parameters()), original, rtol=0, atol=0)
 
@@ -134,7 +142,7 @@ def test_failed_candidate_restores_original_policy():
         return policy.log_std.sum() * 0
 
     with pytest.raises(RuntimeError, match="candidate failed"):
-        npg_step(policy, make_batch(policy), NPGConfig(), augmentation=augmentation)
+        make_agent(policy).update_policy(make_batch(policy), augmentation=augmentation)
     torch.testing.assert_close(parameters_to_vector(policy.parameters()), original, rtol=0, atol=0)
 
 
@@ -155,16 +163,14 @@ def test_dapg_uses_demos_for_gradient_but_only_rollout_states_for_fisher(monkeyp
         return original_fvp(policy, states, *args, **kwargs)
 
     monkeypatch.setattr(npg, "fisher_vector_product", record_fvp)
-    metrics = dapg_step(
+    agent = DAPGAgent(
         policy,
-        batch,
-        demos,
-        iteration=2,
-        config=NPGConfig(),
-        demo_weight=0.5,
-        demo_decay=0.9,
-        demo_batch_size=4,
+        ValueCritic(policy.state_dim, (), 0.001),
+        DAPGConfig(demo_weight=0.5, demo_decay=0.9, demo_batch_size=4),
     )
+    agent.demonstrations = demos
+    agent.iteration = 2
+    metrics = agent.update_policy(batch)
     assert metrics["policy/demo_weight"] == pytest.approx(0.405)
     assert policy.log_prob(demos.states, demos.actions).mean().item() > before
     assert fisher_calls
@@ -178,8 +184,10 @@ def test_zero_demo_weight_is_identical_to_npg():
     other = deepcopy(policy)
     batch = make_batch(policy)
     demos = Demonstrations(torch.ones(3, 2).double(), torch.zeros(3, 1, 1).double())
-    npg_step(policy, batch, NPGConfig())
-    dapg_step(other, batch, demos, iteration=0, config=NPGConfig(), demo_weight=0)
+    make_agent(policy).update_policy(batch)
+    agent = DAPGAgent(other, ValueCritic(other.state_dim, (), 0.001), DAPGConfig(demo_weight=0))
+    agent.demonstrations = demos
+    agent.update_policy(batch)
     torch.testing.assert_close(
         parameters_to_vector(policy.parameters()),
         parameters_to_vector(other.parameters()),

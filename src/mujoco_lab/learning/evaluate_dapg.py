@@ -39,7 +39,7 @@ def run(
     started = perf_counter()
     state = load_training_checkpoint(checkpoint, device=device)
     if max_seconds is not None:
-        state.config.max_seconds = max_seconds
+        state.agent.config.max_seconds = max_seconds
     max_steps, settings = environment_settings(state)
     env, _ = create_evaluation_env(state.metadata, **settings)
     rollout = replace(
@@ -63,9 +63,9 @@ def run(
                 state, PolicyEvaluator(env, rollout, torch.device(device)), run_dir
             )
             metrics["train/env_steps"] = state.env_steps
-            metrics["train/iteration"] = state.iteration
+            metrics["train/iteration"] = state.agent.iteration
             metrics["elapsed_seconds"] = perf_counter() - started
-            logger.log_evaluation(metrics, rows, step=state.iteration)
+            logger.log_evaluation(metrics, rows, step=state.agent.iteration)
             return metrics
     finally:
         env.close()

@@ -7,11 +7,10 @@ from typing import Any
 
 import tyro
 
-from mujoco_lab import RobotSpec, Simulator, create_book_insertion
-from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors.task import BookTask
 from mujoco_lab.learning.config import BCEvalConfig, EvaluationConfig
+from mujoco_lab.learning.config.replay import BookReplayConfig
 from mujoco_lab.learning.envs.book import BookEnv
+from mujoco_lab.learning.envs.factory import create_env
 
 
 @dataclass
@@ -39,28 +38,27 @@ def create_book_evaluation_env(
     if architecture_repeat != repeat:
         raise ValueError("Checkpoint action cadence differs from recorded book cadence")
     robot_type, robot_name = replay["robot"], replay["robot_name"]
-    robot_config = load_robot_config(robot_type)
-    simulator = Simulator(
-        create_book_insertion(replay["book"]),
-        robots=[RobotSpec(robot_name, robot_type, config=robot_config)],
-        dt=replay["dt"],
-    )
-    env = BookEnv(
-        BookTask(simulator),
-        xy_range=replay["xy_range"] if xy_range is None else xy_range,
-        book_yaw_range_degrees=(
-            replay["book_yaw_range_degrees"]
-            if book_yaw_range_degrees is None
-            else book_yaw_range_degrees
+    env = create_env(
+        BookReplayConfig(
+            robot=robot_type,
+            book=replay["book"],
+            physics_steps_per_action=repeat,
+            xy_range=replay["xy_range"] if xy_range is None else xy_range,
+            book_yaw_range_degrees=(
+                replay["book_yaw_range_degrees"]
+                if book_yaw_range_degrees is None
+                else book_yaw_range_degrees
+            ),
         ),
         max_steps=max_steps,
-        physics_steps_per_action=repeat,
+        robot_name=robot_name,
+        dt=replay["dt"],
     )
     scene = {
         **replay,
         "xy_range": env.xy_range,
         "book_yaw_range_degrees": env.book_yaw_range_degrees,
-        "simulation_hz": 1.0 / simulator.dt,
+        "simulation_hz": 1.0 / env.simulator.dt,
         "action_execution_hz": 1.0 / env.action_dt,
         "action_dt": env.action_dt,
     }

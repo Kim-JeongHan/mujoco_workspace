@@ -22,7 +22,9 @@ class JointActionEnv(gym.Env):
     observation_space: spaces.Box
     _rotation_indices: list[int]
 
-    def __init__(self, task, *, max_steps=30_000, physics_steps_per_action=1):
+    def __init__(
+        self, task, *, max_steps=30_000, physics_steps_per_action=1, terminate_on_success=True
+    ):
         super().__init__()
         self.task = task
         self.simulator = task.simulator
@@ -33,6 +35,7 @@ class JointActionEnv(gym.Env):
         self.model = self.simulator.model
         self.data = self.simulator.data
         self.max_steps = max_steps
+        self.terminate_on_success = terminate_on_success
 
         self.physics_steps_per_action = int(physics_steps_per_action)
         if self.physics_steps_per_action <= 0:
@@ -77,6 +80,22 @@ class JointActionEnv(gym.Env):
     def _get_obs(self) -> np.ndarray:
         raise NotImplementedError
 
+    def achieved_goal(self, observation: np.ndarray) -> np.ndarray:
+        """Extract achieved goals from raw observations, including batched histories."""
+        raise NotImplementedError
+
+    def desired_goal(self, observation: np.ndarray) -> np.ndarray:
+        """Extract desired goals from raw observations."""
+        raise NotImplementedError
+
+    def relabel_observation(self, observation: np.ndarray, goal: np.ndarray) -> np.ndarray:
+        """Copy observations and replace every goal-dependent feature."""
+        raise NotImplementedError
+
+    def compute_goal_reward(self, achieved: np.ndarray, desired: np.ndarray) -> np.ndarray:
+        """Compute sparse pose rewards without accessing live simulator state."""
+        raise NotImplementedError
+
     @property
     def action_dt(self) -> float:
         """Nominal simulated seconds for one action."""
@@ -95,11 +114,13 @@ class JointActionEnv(gym.Env):
             )
 
         terminated = False
+        success = False
         physics_steps = 0
         for _ in range(self.physics_steps_per_action):
             self.simulator.run_steps(1)
             physics_steps += 1
-            if self._is_success():
+            success = self._is_success() or success
+            if success and self.terminate_on_success:
                 terminated = True
                 break
         self._steps += 1
@@ -108,11 +129,11 @@ class JointActionEnv(gym.Env):
         reason = "success" if terminated else "time_limit" if truncated else None
         return (
             self._get_obs(),
-            float(terminated),
+            float(success),
             terminated,
             truncated,
             {
-                "success": terminated,
+                "success": success,
                 "termination_reason": reason,
                 "physics_steps": physics_steps,
                 "elapsed_dt": float(self.data.time) - start_time,

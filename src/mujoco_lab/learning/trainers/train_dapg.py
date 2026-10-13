@@ -1,6 +1,5 @@
 """Fine-tune a BC-initialized single-action Gaussian policy with DAPG."""
 
-import json
 import math
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -14,8 +13,9 @@ import numpy as np
 import torch
 import tyro
 
+from mujoco_lab.learning.agents import DAPGAgent, Demonstrations
+from mujoco_lab.learning.agents.initialization import initialize_actor
 from mujoco_lab.learning.algorithms.advantage import compute_discounted_returns, compute_gae
-from mujoco_lab.learning.algorithms.dapg import Demonstrations, dapg_step
 from mujoco_lab.learning.config import EvaluationConfig
 from mujoco_lab.learning.config.dapg import DAPGConfig
 from mujoco_lab.learning.datasets.episode import load_episodes
@@ -36,8 +36,6 @@ from mujoco_lab.learning.rl_checkpoint import (
 from mujoco_lab.learning.rollout.buffer import RolloutBuffer
 from mujoco_lab.learning.rollout.online import RolloutEnv, collect_rollout
 from mujoco_lab.learning.timing import max_steps_for_seconds
-from mujoco_lab.learning.trainers.train_ppo import initialize_actor
-from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 
 def initialize_training(config: DAPGConfig) -> TrainingState:
@@ -70,12 +68,12 @@ def initialize_training(config: DAPGConfig) -> TrainingState:
         config.critic.learning_rate,
         device=config.device,
     )
-    return TrainingState(actor, critic, normalizer, metadata, config)
+    return TrainingState(DAPGAgent(actor, critic, config), normalizer, metadata)
 
 
 def load_demonstrations(state: TrainingState) -> Demonstrations:
     """Load successful BC training episodes with matching scene, cadence, and observations."""
-    episodes = load_episodes(state.config.data_dir)
+    episodes = load_episodes(state.agent.config.data_dir)
     dataset = state.metadata["dataset_metadata"]
     architecture = state.metadata["architecture"]
     replay = dataset["replay"]
@@ -97,7 +95,7 @@ def load_demonstrations(state: TrainingState) -> Demonstrations:
             raise ValueError("demonstration scene differs from the BC checkpoint")
         if (
             episode.states.shape[1] != len(state.normalizer.state_mean)
-            or episode.actions.shape[1] != state.actor.action_dim
+            or episode.actions.shape[1] != state.agent.policy.action_dim
             or episode.metadata["observation"] != dataset["observation"]
         ):
             raise ValueError(
@@ -106,17 +104,17 @@ def load_demonstrations(state: TrainingState) -> Demonstrations:
     chunks = ChunkDataset(episodes, 1, state.normalizer, obs_horizon=architecture["obs_horizon"])
     observations, actions = zip(*(chunks[index] for index in range(len(chunks))), strict=True)
     return Demonstrations(
-        torch.from_numpy(np.stack(observations)).to(state.config.device),
-        torch.from_numpy(np.stack(actions)).to(state.config.device),
+        torch.from_numpy(np.stack(observations)).to(state.agent.config.device),
+        torch.from_numpy(np.stack(actions)).to(state.agent.config.device),
     )
 
 
 def train_iteration(
     state: TrainingState, env: RolloutEnv, demos: Demonstrations, *, steps: int
 ) -> dict[str, float]:
-    """Collect, estimate targets, update the actor once, then fit the critic."""
-    config = state.config
-    actor, critic = state.actor, state.critic
+    """Collect rollouts and estimate targets before the agent updates its learned state."""
+    config = state.agent.config
+    actor, critic = state.agent.policy, state.agent.critic
     buffer = RolloutBuffer(steps, actor.state_dim, (1, actor.action_dim), device=config.device)
     metrics = collect_rollout(
         env,
@@ -145,27 +143,8 @@ def train_iteration(
         next_values=buffer.next_values if config.bootstrap_returns else None,
     )
     buffer.set_targets(advantages, returns)
-    batch = next(buffer.minibatches(steps))
-    metrics.update(
-        dapg_step(
-            actor,
-            batch,
-            demos,
-            iteration=state.iteration,
-            config=config.npg,
-            demo_weight=config.demo_weight,
-            demo_decay=config.demo_decay,
-            demo_batch_size=config.demo_batch_size,
-        )
-    )
-    critic_losses = []
-    for _ in range(config.critic.num_epochs):
-        for minibatch in buffer.minibatches(config.critic.batch_size):
-            critic_losses.append(
-                critic.update(minibatch.states, minibatch.returns)["Baseline Loss"]
-            )
-    metrics["critic/loss"] = float(np.mean(critic_losses))
-    state.iteration += 1
+    state.agent.demonstrations = demos
+    metrics.update(state.agent.update(buffer))
     state.env_steps += steps
     metrics["train/env_steps"] = float(state.env_steps)
     return metrics
@@ -175,7 +154,7 @@ def environment_settings(state: TrainingState) -> tuple[int, dict[str, Any]]:
     """Preserve the BC scene, randomization, and physical action cadence."""
     replay = state.metadata["dataset_metadata"]["replay"]
     dt = replay["dt"] * state.metadata["architecture"]["physics_steps_per_action"]
-    max_steps = max_steps_for_seconds(state.config.max_seconds, dt)
+    max_steps = max_steps_for_seconds(state.agent.config.max_seconds, dt)
     return max_steps, {
         "xy_range": None,
         "min_gap": None,
@@ -187,7 +166,7 @@ def environment_settings(state: TrainingState) -> tuple[int, dict[str, Any]]:
 
 def evaluation_config(state: TrainingState) -> EvaluationConfig:
     """Use BC recording defaults while preserving the DAPG evaluation scene and seeds."""
-    config = state.config
+    config = state.agent.config
     replay = state.metadata["dataset_metadata"]["replay"]
     randomization = {"xy_range": replay["xy_range"]}
     if replay["scene"] == "cube_stack":
@@ -209,35 +188,10 @@ def evaluate_training_policy(
     state: TrainingState, evaluator: PolicyEvaluator, output_dir: Path
 ) -> tuple[list[dict[str, Any]], dict[str, int | float]]:
     """Save episode outcomes, task progress, and videos through the shared evaluator."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    console = ConsoleLogger()
-    with (output_dir / "episodes.jsonl").open("x", encoding="utf-8") as episode_file:
-
-        def record(row):
-            episode_file.write(json.dumps(row, allow_nan=False) + "\n")
-            episode_file.flush()
-            console.info(
-                f"Evaluation iteration={state.iteration} seed={row['env_seed']} "
-                f"success={row['success']} steps={row['steps']}"
-            )
-
-        episodes, summary = evaluator.evaluate(
-            state.actor,
-            state.normalizer,
-            state.metadata,
-            sampling_num_steps=1,
-            on_episode=record,
-            video_dir=output_dir / "videos",
-        )
-    summary["mean_return"] = float(np.mean([row["return"] for row in episodes]))
-    summary["mean_length"] = float(np.mean([row["steps"] for row in episodes]))
-    with (output_dir / "summary.json").open("x", encoding="utf-8") as summary_file:
-        json.dump(summary, summary_file, indent=2, allow_nan=False)
-        summary_file.write("\n")
-    metrics = evaluation_log_metrics(summary)
-    metrics["eval/mean_return"] = summary["mean_return"]
-    metrics["eval/mean_length"] = summary["mean_length"]
-    return episodes, metrics
+    episodes, summary = evaluator.evaluate_to_directory(
+        state.agent.policy, state.normalizer, state.metadata, output_dir
+    )
+    return episodes, evaluation_log_metrics(summary)
 
 
 def run(config: DAPGConfig) -> Path:
@@ -254,7 +208,7 @@ def run(config: DAPGConfig) -> Path:
     else:
         state = load_training_checkpoint(config.resume, device=config.device)
         config = replace(
-            state.config,
+            state.agent.config,
             init_from=None,
             resume=config.resume,
             total_steps=config.total_steps,
@@ -262,7 +216,7 @@ def run(config: DAPGConfig) -> Path:
             device=config.device,
             wandb_mode=config.wandb_mode,
         )
-        state.config = config
+        state.agent.config = config
     if config.total_steps <= state.env_steps:
         raise ValueError("total_steps must exceed the checkpoint's collected steps")
     demos = load_demonstrations(state)
@@ -296,9 +250,9 @@ def run(config: DAPGConfig) -> Path:
                 {
                     "data/demo_transitions": demos.states.shape[0],
                     "train/env_steps": state.env_steps,
-                    "train/iteration": state.iteration,
+                    "train/iteration": state.agent.iteration,
                 },
-                step=state.iteration,
+                step=state.agent.iteration,
             )
             while state.env_steps < config.total_steps:
                 metrics = train_iteration(
@@ -309,29 +263,29 @@ def run(config: DAPGConfig) -> Path:
                 )
                 episodes = None
                 if evaluator is not None and (
-                    state.iteration % config.eval_interval_iterations == 0
+                    state.agent.iteration % config.eval_interval_iterations == 0
                     or state.env_steps == config.total_steps
                 ):
                     episodes, evaluation_metrics = evaluate_training_policy(
                         state, evaluator, run_dir / "eval" / f"step_{state.env_steps:08d}"
                     )
                     metrics.update(evaluation_metrics)
-                metrics["train/iteration"] = state.iteration
+                metrics["train/iteration"] = state.agent.iteration
                 metrics["elapsed_seconds"] = perf_counter() - started
                 if episodes is None:
-                    logger.log(metrics, step=state.iteration)
+                    logger.log(metrics, step=state.agent.iteration)
                 else:
-                    logger.log_evaluation(metrics, episodes, step=state.iteration)
+                    logger.log_evaluation(metrics, episodes, step=state.agent.iteration)
                 if (
                     config.checkpoint_interval_iterations
-                    and state.iteration % config.checkpoint_interval_iterations == 0
+                    and state.agent.iteration % config.checkpoint_interval_iterations == 0
                 ):
-                    path = run_dir / f"checkpoint_{state.iteration:06d}.pt"
+                    path = run_dir / f"checkpoint_{state.agent.iteration:06d}.pt"
                     save_training_checkpoint(path, state)
-                    logger.log_checkpoint(path, step=state.iteration)
+                    logger.log_checkpoint(path, step=state.agent.iteration)
             path = run_dir / "checkpoint.pt"
             save_training_checkpoint(path, state)
-            logger.log_checkpoint(path, step=state.iteration)
+            logger.log_checkpoint(path, step=state.agent.iteration)
     finally:
         env.close()
         if eval_env is not None:

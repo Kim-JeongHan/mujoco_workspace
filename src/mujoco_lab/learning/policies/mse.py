@@ -18,6 +18,8 @@ class MSEPolicy(BasePolicy):
         action_dim: int,
         chunk_size: int,
         hidden_dims: tuple[int, ...] = (128, 128),
+        *,
+        bounded: bool = False,
     ) -> None:
         """Initialize the deterministic state-to-action MLP.
 
@@ -26,8 +28,10 @@ class MSEPolicy(BasePolicy):
             action_dim: Number of action features per step, N_a.
             chunk_size: Number of actions in each predicted chunk, C.
             hidden_dims: Width of each hidden MLP layer.
+            bounded: Apply tanh to produce actions in [-1, 1].
         """
         super().__init__(state_dim, action_dim, chunk_size)
+        self.bounded = bounded
 
         self.net = build_mlp(
             input_dim=state_dim,
@@ -80,4 +84,4 @@ class MSEPolicy(BasePolicy):
         """
         action_chunk = self.net(state)
         action_chunk = action_chunk.view(-1, self.chunk_size, self.action_dim)
-        return action_chunk
+        return action_chunk.tanh() if self.bounded else action_chunk

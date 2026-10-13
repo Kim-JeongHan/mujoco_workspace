@@ -46,9 +46,13 @@ class CubeStackEnv(JointActionEnv):
         cube_yaw_range_degrees: float = 0.0,
         max_steps: int = 30_000,
         physics_steps_per_action: int = 1,
+        terminate_on_success: bool = True,
     ) -> None:
         super().__init__(
-            task, max_steps=max_steps, physics_steps_per_action=physics_steps_per_action
+            task,
+            max_steps=max_steps,
+            physics_steps_per_action=physics_steps_per_action,
+            terminate_on_success=terminate_on_success,
         )
         self.xy_range = float(xy_range)
         self.min_gap = float(min_gap)
@@ -86,6 +90,8 @@ class CubeStackEnv(JointActionEnv):
         robot_rotation_start = 2 * arm_values + grippers + 3 * len(self.robots)
         cube_start = robot_rotation_start + 6 * len(self.robots)
         cube_width = 12 + 3 * len(self.robots)
+        self._cube_start = cube_start
+        self._cube_width = cube_width
         self._rotation_indices = [
             *range(robot_rotation_start, cube_start),
             *(
@@ -133,6 +139,37 @@ class CubeStackEnv(JointActionEnv):
 
     def _is_success(self) -> bool:
         return self.task.status().is_released_stable
+
+    def _cube_features(self, observation: np.ndarray) -> np.ndarray:
+        return observation[..., self._cube_start :].reshape(
+            *observation.shape[:-1], self.task.cubes, self._cube_width
+        )
+
+    def achieved_goal(self, observation: np.ndarray) -> np.ndarray:
+        return self._cube_features(observation)[..., :3].reshape(
+            *observation.shape[:-1], 3 * self.task.cubes
+        )
+
+    def desired_goal(self, observation: np.ndarray) -> np.ndarray:
+        features = self._cube_features(observation)
+        return (features[..., :3] + features[..., -3:]).reshape(
+            *observation.shape[:-1], 3 * self.task.cubes
+        )
+
+    def relabel_observation(self, observation: np.ndarray, goal: np.ndarray) -> np.ndarray:
+        relabeled = observation.copy()
+        features = self._cube_features(relabeled)
+        positions = goal.reshape(*goal.shape[:-1], self.task.cubes, 3)
+        features[..., -3:] = positions - features[..., :3]
+        return relabeled
+
+    def compute_goal_reward(self, achieved: np.ndarray, desired: np.ndarray) -> np.ndarray:
+        difference = (achieved - desired).reshape(*achieved.shape[:-1], self.task.cubes, 3)
+        reached = (
+            (np.linalg.norm(difference[..., :2], axis=-1) < self.task.xy_tolerance_m)
+            & (np.abs(difference[..., 2]) < self.task.height_tolerance_m)
+        ).all(axis=-1)
+        return np.where(reached, 0.0, -1.0).astype(np.float32)
 
     @property
     def camera_lookat(self) -> np.ndarray:

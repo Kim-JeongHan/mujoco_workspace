@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from mujoco_lab.assets import BookType
+
 
 @dataclass(frozen=True, kw_only=True)
 class ReplayMetadataConfig:
@@ -21,14 +23,14 @@ class CubeStackReplayConfig(ReplayMetadataConfig):
     cube_yaw_range_degrees: float = 0.0
     min_gap: float = 0.01
     scene: Literal["cube_stack"] = field(default="cube_stack", init=False)
-    environment: Literal["table_shelf"] = field(default="table_shelf", init=False)
+    environment: Literal["table_shelf", "warehouse"] = "table_shelf"
 
 
 @dataclass(frozen=True, kw_only=True)
 class BookReplayConfig(ReplayMetadataConfig):
     """Recorded book scene and its collection randomization."""
 
-    book: str
+    book: BookType
     book_yaw_range_degrees: float = 0.0
     scene: Literal["book_insertion"] = field(default="book_insertion", init=False)
     environment: Literal["book_shelf"] = field(default="book_shelf", init=False)

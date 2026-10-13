@@ -4,11 +4,12 @@ import numpy as np
 import pytest
 import torch
 
+from mujoco_lab.learning.agents.initialization import initialize_actor
 from mujoco_lab.learning.checkpoint import save_checkpoint
 from mujoco_lab.learning.config import BCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.policies.factory import build_policy
-from mujoco_lab.learning.trainers.train_ppo import initialize_actor, initialize_actor_critic
+from mujoco_lab.learning.trainers.train_ppo import initialize_agent
 
 
 def test_initialize_actor_from_bc_checkpoint(tmp_path):
@@ -30,9 +31,17 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path):
     path = tmp_path / "bc.pt"
     save_checkpoint(path, bc, normalizer, config, optimizer_step=12)
 
-    actor, critic, restored, metadata = initialize_actor_critic(
+    agent, restored, metadata = initialize_agent(
         path, initial_log_std=-1.5, critic_hidden_dims=(12, 5)
     )
+    actor, critic = agent.policy, agent.critic
+    assert agent.actor_optimizer is not None
+    actor_parameters = {parameter.data_ptr() for parameter in actor.parameters()}
+    assert {
+        parameter.data_ptr()
+        for group in agent.actor_optimizer.param_groups
+        for parameter in group["params"]
+    } == actor_parameters
     state = torch.randn(4, 6)
     torch.testing.assert_close(actor(state).mean, bc(state), rtol=0, atol=0)
     torch.testing.assert_close(actor.log_std, torch.full((3, 2), -1.5))

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.datasets.normalizer import Normalizer, RunningMoments
 
 
 def test_large_dataset_constant_and_varying_features_have_correct_statistics():
@@ -29,3 +29,23 @@ def test_large_dataset_constant_and_varying_features_have_correct_statistics():
     assert normalized_states.dtype == normalized_actions.dtype == np.float32
     np.testing.assert_allclose(normalizer.denormalize_state(normalized_states), states[:2])
     np.testing.assert_allclose(normalizer.denormalize_action(normalized_actions), actions[:2])
+
+
+def test_online_statistics_match_batch_fit_and_preserve_rotation_scaling():
+    frames = np.random.default_rng(7).normal(size=(97, 4)).astype(np.float32)
+    actions = np.zeros((97, 1), dtype=np.float32)
+    expected = Normalizer.from_data(frames, actions, state_passthrough_indices=[3])
+    normalizer = Normalizer(
+        np.zeros(4, dtype=np.float32),
+        np.ones(4, dtype=np.float32),
+        np.zeros(1, dtype=np.float32),
+        np.ones(1, dtype=np.float32),
+        state_clip=5,
+    )
+    moments = RunningMoments(4, [3])
+    for part in (frames[:2], frames[2:31], frames[31:]):
+        moments.update(part, normalizer)
+    assert moments.count == len(frames)
+    np.testing.assert_allclose(normalizer.state_mean, expected.state_mean, atol=1e-7)
+    np.testing.assert_allclose(normalizer.state_std, expected.state_std, atol=1e-7)
+    assert np.max(np.abs(normalizer.normalize_state(frames * 100))) <= 5

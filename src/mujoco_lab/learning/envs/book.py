@@ -9,6 +9,7 @@ import numpy as np
 from gymnasium import spaces
 
 from mujoco_lab.behaviors import BookTask
+from mujoco_lab.learning.envs.goals import rot6d_angle
 from mujoco_lab.learning.envs.joint_action_env import JointActionEnv
 
 
@@ -34,9 +35,13 @@ class BookEnv(JointActionEnv):
         book_yaw_range_degrees: float = 0.0,
         max_steps: int = 30_000,
         physics_steps_per_action: int = 1,
+        terminate_on_success: bool = True,
     ) -> None:
         super().__init__(
-            task, max_steps=max_steps, physics_steps_per_action=physics_steps_per_action
+            task,
+            max_steps=max_steps,
+            physics_steps_per_action=physics_steps_per_action,
+            terminate_on_success=terminate_on_success,
         )
         self.xy_range = float(xy_range)
         self.book_yaw_range_degrees = float(book_yaw_range_degrees)
@@ -46,6 +51,8 @@ class BookEnv(JointActionEnv):
         self._home_quat = self.data.qpos[self._book_qpos + 3 : self._book_qpos + 7].copy()
         robot_width = 2 * len(self._arm_slots[self.robot.name]) + int(self.robot.has_gripper())
         rotation_start = robot_width + 3
+        self._book_start = robot_width + 9
+        self._goal_start = robot_width + 18
         self._rotation_indices = [
             *range(rotation_start, rotation_start + 6),
             *range(rotation_start + 9, rotation_start + 15),
@@ -79,6 +86,25 @@ class BookEnv(JointActionEnv):
 
     def _is_success(self) -> bool:
         return self.task.status().is_released_stable
+
+    def achieved_goal(self, observation: np.ndarray) -> np.ndarray:
+        return observation[..., self._book_start : self._book_start + 9]
+
+    def desired_goal(self, observation: np.ndarray) -> np.ndarray:
+        return observation[..., self._goal_start : self._goal_start + 9]
+
+    def relabel_observation(self, observation: np.ndarray, goal: np.ndarray) -> np.ndarray:
+        relabeled = observation.copy()
+        relabeled[..., self._goal_start : self._goal_start + 9] = goal
+        relabeled[..., -3:] = goal[..., :3] - self.achieved_goal(observation)[..., :3]
+        return relabeled
+
+    def compute_goal_reward(self, achieved: np.ndarray, desired: np.ndarray) -> np.ndarray:
+        reached = (
+            np.linalg.norm(achieved[..., :3] - desired[..., :3], axis=-1)
+            < self.task.position_tolerance_m
+        ) & (rot6d_angle(achieved[..., 3:], desired[..., 3:]) < self.task.rotation_tolerance_rad)
+        return np.where(reached, 0.0, -1.0).astype(np.float32)
 
     @property
     def camera_lookat(self) -> np.ndarray:

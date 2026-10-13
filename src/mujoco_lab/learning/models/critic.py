@@ -56,3 +56,17 @@ class ValueCritic(nn.Module):
         loss.backward()
         self.optimizer.step()
         return {"Baseline Loss": loss.item()}
+
+
+class QCritic(nn.Module):
+    """Predict an action value from normalized observation histories and actions."""
+
+    def __init__(
+        self, state_dim: int, action_dim: int, hidden_dims: tuple[int, ...] = (128, 128)
+    ) -> None:
+        super().__init__()
+        self.network = build_mlp(state_dim + action_dim, 1, hidden_dims)
+
+    def forward(self, states: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        """Map states (B, S) and actions (B, A) to values (B,)."""
+        return self.network(torch.cat((states, actions), dim=-1)).squeeze(-1)

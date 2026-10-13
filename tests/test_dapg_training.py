@@ -11,11 +11,11 @@ import pytest
 import torch
 from gymnasium import spaces
 
-from mujoco_lab.learning.algorithms.dapg import Demonstrations
-from mujoco_lab.learning.algorithms.npg import NPGConfig
+from mujoco_lab.learning.agents import DAPGAgent, Demonstrations
 from mujoco_lab.learning.checkpoint import save_checkpoint
 from mujoco_lab.learning.config import BCTrainConfig, CriticConfig
 from mujoco_lab.learning.config.dapg import DAPGConfig
+from mujoco_lab.learning.config.npg import NPGConfig
 from mujoco_lab.learning.datasets.episode import Episode, save_episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.models.critic import ValueCritic
@@ -129,10 +129,10 @@ def test_initialization_keeps_first_bc_action_and_observation_history(tmp_path):
     state = train_dapg.initialize_training(config)
     observations = torch.randn(5, 2)
     # Slicing the output head changes GEMM width, allowing float32 roundoff.
-    torch.testing.assert_close(state.actor(observations).mean, bc(observations)[:, :1])
-    for name, tensor in state.actor.mean_head.state_dict().items():
+    torch.testing.assert_close(state.agent.policy(observations).mean, bc(observations)[:, :1])
+    for name, tensor in state.agent.policy.mean_head.state_dict().items():
         torch.testing.assert_close(tensor, bc.net[-1].state_dict()[name][:1], rtol=0, atol=0)
-    assert state.actor.chunk_size == 1
+    assert state.agent.policy.chunk_size == 1
     assert state.metadata["architecture"]["execution_horizon"] == 1
     assert state.metadata["source_bc_architecture"]["chunk_size"] == 3
     assert state.metadata["architecture"]["obs_horizon"] == 2
@@ -156,10 +156,12 @@ def test_initial_exploration_is_independent_of_dataset_action_scale(tmp_path, sc
         path, bc, normalizer, BCTrainConfig(hidden_dims=(8,), chunk_size=3), optimizer_step=0
     )
     state = train_dapg.initialize_training(DAPGConfig(init_from=path, device="cpu"))
-    physical_std = state.actor.log_std.detach().exp()[0] * torch.from_numpy(normalizer.action_std)
+    physical_std = state.agent.policy.log_std.detach().exp()[0] * torch.from_numpy(
+        normalizer.action_std
+    )
     torch.testing.assert_close(physical_std, torch.tensor([math.radians(0.5)] * 7 + [0.0005]))
     observations = torch.randn(5, 2)
-    torch.testing.assert_close(state.actor(observations).mean, bc(observations)[:, :1])
+    torch.testing.assert_close(state.agent.policy(observations).mean, bc(observations)[:, :1])
 
 
 def test_checkpoint_resume_reproduces_next_training_iteration(tmp_path):
@@ -171,16 +173,19 @@ def test_checkpoint_resume_reproduces_next_training_iteration(tmp_path):
     save_training_checkpoint(path, state)
     expected = train_dapg.train_iteration(state, BanditEnv(), demos, steps=8)
     restored = load_training_checkpoint(path)
-    assert restored.config.critic.hidden_dims == (8, 4)
-    assert restored.critic.optimizer.state
+    assert restored.agent.config.critic.hidden_dims == (8, 4)
+    assert restored.agent.critic.optimizer.state
     assert restored.rng is not None
     restore_rng(restored.rng)
     actual = train_dapg.train_iteration(restored, BanditEnv(), demos, steps=8)
 
     assert actual == pytest.approx(expected, abs=0, rel=0)
-    assert restored.iteration == 2
+    assert restored.agent.iteration == 2
     assert restored.env_steps == 16
-    for model, other in ((state.actor, restored.actor), (state.critic, restored.critic)):
+    for model, other in (
+        (state.agent.policy, restored.agent.policy),
+        (state.agent.critic, restored.agent.critic),
+    ):
         for name, tensor in model.state_dict().items():
             torch.testing.assert_close(tensor, other.state_dict()[name], rtol=0, atol=0)
 
@@ -195,13 +200,15 @@ def test_training_bootstraps_critic_at_an_unfinished_rollout(tmp_path, monkeypat
         def step(self, action):
             return np.array([1.0], dtype=np.float32), 0.0, False, False, {"success": False}
 
-    monkeypatch.setattr(state.critic, "forward", lambda observations: torch.ones(len(observations)))
+    monkeypatch.setattr(
+        state.agent.critic, "forward", lambda observations: torch.ones(len(observations))
+    )
 
     def record_update(observations, returns):
         targets.extend(returns.tolist())
         return {"Baseline Loss": 0.0}
 
-    monkeypatch.setattr(state.critic, "update", record_update)
+    monkeypatch.setattr(state.agent.critic, "update", record_update)
     train_dapg.train_iteration(state, UnfinishedEnv(), demos, steps=2)
     assert sorted(targets) == pytest.approx(sorted([config.gamma**2, config.gamma]))
 
@@ -219,7 +226,7 @@ def test_train_run_records_evaluation_and_resumes_to_exact_budget(tmp_path, monk
     run_dir = train_dapg.run(replace(config, total_steps=13))
     saved = load_training_checkpoint(run_dir / "checkpoint.pt")
     assert saved.env_steps == 13
-    assert saved.iteration == 2
+    assert saved.agent.iteration == 2
     assert all(env.closed for env in environments)
     rows = [json.loads(row) for row in (run_dir / "metrics.jsonl").read_text().splitlines()]
     metrics = [row for row in rows if "rollout/steps" in row]
@@ -246,9 +253,9 @@ def test_train_run_records_evaluation_and_resumes_to_exact_budget(tmp_path, monk
     )
     resumed = load_training_checkpoint(resumed_dir / "checkpoint.pt")
     assert resumed.env_steps == 17
-    assert resumed.iteration == 3
-    assert resumed.config.data_dir == config.data_dir
-    assert resumed.config.npg == config.npg
+    assert resumed.agent.iteration == 3
+    assert resumed.agent.config.data_dir == config.data_dir
+    assert resumed.agent.config.npg == config.npg
     assert resumed_dir != run_dir
 
 
@@ -266,11 +273,9 @@ def test_training_improves_known_bandit_objective():
         demo_weight=0.1,
     )
     state = TrainingState(
-        policy,
-        ValueCritic(1, (), 0.01),
+        DAPGAgent(policy, ValueCritic(1, (), 0.01), config),
         normalizer,
         {"architecture": {"obs_horizon": 1}},
-        config,
     )
     demos = Demonstrations(torch.ones(32, 1), torch.full((32, 1, 1), 0.5))
     before = deepcopy(policy)
@@ -313,11 +318,11 @@ def test_training_step_uses_real_mujoco_environment():
             critic=CriticConfig(num_epochs=1),
             npg=NPGConfig(cg_iterations=2, backtrack_steps=4),
         )
-        state = TrainingState(policy, critic, normalizer, metadata, config)
+        state = TrainingState(DAPGAgent(policy, critic, config), normalizer, metadata)
         demos = Demonstrations(torch.from_numpy(obs).repeat(4, 1), torch.zeros(4, 1, len(action)))
         metrics = train_dapg.train_iteration(state, env, demos, steps=4)
         assert state.env_steps == 4
-        assert state.iteration == 1
+        assert state.agent.iteration == 1
         assert all(np.isfinite(value) for value in metrics.values())
     finally:
         env.close()

@@ -6,11 +6,10 @@ from typing import Any
 
 import tyro
 
-from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.config import BCEvalConfig
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
+from mujoco_lab.learning.envs.factory import create_env
 
 
 def create_cube_evaluation_env(
@@ -33,31 +32,30 @@ def create_cube_evaluation_env(
         if cube_yaw_range_degrees is None
         else cube_yaw_range_degrees
     )
-    robot_config = load_robot_config(robot_type)
-    simulator = Simulator(
-        create_cube_stack(cubes, environment=replay["environment"]),
-        robots=[RobotSpec(robot_name, robot_type, config=robot_config)],
-        dt=dt,
-    )
-    task = CubeStackTask(simulator, cubes)
     xy_range = replay["xy_range"] if xy_range is None else xy_range
     min_gap = replay["min_gap"] if min_gap is None else min_gap
-    env = CubeStackEnv(
-        task,
-        xy_range=xy_range,
-        min_gap=min_gap,
-        cube_yaw_range_degrees=yaw_range,
+    env = create_env(
+        CubeStackReplayConfig(
+            robot=robot_type,
+            cubes=cubes,
+            environment=replay["environment"],
+            xy_range=xy_range,
+            min_gap=min_gap,
+            cube_yaw_range_degrees=yaw_range,
+            physics_steps_per_action=action_repeat,
+        ),
         max_steps=max_steps,
-        physics_steps_per_action=action_repeat,
+        robot_name=robot_name,
+        dt=dt,
     )
     scene = {
         "robot": robot_type,
         "robot_name": robot_name,
         "cubes": cubes,
         "environment": replay["environment"],
-        "dt": simulator.dt,
-        "simulation_hz": 1.0 / simulator.dt,
-        "action_execution_hz": 1.0 / (simulator.dt * action_repeat),
+        "dt": env.simulator.dt,
+        "simulation_hz": 1.0 / env.simulator.dt,
+        "action_execution_hz": 1.0 / (env.simulator.dt * action_repeat),
         "physics_steps_per_action": action_repeat,
         "cube_yaw_range_degrees": yaw_range,
         "xy_range": xy_range,
