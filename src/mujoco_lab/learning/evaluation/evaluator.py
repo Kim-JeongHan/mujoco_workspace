@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -20,6 +21,10 @@ from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.rendering.camera import create_free_camera
 from mujoco_lab.rendering.video import VideoRecorder
+from mujoco_lab.simulator_manager import _passive_viewer
+
+if TYPE_CHECKING:
+    from mujoco.viewer import Handle
 
 
 def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -90,7 +95,7 @@ def evaluation_log_metrics(summary: Mapping[str, Any]) -> dict[str, int | float]
 class PolicyEvaluator:
     """Reuse an evaluation environment and settings across policies or checkpoints.
 
-    Episode history, progress, and recordings are local to each evaluation call.
+    Episode history, progress, viewer, and recordings are local to each evaluation call.
     The caller owns the environment and chooses output paths for each run.
     Gaussian policies execute their mean; BC policies retain their sampling interface.
     """
@@ -118,14 +123,25 @@ class PolicyEvaluator:
         model.eval()
         episodes = []
         try:
-            with torch.inference_mode():
+            viewing = (
+                _passive_viewer(
+                    self.env.simulator, create_free_camera(lookat=self.env.camera_lookat)
+                )
+                if self.config.viewer
+                else nullcontext(None)
+            )
+            with torch.inference_mode(), viewing as viewer:
                 for index in range(self.config.num_episodes):
+                    if viewer is not None and not viewer.is_running():
+                        break
                     row = self._run_episode(
-                        model, normalizer, metadata, index, sampling_num_steps, video_dir
+                        model, normalizer, metadata, index, sampling_num_steps, video_dir, viewer
                     )
                     episodes.append(row)
                     if on_episode is not None:
                         on_episode(row)
+                    if row["termination_reason"] == "viewer_closed":
+                        break
         finally:
             model.train(was_training)
         return episodes, summarize(episodes)
@@ -179,6 +195,7 @@ class PolicyEvaluator:
         index: int,
         sampling_num_steps: int,
         video_dir: Path | None,
+        viewer: Handle | None = None,
     ) -> dict[str, Any]:
         """Run one fresh episode using the environment's physics timestep."""
         env = self.env
@@ -186,7 +203,8 @@ class PolicyEvaluator:
         max_steps = self.max_steps
         obs_horizon = metadata["architecture"]["obs_horizon"]
         execution_horizon = metadata["architecture"]["execution_horizon"]
-        raw_obs, _ = env.reset(seed=env_seed)
+        with viewer.lock() if viewer is not None else nullcontext():
+            raw_obs, _ = env.reset(seed=env_seed)
         start_sim_time = float(env.simulator.data.time)
         task = env.task
         progress = (
@@ -207,15 +225,35 @@ class PolicyEvaluator:
                 recorder.record_initial(camera)
             with torch.random.fork_rng():
                 torch.manual_seed(env_seed)
+                wall_start = time.monotonic()
                 while steps < max_steps:
+                    if viewer is not None and not viewer.is_running():
+                        reason = "viewer_closed"
+                        break
                     physical = self._predict_actions(model, normalizer, history, sampling_num_steps)
                     for next_act in physical[:execution_horizon]:
-                        next_obs, reward, terminated, truncated, info = env.step(next_act)
-                        if progress is not None:
-                            progress.observe()
+                        if viewer is not None and not viewer.is_running():
+                            reason = "viewer_closed"
+                            break
+                        with viewer.lock() if viewer is not None else nullcontext():
+                            next_obs, reward, terminated, truncated, info = env.step(next_act)
+                            if progress is not None:
+                                progress.observe()
+                            if recorder is not None:
+                                recorder.record_due(camera)
                         steps += 1
-                        if recorder is not None:
-                            recorder.record_due(camera)
+                        if viewer is not None:
+                            viewer.sync(state_only=True)
+                            with viewer.lock():
+                                env.simulator.model.opt.timestep = env.simulator.dt
+                            remaining = (
+                                wall_start
+                                + float(env.simulator.data.time)
+                                - start_sim_time
+                                - time.monotonic()
+                            )
+                            if remaining > 0:
+                                time.sleep(remaining)
                         episode_return += float(reward)
                         success = bool(info["success"]) and terminated and not truncated
                         history.append(next_obs.copy())
@@ -229,7 +267,7 @@ class PolicyEvaluator:
                             else:
                                 reason = "time_limit"
                             break
-                    if terminated or truncated or steps >= max_steps:
+                    if reason == "viewer_closed" or terminated or truncated or steps >= max_steps:
                         break
         row = {
             "env_seed": env_seed,

@@ -14,6 +14,7 @@ class EvaluationConfig:
     min_gap: float = 0.01
     cube_yaw_range_degrees: float = 45.0
     book_yaw_range_degrees: float | None = None
+    viewer: bool = False  # Show live evaluation at real-time speed.
     video_episodes: int = 3
     video_fps: int = 20
     video_width: int = 640

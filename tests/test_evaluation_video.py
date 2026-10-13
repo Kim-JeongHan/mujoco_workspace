@@ -1,5 +1,6 @@
 """Streaming evaluation video lifecycle and file-based W&B logging."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +62,7 @@ class Env:
         )
 
 
-def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
+def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None, viewer=False):
     model = MSEPolicy(1, 1, 1, hidden_dims=())
     with torch.no_grad():
         for parameter in model.parameters():
@@ -90,6 +91,7 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None):
             num_episodes=3,
             seed=100,
             max_seconds=0.004,
+            viewer=viewer,
             video_episodes=num_video_episodes,
             video_fps=20,
             video_width=64,
@@ -185,3 +187,121 @@ def test_video_closes_when_environment_step_fails(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="step failed"):
         run(Env(fail_step=True), video_dir=tmp_path, num_video_episodes=1)
     assert events == ["initial", "close"]
+
+
+class Viewer:
+    def __init__(self, *, close_after=100):
+        self.close_after = close_after
+        self.sync_calls = 0
+        self.locked = False
+        self.closed = False
+
+    def is_running(self):
+        return self.sync_calls < self.close_after
+
+    @contextmanager
+    def lock(self):
+        self.locked = True
+        try:
+            yield
+        finally:
+            self.locked = False
+
+    def sync(self, *, state_only=False):
+        assert state_only
+        assert not self.locked
+        self.sync_calls += 1
+
+
+def install_viewer(monkeypatch, viewer):
+    @contextmanager
+    def viewing(simulator, camera):
+        try:
+            yield viewer
+        finally:
+            viewer.closed = True
+
+    monkeypatch.setattr("mujoco_lab.learning.evaluation.evaluator._passive_viewer", viewing)
+
+
+def test_viewer_preserves_headless_results_and_locks_reset_and_step(monkeypatch):
+    viewer = Viewer()
+    install_viewer(monkeypatch, viewer)
+    waits = []
+    clock = [0.0]
+
+    def sleep(duration):
+        waits.append(duration)
+        clock[0] += duration
+
+    predict = PolicyEvaluator._predict_actions
+
+    def timed_predict(self, *args):
+        clock[0] += 0.001
+        return predict(self, *args)
+
+    monkeypatch.setattr(PolicyEvaluator, "_predict_actions", timed_predict)
+    monkeypatch.setattr("mujoco_lab.learning.evaluation.evaluator.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("mujoco_lab.learning.evaluation.evaluator.time.sleep", sleep)
+
+    class ViewingEnv(Env):
+        def __init__(self):
+            super().__init__()
+            self.simulator.model = SimpleNamespace(opt=SimpleNamespace(timestep=self.simulator.dt))
+
+        def reset(self, *, seed):
+            assert viewer.locked
+            return super().reset(seed=seed)
+
+        def step(self, action):
+            assert viewer.locked
+            assert self.simulator.model.opt.timestep == self.simulator.dt
+            # Simulate a Physics-panel timestep edit, restored after viewer sync.
+            self.simulator.model.opt.timestep = 1.0
+            return super().step(action)
+
+    expected = run(Env())
+    assert waits == []
+    assert run(ViewingEnv(), viewer=True) == expected
+    assert viewer.sync_calls == 6
+    assert viewer.closed
+    np.testing.assert_allclose(waits, [0.001] * 6)
+
+
+def test_closing_viewer_ends_evaluation_without_starting_another_episode(monkeypatch):
+    viewer = Viewer(close_after=1)
+    install_viewer(monkeypatch, viewer)
+    env = Env()
+    env.simulator.model = SimpleNamespace(opt=SimpleNamespace(timestep=env.simulator.dt))
+    rows, summary = run(env, viewer=True)
+    assert len(rows) == summary["attempted"] == 1
+    assert rows[0]["termination_reason"] == "viewer_closed"
+    assert rows[0]["steps"] == 1
+    assert rows[0]["sim_seconds"] == pytest.approx(env.action_dt)
+    assert not rows[0]["success"]
+    assert viewer.closed
+
+
+def test_viewer_and_video_close_when_environment_step_fails(tmp_path, monkeypatch):
+    viewer = Viewer()
+    install_viewer(monkeypatch, viewer)
+    events = []
+
+    class Recorder:
+        def __init__(self, simulator, output, **settings):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            events.append("video_closed")
+
+        def record_initial(self, camera):
+            pass
+
+    monkeypatch.setattr("mujoco_lab.learning.evaluation.evaluator.VideoRecorder", Recorder)
+    with pytest.raises(RuntimeError, match="step failed"):
+        run(Env(fail_step=True), viewer=True, video_dir=tmp_path, num_video_episodes=1)
+    assert events == ["video_closed"]
+    assert viewer.closed

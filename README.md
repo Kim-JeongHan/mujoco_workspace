@@ -82,6 +82,11 @@ uv run python -m mujoco_lab.learning.evaluate_cube --checkpoint <PATH>
 uv run python -m mujoco_lab.learning.evaluate_book --checkpoint <PATH>
 ```
 
+Add `--evaluation.viewer` to watch live policy evaluation. The viewer runs at
+real-time speed and closes after the requested episodes; closing its window ends
+evaluation early. Use `--evaluation.video-episodes 0` to watch without saving MP4s,
+or a positive count to record episodes while viewing.
+
 BC supports `--policy-type mse`, `flow`, and `diffusion`. Diffusion uses an
 observation-conditioned temporal U-Net, epsilon-prediction training, and DDIM
 sampling. It shares the dataset, normalization, EMA, and action-chunk execution
