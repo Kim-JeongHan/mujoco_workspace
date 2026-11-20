@@ -3,22 +3,24 @@
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 from torch import nn
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import DiffusionBCTrainConfig, DiffusionSchedulerConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.models.diffusion import TemporalUnet
 from mujoco_lab.learning.policies import DiffusionPolicy, build_policy
 
 
-def make_policy(chunk_size=3, **kwargs):
+def make_policy(chunk_size=3):
     return DiffusionPolicy(
         state_dim=4,
         action_dim=2,
         chunk_size=chunk_size,
+        scheduler_config=DiffusionSchedulerConfig(),
         down_dims=(16, 32),
         time_embed_dim=16,
-        **kwargs,
     )
 
 
@@ -26,6 +28,7 @@ def make_policy(chunk_size=3, **kwargs):
 def test_unet_preserves_chunk_length_and_uses_observation_and_time(chunk_size):
     torch.manual_seed(5)
     policy = make_policy(chunk_size)
+    assert isinstance(policy.denoiser, TemporalUnet)
     state = torch.randn(2, 4, requires_grad=True)
     actions = torch.randn(2, chunk_size, 2)
     timesteps = torch.tensor([10, 20])
@@ -94,26 +97,22 @@ def test_sampler_preserves_device_dtype_and_seed(dtype, device):
 
 
 def test_checkpoint_restores_actual_unet_and_complete_scheduler_settings(tmp_path):
-    config = BCTrainConfig(
+    config = DiffusionBCTrainConfig(
         policy_type="diffusion",
         chunk_size=3,
         execution_horizon=2,
-        diffusion_down_dims=(16, 32),
-        diffusion_time_embed_dim=16,
-        diffusion_num_train_timesteps=40,
-        diffusion_beta_schedule="linear",
+        down_dims=(16, 32),
+        time_embed_dim=16,
+        scheduler=DiffusionSchedulerConfig(
+            num_train_timesteps=40,
+            beta_schedule="linear",
+            beta_start=0.001,
+            beta_end=0.05,
+            timestep_spacing="trailing",
+        ),
         sampling_num_steps=7,
     )
-    policy = build_policy(
-        "diffusion",
-        state_dim=4,
-        action_dim=2,
-        chunk_size=3,
-        diffusion_down_dims=config.diffusion_down_dims,
-        diffusion_time_embed_dim=config.diffusion_time_embed_dim,
-        diffusion_num_train_timesteps=config.diffusion_num_train_timesteps,
-        diffusion_beta_schedule=config.diffusion_beta_schedule,
-    )
+    policy = build_policy(config, state_dim=4, action_dim=2)
     normalizer = Normalizer(
         state_mean=np.zeros(2, dtype=np.float32),
         state_std=np.ones(2, dtype=np.float32),
@@ -121,20 +120,30 @@ def test_checkpoint_restores_actual_unet_and_complete_scheduler_settings(tmp_pat
         action_std=np.array([0.3, 0.01], dtype=np.float32),
     )
     path = tmp_path / "diffusion.pt"
-    save_checkpoint(path, policy, normalizer, config, optimizer_step=7)
+    save_checkpoint(
+        path,
+        policy,
+        normalizer,
+        config,
+        optimizer_step=7,
+        environment=checkpoint_environment(config),
+    )
     loaded, restored_normalizer, metadata = load_checkpoint(path)
     assert isinstance(loaded, DiffusionPolicy)
-    architecture = metadata["architecture"]
-    assert architecture["diffusion_down_dims"] == [16, 32]
-    assert architecture["diffusion_time_embed_dim"] == 16
-    scheduler_settings = architecture["diffusion_scheduler_config"]
+    architecture = metadata.policy
+    assert architecture.diffusion_down_dims == (16, 32)
+    assert architecture.diffusion_time_embed_dim == 16
+    scheduler_settings = architecture.diffusion_scheduler_config
     assert scheduler_settings["num_train_timesteps"] == 40
     assert scheduler_settings["beta_schedule"] == "linear"
+    assert scheduler_settings["beta_start"] == 0.001
+    assert scheduler_settings["beta_end"] == 0.05
+    assert scheduler_settings["timestep_spacing"] == "trailing"
     assert scheduler_settings["prediction_type"] == "epsilon"
     assert not scheduler_settings["clip_sample"]
     for name, value in scheduler_settings.items():
         assert loaded.scheduler.config[name] == value
-    assert metadata["train_config"]["sampling_num_steps"] == 7
+    assert metadata.train_config["sampling_num_steps"] == 7
     np.testing.assert_array_equal(restored_normalizer.action_std, normalizer.action_std)
     state = torch.randn(2, 4)
     torch.manual_seed(11)
@@ -142,12 +151,6 @@ def test_checkpoint_restores_actual_unet_and_complete_scheduler_settings(tmp_pat
     torch.manual_seed(11)
     after = loaded.sample_actions(state, num_steps=7)
     torch.testing.assert_close(after, before, rtol=0, atol=0)
-
-
-@pytest.mark.parametrize("num_steps", [0, 101])
-def test_sampler_rejects_unsupported_step_counts(num_steps):
-    with pytest.raises(ValueError):
-        make_policy().sample_actions(torch.zeros(1, 4), num_steps=num_steps)
 
 
 def test_loss_rejects_silently_broadcast_action_chunks():

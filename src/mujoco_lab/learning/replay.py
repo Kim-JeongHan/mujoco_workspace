@@ -19,7 +19,7 @@ from mujoco_lab import (
     create_cube_stack,
 )
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.learning.datasets.episode import Episode, load_episode
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.replay import model_signature
 from mujoco_lab.utils.logger import Logger
 
@@ -143,7 +143,7 @@ def main() -> None:
     paths = sorted(config.path.glob("*.npz")) if config.path.is_dir() else [config.path]
     if not paths:
         raise ValueError(f"No episode NPZ files found in {config.path}")
-    replay = EpisodeReplay(load_episode(paths[0]))
+    replay = EpisodeReplay(Episode.load(paths[0]))
     episode_index = 0
     logger = Logger()
 
@@ -152,7 +152,7 @@ def main() -> None:
         if len(paths) == 1:
             return None
         next_index = (episode_index + direction) % len(paths)
-        replay.load_episode(load_episode(paths[next_index]))
+        replay.load_episode(Episode.load(paths[next_index]))
         episode_index = next_index
         logger.info(f"Episode {episode_index + 1}/{len(paths)}: {paths[episode_index].name}")
         return replay.frame_count, replay.frame_dt, replay.frame_times.tolist()

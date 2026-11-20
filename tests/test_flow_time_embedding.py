@@ -3,9 +3,10 @@
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import FlowBCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.models import SinusoidalTimeEmbedding
 from mujoco_lab.learning.policies.factory import build_policy
@@ -35,11 +36,11 @@ def _normalizer():
     )
 
 
-def _config(policy_type, flow_time_embed_dim=128):
-    return BCTrainConfig(
-        policy_type=policy_type,
-        flow_time_embed_dim=flow_time_embed_dim,
+def _config(time_embed_dim=128):
+    return FlowBCTrainConfig(
+        policy_type="flow",
         hidden_dims=(8,),
+        time_embed_dim=time_embed_dim,
         chunk_size=2,
         execution_horizon=1,
         action_execution_hz=500,
@@ -48,19 +49,19 @@ def _config(policy_type, flow_time_embed_dim=128):
 
 @pytest.mark.parametrize("width", [64, 128])
 def test_flow_embedding_checkpoint_round_trip(tmp_path, width):
-    config = _config("flow", flow_time_embed_dim=width)
-    model = build_policy(
-        "flow",
-        state_dim=4,
-        action_dim=1,
-        chunk_size=2,
-        hidden_dims=(8,),
-        flow_time_embed_dim=width,
-    )
+    config = _config(time_embed_dim=width)
+    model = build_policy(config, state_dim=4, action_dim=1)
     path = tmp_path / "embedded.pt"
-    save_checkpoint(path, model, _normalizer(), config, optimizer_step=3)
+    save_checkpoint(
+        path,
+        model,
+        _normalizer(),
+        config,
+        optimizer_step=3,
+        environment=checkpoint_environment(config),
+    )
     loaded, _, metadata = load_checkpoint(path)
-    assert metadata["architecture"]["flow_time_embed_dim"] == width
+    assert metadata.policy.flow_time_embed_dim == width
     assert loaded.time_embed_dim == width
     states = torch.randn(2, 4)
     torch.manual_seed(5)

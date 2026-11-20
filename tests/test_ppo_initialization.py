@@ -3,10 +3,11 @@
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.agents.initialization import initialize_actor
 from mujoco_lab.learning.checkpoint import save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import FlowBCTrainConfig, MSEBCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.learning.trainers.train_ppo import initialize_agent
@@ -14,14 +15,13 @@ from mujoco_lab.learning.trainers.train_ppo import initialize_agent
 
 def test_initialize_actor_from_bc_checkpoint(tmp_path):
     hidden_dims = (16, 8)
-    config = BCTrainConfig(
-        policy_type="mse",
+    config = MSEBCTrainConfig(
         hidden_dims=hidden_dims,
         obs_horizon=2,
         chunk_size=3,
         execution_horizon=1,
     )
-    bc = build_policy("mse", state_dim=6, action_dim=2, chunk_size=3, hidden_dims=hidden_dims)
+    bc = build_policy(config, state_dim=6, action_dim=2)
     normalizer = Normalizer(
         state_mean=np.array([1, 2, 3], dtype=np.float32),
         state_std=np.array([2, 3, 4], dtype=np.float32),
@@ -29,7 +29,9 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path):
         action_std=np.array([7, 8], dtype=np.float32),
     )
     path = tmp_path / "bc.pt"
-    save_checkpoint(path, bc, normalizer, config, optimizer_step=12)
+    save_checkpoint(
+        path, bc, normalizer, config, optimizer_step=12, environment=checkpoint_environment(config)
+    )
 
     agent, restored, metadata = initialize_agent(
         path, initial_log_std=-1.5, critic_hidden_dims=(12, 5)
@@ -49,8 +51,8 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path):
     assert all(parameter.requires_grad for parameter in actor.parameters())
     for name in ("state_mean", "state_std", "action_mean", "action_std"):
         np.testing.assert_array_equal(getattr(restored, name), getattr(normalizer, name))
-    assert metadata["architecture"]["obs_horizon"] == 2
-    assert metadata["optimizer_step"] == 12
+    assert metadata.policy.obs_horizon == 2
+    assert metadata.optimizer_step == 12
 
     actor_storage = {parameter.data_ptr() for parameter in actor.parameters()}
     assert all(parameter.data_ptr() not in actor_storage for parameter in critic.parameters())
@@ -67,8 +69,8 @@ def test_initialize_actor_from_bc_checkpoint(tmp_path):
 
 
 def test_initialize_actor_rejects_flow_checkpoint(tmp_path):
-    config = BCTrainConfig(policy_type="flow", hidden_dims=(8,), obs_horizon=1, chunk_size=1)
-    bc = build_policy("flow", state_dim=3, action_dim=2, chunk_size=1, hidden_dims=(8,))
+    config = FlowBCTrainConfig(policy_type="flow", hidden_dims=(8,), obs_horizon=1, chunk_size=1)
+    bc = build_policy(config, state_dim=3, action_dim=2)
     normalizer = Normalizer(
         state_mean=np.zeros(3, dtype=np.float32),
         state_std=np.ones(3, dtype=np.float32),
@@ -76,6 +78,8 @@ def test_initialize_actor_rejects_flow_checkpoint(tmp_path):
         action_std=np.ones(2, dtype=np.float32),
     )
     path = tmp_path / "flow.pt"
-    save_checkpoint(path, bc, normalizer, config, optimizer_step=0)
+    save_checkpoint(
+        path, bc, normalizer, config, optimizer_step=0, environment=checkpoint_environment(config)
+    )
     with pytest.raises(ValueError, match="MSE BC checkpoint"):
         initialize_actor(path)

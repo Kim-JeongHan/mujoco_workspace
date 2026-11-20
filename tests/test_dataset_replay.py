@@ -15,7 +15,7 @@ from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe as load_cube_recipe
 from mujoco_lab.learning import replay as replay_cli
 from mujoco_lab.learning.config.replay import CubeStackReplayConfig
-from mujoco_lab.learning.datasets.episode import Episode, load_episode, save_episode
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.replay import (
     capture_frame,
     capture_metadata,
@@ -62,8 +62,8 @@ def recording():
 def test_recorded_episode_round_trip_and_seek_restore_scene(recording, tmp_path, monkeypatch):
     episode, geometry = recording
     path = tmp_path / "episode.npz"
-    save_episode(path, episode)
-    loaded = load_episode(path)
+    episode.save(path)
+    loaded = Episode.load(path)
     assert loaded.metadata == episode.metadata
     for name in ("qpos", "frame_times", "mocap_pos", "mocap_quat", "states", "actions"):
         np.testing.assert_array_equal(getattr(loaded, name), getattr(episode, name))
@@ -90,14 +90,14 @@ def test_recorded_episode_round_trip_and_seek_restore_scene(recording, tmp_path,
         with pytest.raises(IndexError):
             replay.set_frame(index)
     with pytest.raises(FileExistsError):
-        save_episode(path, episode)
+        episode.save(path)
 
 
 def test_old_episode_still_loads_for_learning_but_cannot_replay(tmp_path):
     episode = Episode(states=np.zeros((3, 5)), actions=np.zeros((2, 2)))
     path = tmp_path / "old.npz"
-    save_episode(path, episode)
-    loaded = load_episode(path)
+    episode.save(path)
+    loaded = Episode.load(path)
     assert len(loaded) == 2
     assert loaded.qpos is None
     with pytest.raises(ValueError, match="learning states are not MuJoCo qpos"):
@@ -174,8 +174,8 @@ def test_directory_replay_loads_files_in_order_and_wraps_navigation(
 ):
     episode, _ = recording
     shorter = shorter_recording(episode)
-    save_episode(tmp_path / "episode_000001.npz", shorter)
-    save_episode(tmp_path / "episode_000000.npz", episode)
+    shorter.save(tmp_path / "episode_000001.npz")
+    episode.save(tmp_path / "episode_000000.npz")
     monkeypatch.setattr(
         replay_cli.tyro, "cli", lambda *_args, **_kwargs: replay_cli.Config(tmp_path)
     )

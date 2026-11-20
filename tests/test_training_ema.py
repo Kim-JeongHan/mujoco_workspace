@@ -3,9 +3,10 @@
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import MSEBCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
 from mujoco_lab.learning.trainers.train_bc import run_training
@@ -13,8 +14,7 @@ from mujoco_lab.learning.trainers.train_bc import run_training
 
 def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    config = BCTrainConfig(
-        policy_type="mse",
+    config = MSEBCTrainConfig(
         obs_horizon=1,
         chunk_size=1,
         execution_horizon=1,
@@ -80,9 +80,11 @@ def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_pat
         expected_loss = np.mean(
             [
                 model.compute_loss(
-                    torch.from_numpy(state[None]), torch.from_numpy(action[None])
+                    torch.from_numpy(state[None]),
+                    torch.from_numpy(action[None]),
+                    valid_mask=torch.from_numpy(mask[None]),
                 ).item()
-                for state, action in validation
+                for state, action, mask in validation
             ]
         )
     logged_loss = next(
@@ -90,8 +92,15 @@ def test_ema_updates_after_optimizer_and_returns_plain_checkpoint_policy(tmp_pat
     )
     assert logged_loss == pytest.approx(expected_loss)
     path = tmp_path / "ema.pt"
-    save_checkpoint(path, model, normalizer, config, optimizer_step=3)
+    save_checkpoint(
+        path,
+        model,
+        normalizer,
+        config,
+        optimizer_step=3,
+        environment=checkpoint_environment(config),
+    )
     loaded, _, metadata = load_checkpoint(path)
-    assert metadata["optimizer_step"] == 3
+    assert metadata.optimizer_step == 3
     for actual, desired in zip(loaded.parameters(), model.parameters(), strict=True):
         torch.testing.assert_close(actual, desired)

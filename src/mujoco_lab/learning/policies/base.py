@@ -13,6 +13,15 @@ import torch
 from torch import nn
 
 
+def masked_action_mean(loss: torch.Tensor, valid_mask: torch.Tensor | None) -> torch.Tensor:
+    """Average coordinate losses over real actions, excluding padded chunk positions."""
+    if valid_mask is None:
+        return loss.mean()
+    if valid_mask.shape != loss.shape[:-1]:
+        raise ValueError("valid_mask must have shape (B, chunk_size)")
+    return (loss * valid_mask.unsqueeze(-1)).sum() / (valid_mask.sum() * loss.shape[-1])
+
+
 class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
     """Base class for policies that predict chunks of actions."""
 
@@ -30,12 +39,19 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         self.chunk_size = chunk_size
 
     @abc.abstractmethod
-    def compute_loss(self, state: torch.Tensor, action_chunk: torch.Tensor) -> torch.Tensor:
+    def compute_loss(
+        self,
+        state: torch.Tensor,
+        action_chunk: torch.Tensor,
+        *,
+        valid_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Compute the scalar training loss for a batch.
 
         Args:
             state (batch, dim): B N_s
             action_chunk (batch, chunk, dim): B C N_a
+            valid_mask (batch, chunk): Optional mask of real action targets.
 
         Returns:
             torch.Tensor: Scalar loss with shape ().

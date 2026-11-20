@@ -5,33 +5,29 @@ from pathlib import Path
 from typing import Literal
 
 from mujoco_lab.assets import RobotName
+from mujoco_lab.learning.config.diffusion import DiffusionSchedulerConfig
 from mujoco_lab.learning.config.evaluation import EvaluationConfig
 from mujoco_lab.learning.timing import physics_steps_per_action
 
 
 @dataclass
 class BCTrainConfig:
-    """Offline BC defaults; dimensions come from the demonstration dataset."""
+    """Shared offline BC data, optimization, timing, and evaluation settings."""
+
+    policy_type: Literal["mse", "flow", "diffusion"] = "mse"
 
     # Data and scene.
     data_dir: Path = Path("data/forte_mixed_1")
+    split_file: Path | None = None  # Reuse ordered seed assignments from a collection.
     output_dir: Path = Path("log")
     robot: RobotName = "forte"
 
-    # Policy architecture and observation/action timing.
-    policy_type: Literal["mse", "flow", "diffusion"] = "mse"
-    hidden_dims: tuple[int, ...] = (512, 512, 512)
+    # Observation/action timing.
     obs_horizon: int = 2  # Observation frames per policy input.
     chunk_size: int = 16  # Actions predicted per policy output.
     execution_horizon: int = 4  # Actions before replanning; 100 Hz / 4 = 25 Hz inference.
     simulation_hz: float = 500.0  # Physics and controller evaluations per simulated second.
     action_execution_hz: float = 100.0  # 500 Hz / 100 Hz = 5 physics steps/action.
-    sampling_num_steps: int = 20  # Euler steps for Flow or DDIM steps for Diffusion.
-    flow_time_embed_dim: int = 256  # Sinusoidal time feature width.
-    diffusion_down_dims: tuple[int, ...] = (128, 256, 512)
-    diffusion_time_embed_dim: int = 256
-    diffusion_num_train_timesteps: int = 100  # Training noise levels, separate from sampling steps.
-    diffusion_beta_schedule: Literal["linear", "squaredcos_cap_v2"] = "squaredcos_cap_v2"
 
     # Optimization.
     batch_size: int = 128
@@ -52,7 +48,7 @@ class BCTrainConfig:
 
     # Reproducibility and run identity.
     seed: int = 42
-    run_name: str | None = "forte-mse-cube1"
+    run_name: str | None = None
 
     @property
     def simulation_dt(self) -> float:
@@ -61,6 +57,35 @@ class BCTrainConfig:
     @property
     def physics_steps_per_action(self) -> int:
         return physics_steps_per_action(self.simulation_hz, self.action_execution_hz)
+
+
+@dataclass
+class MSEBCTrainConfig(BCTrainConfig):
+    """Train an MLP action regressor on demonstration chunks."""
+
+    hidden_dims: tuple[int, ...] = (512, 512, 512)
+
+
+@dataclass
+class FlowBCTrainConfig(BCTrainConfig):
+    """Train conditional flow matching on demonstration chunks."""
+
+    sampling_num_steps: int = 20  # Euler integration steps.
+    hidden_dims: tuple[int, ...] = (512, 512, 512)
+    time_embed_dim: int = 256
+
+
+@dataclass
+class DiffusionBCTrainConfig(BCTrainConfig):
+    """Train a temporal U-Net with the configured diffusion noise schedule."""
+
+    sampling_num_steps: int = 20  # DDIM sampling steps, independent of training noise levels.
+    down_dims: tuple[int, ...] = (128, 256, 512)
+    time_embed_dim: int = 256
+    scheduler: DiffusionSchedulerConfig = field(default_factory=DiffusionSchedulerConfig)
+
+
+type BCPolicyTrainConfig = MSEBCTrainConfig | FlowBCTrainConfig | DiffusionBCTrainConfig
 
 
 @dataclass

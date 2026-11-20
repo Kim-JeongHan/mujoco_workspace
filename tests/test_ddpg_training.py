@@ -1,5 +1,6 @@
 """DDPG gradients, target semantics, actual MuJoCo training, and exact resume."""
 
+from copy import deepcopy
 from dataclasses import replace
 
 import numpy as np
@@ -7,17 +8,19 @@ import pytest
 import torch
 
 from mujoco_lab.learning.agents import DDPGAgent
-from mujoco_lab.learning.config.ddpg import DDPGConfig
-from mujoco_lab.learning.config.evaluation import EvaluationConfig
-from mujoco_lab.learning.envs.factory import create_env
-from mujoco_lab.learning.evaluate_ddpg import run as evaluate_ddpg
-from mujoco_lab.learning.models.critic import QCritic
-from mujoco_lab.learning.policies.mse import MSEPolicy
-from mujoco_lab.learning.rl_checkpoint import (
+from mujoco_lab.learning.checkpoint import (
+    DDPGTrainingState,
     load_ddpg_checkpoint,
     restore_rng,
     save_ddpg_checkpoint,
 )
+from mujoco_lab.learning.config.ddpg import DDPGConfig
+from mujoco_lab.learning.config.evaluation import EvaluationConfig
+from mujoco_lab.learning.envs.factory import create_env
+from mujoco_lab.learning.evaluate_ddpg import run as evaluate_ddpg
+from mujoco_lab.learning.metadata import EnvironmentMetadata
+from mujoco_lab.learning.models.critic import QCritic
+from mujoco_lab.learning.policies.mse import MSEPolicy
 from mujoco_lab.learning.rollout.replay_buffer import ReplayBatch
 from mujoco_lab.learning.trainers import train_ddpg
 
@@ -123,7 +126,11 @@ def test_checkpoint_replays_the_next_physical_episode_and_update_exactly(tmp_pat
     try:
         torch.manual_seed(3)
         np.random.seed(3)
-        state = train_ddpg.initialize_training(config, env)
+        state = train_ddpg.initialize_training(
+            config,
+            env,
+            EnvironmentMetadata(train_ddpg.scene_config(config), config.dt, config.robot),
+        )
         train_ddpg.train_episode(state, env, max_steps=4)
         path = tmp_path / "ddpg.pt"
         save_ddpg_checkpoint(path, state)
@@ -173,3 +180,28 @@ def test_real_training_evaluation_and_resume_preserve_the_action_budget(tmp_path
     assert metrics["eval/attempted"] == 1 and metrics["train/env_steps"] == 9
     assert 0 <= metrics["eval/goal_success_rate"] <= 1
     assert all(np.isfinite(value) for value in metrics.values())
+
+
+def test_state_dict_can_be_restored_repeatedly_without_changing_saved_config(tmp_path):
+    config = small_config(tmp_path)
+    env = create_env(train_ddpg.scene_config(config), max_steps=4, terminate_on_success=False)
+    try:
+        state = train_ddpg.initialize_training(
+            config,
+            env,
+            EnvironmentMetadata(train_ddpg.scene_config(config), config.dt, config.robot),
+        )
+        train_ddpg.train_episode(state, env, max_steps=4)
+        payload = state.state_dict()
+        saved_config = deepcopy(payload["config"])
+
+        for _ in range(2):
+            restored = DDPGTrainingState.from_state_dict(payload)
+            assert restored.agent.config == config
+            assert restored.episodes == state.episodes
+            assert restored.moments.count == state.moments.count
+            assert len(restored.replay) == len(state.replay)
+            assert restored.normalizer.state_clip == state.normalizer.state_clip
+            assert payload["config"] == saved_config
+    finally:
+        env.close()

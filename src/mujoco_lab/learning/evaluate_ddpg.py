@@ -10,12 +10,10 @@ from uuid import uuid4
 import torch
 import tyro
 
-from mujoco_lab.learning.envs.factory import create_env
+from mujoco_lab.learning.checkpoint import load_ddpg_checkpoint
+from mujoco_lab.learning.evaluate import create_rollout_env
 from mujoco_lab.learning.evaluation import PolicyEvaluator, evaluation_log_metrics
 from mujoco_lab.learning.logging import Logger
-from mujoco_lab.learning.rl_checkpoint import load_ddpg_checkpoint
-from mujoco_lab.learning.timing import max_steps_for_seconds
-from mujoco_lab.learning.trainers.train_ddpg import scene_config
 
 
 def run(
@@ -41,11 +39,7 @@ def run(
         max_seconds=config.evaluation.max_seconds if max_seconds is None else max_seconds,
         video_episodes=video_episodes,
     )
-    config.evaluation = rollout
-    max_steps = max_steps_for_seconds(
-        rollout.max_seconds, config.dt * config.physics_steps_per_action
-    )
-    env = create_env(scene_config(config, evaluation=True), dt=config.dt, max_steps=max_steps)
+    env, _ = create_rollout_env(state.metadata.environment, rollout)
     run_dir = output_dir / "eval" / "ddpg" / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}"
     try:
         with Logger(
@@ -54,7 +48,7 @@ def run(
                 "checkpoint": str(checkpoint.resolve()),
                 "device": device,
                 "rollout": asdict(rollout),
-                "metadata": state.metadata,
+                "metadata": state.metadata.to_dict(),
             },
             wandb_mode=wandb_mode,
             step_metric="train/env_steps",

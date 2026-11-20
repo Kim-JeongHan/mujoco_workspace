@@ -1,12 +1,14 @@
 """Demonstration episode storage and validation."""
 
+from __future__ import annotations
+
 import json
 import math
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
@@ -37,29 +39,17 @@ class Episode:
         return self.metadata["observation"]["rotation_indices"]
 
     def validate_training_data(self) -> tuple[int, int]:
-        """Check training arrays and observation metadata; return feature dimensions."""
-        if (
-            self.states.ndim != 2
-            or self.actions.ndim != 2
-            or 0 in self.states.shape
-            or 0 in self.actions.shape
-            or len(self.states) != len(self.actions) + 1
-        ):
-            raise ValueError("states/actions must have shapes (T+1, S)/(T, A) with T,S,A > 0")
-        if not np.isfinite(self.states).all() or not np.isfinite(self.actions).all():
-            raise ValueError("states/actions must be finite")
-        observation = self.metadata.get("observation")
-        if not isinstance(observation, dict):
-            raise ValueError("Observation metadata must be an object")
-        frame_dim = self.states.shape[1]
-        if observation.get("frame_dim") != frame_dim:
+        """Check frame alignment and observation layout; return feature dimensions."""
+        frame_count, state_dim = self.states.shape
+        step_count, action_dim = self.actions.shape
+        if frame_count != step_count + 1:
+            raise ValueError("states must contain one more frame than actions")
+        observation = self.metadata["observation"]
+        if observation["frame_dim"] != state_dim:
             raise ValueError("Observation frame dimension does not match episode states")
-        indices = observation.get("rotation_indices")
-        if not isinstance(indices, list) or any(
-            type(index) is not int or not 0 <= index < frame_dim for index in indices
-        ):
-            raise ValueError("Observation rotation_indices must be in-range integers")
-        return self.states.shape[1], self.actions.shape[1]
+        if any(not 0 <= index < state_dim for index in observation["rotation_indices"]):
+            raise ValueError("Observation rotation_indices must be in range")
+        return state_dim, action_dim
 
     def check_physics_step_consistency(
         self, physics_steps_per_action: int, *, simulation_dt: float | None = None
@@ -83,100 +73,63 @@ class Episode:
                 "recollect with --simulation-hz matching the config"
             )
 
+    def save(self, path: str | Path) -> None:
+        """Save one episode as compressed NPZ without replacing an existing file."""
+        arrays: dict[str, np.ndarray | str] = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if value is not None:
+                arrays[item.name] = json.dumps(value) if item.name == "metadata" else value
+        target = Path(path)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=f".{target.name}.", suffix=".tmp", dir=target.parent, delete=False
+            ) as file:
+                temporary = Path(file.name)
+                np.savez_compressed(file, allow_pickle=False, **arrays)
+            os.link(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
-type EpisodeArrayName = Literal[
-    "states",
-    "actions",
-    "metadata",
-    "rewards",
-    "terminated",
-    "truncated",
-    "qpos",
-    "frame_times",
-    "mocap_pos",
-    "mocap_quat",
-]
+    @staticmethod
+    def load(path: str | Path) -> Episode:
+        """Load an episode without allowing pickled objects in the NPZ file."""
+        with np.load(path, allow_pickle=False) as data:
+            arrays = dict(data)
+            metadata = json.loads(str(arrays.pop("metadata").item()))
+            return Episode(metadata=metadata, **arrays)
 
+    @staticmethod
+    def load_all(data_dir: str | Path, *, success_only: bool = True) -> list[Episode]:
+        """Load sorted top-level NPZ episodes with validated observation metadata and shape.
 
-def save_episode(path: str | Path, episode: Episode) -> None:
-    """Save one episode as compressed NPZ without replacing an existing file."""
-    arrays: dict[EpisodeArrayName, np.ndarray | str] = {
-        "states": episode.states,
-        "actions": episode.actions,
-        "metadata": json.dumps(episode.metadata),
-    }
-    for name in (
-        "rewards",
-        "terminated",
-        "truncated",
-        "qpos",
-        "frame_times",
-        "mocap_pos",
-        "mocap_quat",
-    ):
-        value = getattr(episode, name)
-        if value is not None:
-            arrays[name] = value
-    target = Path(path)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", prefix=f".{target.name}.", suffix=".tmp", dir=target.parent, delete=False
-        ) as file:
-            temporary = Path(file.name)
-            np.savez_compressed(file, **arrays)
-        os.link(temporary, target)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        By default only episodes whose metadata has ``success is True`` are kept.
+        Failed and unlabeled attempts remain available with ``success_only=False``.
+        Optional rewards and replay arrays are left untouched.
+        Loading and validation errors propagate unchanged.
+        """
+        directory = Path(data_dir)
+        if not directory.is_dir():
+            raise ValueError(f"Episode directory does not exist: {directory}")
+        paths = sorted(path for path in directory.glob("*.npz") if path.is_file())
+        if not paths:
+            raise ValueError(f"No NPZ episodes found in {directory}")
 
+        episodes: list[Episode] = []
+        dimensions: tuple[int, int] | None = None
+        for path in paths:
+            episode = Episode.load(path)
+            if success_only and episode.metadata.get("success") is not True:
+                continue
+            shape = episode.validate_training_data()
+            if dimensions is None:
+                dimensions = shape
+            elif shape != dimensions:
+                raise ValueError(f"feature dimensions {shape} differ from expected {dimensions}")
+            episodes.append(episode)
 
-def load_episode(path: str | Path) -> Episode:
-    """Load an episode without allowing pickled objects in the NPZ file."""
-    with np.load(path, allow_pickle=False) as data:
-        metadata = json.loads(str(data["metadata"].item()))
-        return Episode(
-            states=data["states"],
-            actions=data["actions"],
-            rewards=data.get("rewards"),
-            terminated=data.get("terminated"),
-            truncated=data.get("truncated"),
-            metadata=metadata,
-            qpos=data.get("qpos"),
-            frame_times=data.get("frame_times"),
-            mocap_pos=data.get("mocap_pos"),
-            mocap_quat=data.get("mocap_quat"),
-        )
-
-
-def load_episodes(data_dir: str | Path, *, success_only: bool = True) -> list[Episode]:
-    """Load sorted top-level NPZ episodes with validated observation metadata and shape.
-
-    By default only episodes whose metadata has ``success is True`` are kept.
-    Failed and unlabeled attempts remain available with ``success_only=False``.
-    Optional rewards and replay arrays are left untouched.
-    Loading and validation errors propagate unchanged.
-    """
-    directory = Path(data_dir)
-    if not directory.is_dir():
-        raise ValueError(f"Episode directory does not exist: {directory}")
-    paths = sorted(path for path in directory.glob("*.npz") if path.is_file())
-    if not paths:
-        raise ValueError(f"No NPZ episodes found in {directory}")
-
-    episodes: list[Episode] = []
-    dimensions: tuple[int, int] | None = None
-    for path in paths:
-        episode = load_episode(path)
-        if success_only and episode.metadata.get("success") is not True:
-            continue
-        shape = episode.validate_training_data()
-        if dimensions is None:
-            dimensions = shape
-        elif shape != dimensions:
-            raise ValueError(f"feature dimensions {shape} differ from expected {dimensions}")
-        episodes.append(episode)
-
-    if not episodes:
-        raise ValueError(f"No eligible episodes found in {directory}")
-    return episodes
+        if not episodes:
+            raise ValueError(f"No eligible episodes found in {directory}")
+        return episodes

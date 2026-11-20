@@ -8,7 +8,7 @@ import torch
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from torch.utils.data import DataLoader
 
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import BCPolicyTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
@@ -19,7 +19,7 @@ from mujoco_lab.learning.policies.factory import build_policy
 
 
 def run_training(
-    config: BCTrainConfig,
+    config: BCPolicyTrainConfig,
     train_episodes: Sequence[Episode],
     validation_episodes: Sequence[Episode] = (),
     *,
@@ -28,7 +28,7 @@ def run_training(
 ) -> tuple[BasePolicy, Normalizer]:
     """Train BC from episodes and return the policy and normalizer.
 
-    Episodes should be validated with ``datasets.load_episodes`` and split before
+    Episodes should be validated with ``Episode.load_all`` and split before
     training. Feature dimensions and observation layouts are checked here without
     rescanning observation and action arrays. Inference checkpoints are saved separately;
     State statistics are fitted on raw training frames and applied to each frame before
@@ -37,19 +37,6 @@ def run_training(
     Callers supplying episodes directly must validate their arrays, observation metadata,
     and cadence first.
     """
-    if config.num_epochs <= 0:
-        raise ValueError("num_epochs must be positive")
-    if not 1 <= config.execution_horizon <= config.chunk_size:
-        raise ValueError("execution_horizon must be between 1 and chunk_size")
-    if config.sampling_num_steps <= 0:
-        raise ValueError("sampling_num_steps must be positive")
-    if (
-        config.policy_type == "diffusion"
-        and config.sampling_num_steps > config.diffusion_num_train_timesteps
-    ):
-        raise ValueError("Diffusion sampling steps must not exceed training timesteps")
-    if config.ema_decay is not None and not 0 <= config.ema_decay < 1:
-        raise ValueError("ema_decay must be None or in [0, 1)")
     if not train_episodes:
         raise ValueError("Training requires at least one episode")
     set_seed(config.seed)
@@ -88,16 +75,9 @@ def run_training(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_policy(
-        config.policy_type,
+        config,
         state_dim=frame_dim * config.obs_horizon,
         action_dim=action_dim,
-        chunk_size=config.chunk_size,
-        hidden_dims=config.hidden_dims,
-        flow_time_embed_dim=config.flow_time_embed_dim,
-        diffusion_down_dims=config.diffusion_down_dims,
-        diffusion_time_embed_dim=config.diffusion_time_embed_dim,
-        diffusion_num_train_timesteps=config.diffusion_num_train_timesteps,
-        diffusion_beta_schedule=config.diffusion_beta_schedule,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
@@ -113,8 +93,8 @@ def run_training(
     )
 
     @torch.compile(options={"fallback_random": True})
-    def train_step(state, action_chunk):
-        loss = model.compute_loss(state, action_chunk)
+    def train_step(state, action_chunk, valid_mask):
+        loss = model.compute_loss(state, action_chunk, valid_mask=valid_mask)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
@@ -127,17 +107,19 @@ def run_training(
     logged_samples = 0
     for epoch in range(config.num_epochs):
         model.train()
-        for state, action_chunk in train_loader:
+        for state, action_chunk, valid_mask in train_loader:
+            valid_actions = valid_mask.sum().item()
             state = state.to(device)
             action_chunk = action_chunk.to(device)
+            valid_mask = valid_mask.to(device)
 
-            loss = train_step(state, action_chunk)
+            loss = train_step(state, action_chunk, valid_mask)
             if averaged is not None:
                 averaged.update_parameters(model)
 
             step += 1
-            logged_loss += loss.item() * state.shape[0]
-            logged_samples += state.shape[0]
+            logged_loss += loss.item() * valid_actions
+            logged_samples += valid_actions
             if step % config.log_interval_steps == 0:
                 value = logged_loss / logged_samples
                 if logger is not None:
@@ -165,12 +147,14 @@ def run_training(
         validation_loss = 0.0
         validation_samples = 0
         with torch.no_grad():
-            for state, action_chunk in validation_loader:
+            for state, action_chunk, valid_mask in validation_loader:
+                valid_actions = valid_mask.sum().item()
                 state = state.to(device)
                 action_chunk = action_chunk.to(device)
-                loss = evaluation_model.compute_loss(state, action_chunk)
-                validation_loss += loss.item() * state.shape[0]
-                validation_samples += state.shape[0]
+                valid_mask = valid_mask.to(device)
+                loss = evaluation_model.compute_loss(state, action_chunk, valid_mask=valid_mask)
+                validation_loss += loss.item() * valid_actions
+                validation_samples += valid_actions
         evaluation_model.train(was_training)
         if validation_samples:
             value = validation_loss / validation_samples

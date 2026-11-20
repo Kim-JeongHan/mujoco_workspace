@@ -3,12 +3,13 @@
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import MSEBCTrainConfig
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.sequence import ChunkDataset
@@ -50,8 +51,7 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
     episode.validate_training_data()
     validation.validate_training_data()
     original = episode.states.copy()
-    config = BCTrainConfig(
-        policy_type="mse",
+    config = MSEBCTrainConfig(
         obs_horizon=2,
         chunk_size=1,
         execution_horizon=1,
@@ -86,12 +86,19 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
     held_out = normalizer.normalize_state(episode.states[-1])
     np.testing.assert_allclose(held_out[rotations], -0.8)
     np.testing.assert_allclose(normalizer.denormalize_state(held_out), episode.states[-1])
-    history, _ = ChunkDataset([episode], 1, normalizer, obs_horizon=2)[1]
+    history, _, _ = ChunkDataset([episode], 1, normalizer, obs_horizon=2)[1]
     np.testing.assert_allclose(history.reshape(2, -1)[:, rotations], original[:2, rotations])
     np.testing.assert_array_equal(episode.states, original)
 
     checkpoint = tmp_path / "raw.pt"
-    save_checkpoint(checkpoint, model, normalizer, config, optimizer_step=1)
+    save_checkpoint(
+        checkpoint,
+        model,
+        normalizer,
+        config,
+        optimizer_step=1,
+        environment=checkpoint_environment(config),
+    )
     _, restored, _ = load_checkpoint(checkpoint)
     np.testing.assert_array_equal(
         restored.normalize_state(episode.states[-1])[rotations], held_out[rotations]
@@ -105,7 +112,14 @@ def test_cube_stack_rotations_are_raw_while_other_features_and_actions_are_scale
         action_std=normalizer.action_std,
     )
     old_checkpoint = tmp_path / "old.pt"
-    save_checkpoint(old_checkpoint, model, old, config, optimizer_step=1)
+    save_checkpoint(
+        old_checkpoint,
+        model,
+        old,
+        config,
+        optimizer_step=1,
+        environment=checkpoint_environment(config),
+    )
     _, restored_old, _ = load_checkpoint(old_checkpoint)
     np.testing.assert_array_equal(restored_old.state_mean, old.state_mean)
     np.testing.assert_array_equal(restored_old.state_std, old.state_std)

@@ -15,7 +15,7 @@ import gymnasium as gym
 import numpy as np
 
 from mujoco_lab.behaviors import Expert
-from mujoco_lab.learning.datasets.episode import Episode, save_episode
+from mujoco_lab.learning.datasets.episode import Episode
 
 
 def collect_episode(
@@ -244,6 +244,6 @@ def iter_episodes(
             replay_metadata=replay_metadata,
         )
         if directory is not None:
-            save_episode(directory / f"episode_{index:06d}.npz", episode)
+            episode.save(directory / f"episode_{index:06d}.npz")
         yield episode
         del episode

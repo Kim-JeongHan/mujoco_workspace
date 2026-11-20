@@ -17,6 +17,7 @@ from mujoco_lab.behaviors.task import BookTask, CubeStackTask
 from mujoco_lab.learning.config import EvaluationConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation.progress import BookProgressTracker, CubeProgressTracker
+from mujoco_lab.learning.metadata import CheckpointMetadata
 from mujoco_lab.learning.policies.base import BasePolicy
 from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.timing import max_steps_for_seconds
@@ -119,7 +120,7 @@ class PolicyEvaluator:
         self,
         model: BasePolicy,
         normalizer: Normalizer,
-        metadata: Mapping[str, Any],
+        metadata: CheckpointMetadata,
         *,
         sampling_num_steps: int,
         on_episode: Callable[[dict[str, Any]], None] | None = None,
@@ -157,7 +158,7 @@ class PolicyEvaluator:
         self,
         model: BasePolicy,
         normalizer: Normalizer,
-        metadata: Mapping[str, Any],
+        metadata: CheckpointMetadata,
         output_dir: Path,
         *,
         sampling_num_steps: int = 1,
@@ -239,7 +240,7 @@ class PolicyEvaluator:
         self,
         model: BasePolicy,
         normalizer: Normalizer,
-        metadata: Mapping[str, Any],
+        metadata: CheckpointMetadata,
         index: int,
         sampling_num_steps: int,
         video_dir: Path | None,
@@ -249,8 +250,8 @@ class PolicyEvaluator:
         env = self.env
         env_seed = self.config.seed + index
         max_steps = self.max_steps
-        obs_horizon = metadata["architecture"]["obs_horizon"]
-        execution_horizon = metadata["architecture"]["execution_horizon"]
+        obs_horizon = metadata.policy.obs_horizon
+        execution_horizon = metadata.policy.execution_horizon
         with viewer.lock() if viewer is not None else nullcontext():
             raw_obs, _ = env.reset(seed=env_seed)
         start_sim_time = float(env.simulator.data.time)
@@ -267,7 +268,7 @@ class PolicyEvaluator:
         episode_return = 0.0
         success = False
         goal_success = False
-        goal_rewards = metadata.get("algorithm") == "ddpg"
+        goal_rewards = metadata.algorithm == "ddpg"
         reason = "time_limit"
         recording, camera, video_path = self._create_recording(index, env_seed, video_dir)
         with recording as recorder:

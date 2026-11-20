@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import tyro
@@ -11,6 +11,7 @@ from mujoco_lab.learning.config import BCEvalConfig, EvaluationConfig
 from mujoco_lab.learning.config.replay import BookReplayConfig
 from mujoco_lab.learning.envs.book import BookEnv
 from mujoco_lab.learning.envs.factory import create_env
+from mujoco_lab.learning.metadata import EnvironmentMetadata
 
 
 @dataclass
@@ -23,46 +24,39 @@ class BookEvalConfig(BCEvalConfig):
 
 
 def create_book_evaluation_env(
-    metadata: dict[str, Any],
+    environment: EnvironmentMetadata,
     *,
     xy_range: float | None = None,
     max_steps: int,
     book_yaw_range_degrees: float | None = None,
 ) -> tuple[BookEnv, dict[str, Any]]:
     """Restore the recorded book, robot, controller tuning, and action cadence."""
-    replay = metadata["dataset_metadata"]["replay"]
-    if replay["scene"] != "book_insertion" or replay["environment"] != "book_shelf":
-        raise ValueError("Expected a recorded book-insertion scene in book_shelf")
-    repeat = replay["physics_steps_per_action"]
-    architecture_repeat = metadata["architecture"]["physics_steps_per_action"]
-    if architecture_repeat != repeat:
-        raise ValueError("Checkpoint action cadence differs from recorded book cadence")
-    robot_type, robot_name = replay["robot"], replay["robot_name"]
-    env = create_env(
-        BookReplayConfig(
-            robot=robot_type,
-            book=replay["book"],
-            physics_steps_per_action=repeat,
-            xy_range=replay["xy_range"] if xy_range is None else xy_range,
-            book_yaw_range_degrees=(
-                replay["book_yaw_range_degrees"]
-                if book_yaw_range_degrees is None
-                else book_yaw_range_degrees
-            ),
+    scene = environment.scene
+    if not isinstance(scene, BookReplayConfig):
+        raise ValueError("Expected a book-insertion environment")
+    effective = replace(
+        scene,
+        xy_range=scene.xy_range if xy_range is None else xy_range,
+        book_yaw_range_degrees=(
+            scene.book_yaw_range_degrees
+            if book_yaw_range_degrees is None
+            else book_yaw_range_degrees
         ),
-        max_steps=max_steps,
-        robot_name=robot_name,
-        dt=replay["dt"],
     )
-    scene = {
-        **replay,
-        "xy_range": env.xy_range,
-        "book_yaw_range_degrees": env.book_yaw_range_degrees,
+    env = create_env(
+        effective,
+        max_steps=max_steps,
+        robot_name=environment.robot_name,
+        dt=environment.dt,
+    )
+    return env, {
+        **asdict(effective),
+        "robot_name": environment.robot_name,
+        "dt": env.simulator.dt,
         "simulation_hz": 1.0 / env.simulator.dt,
         "action_execution_hz": 1.0 / env.action_dt,
         "action_dt": env.action_dt,
     }
-    return env, scene
 
 
 def main() -> None:

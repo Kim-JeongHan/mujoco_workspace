@@ -19,12 +19,13 @@ from mujoco_lab.learning.evaluation import (
     evaluation_log_metrics,
 )
 from mujoco_lab.learning.logging import Logger
+from mujoco_lab.learning.metadata import EnvironmentMetadata
 from mujoco_lab.learning.timing import max_steps_for_seconds
 from mujoco_lab.utils.logger import Logger as ConsoleLogger
 
 
 def create_evaluation_env(
-    metadata: dict[str, Any],
+    environment: EnvironmentMetadata,
     *,
     xy_range: float | None,
     min_gap: float | None,
@@ -33,12 +34,12 @@ def create_evaluation_env(
     book_yaw_range_degrees: float | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Choose the task builder using the scene recorded in the dataset."""
-    scene = metadata["dataset_metadata"]["replay"]["scene"]
+    scene = environment.scene.scene
     if scene == "book_insertion":
         from mujoco_lab.learning.evaluate_book import create_book_evaluation_env
 
         return create_book_evaluation_env(
-            metadata,
+            environment,
             xy_range=xy_range,
             max_steps=max_steps,
             book_yaw_range_degrees=book_yaw_range_degrees,
@@ -47,7 +48,7 @@ def create_evaluation_env(
         from mujoco_lab.learning.evaluate_cube import create_cube_evaluation_env
 
         return create_cube_evaluation_env(
-            metadata,
+            environment,
             xy_range=xy_range,
             min_gap=min_gap,
             max_steps=max_steps,
@@ -57,14 +58,12 @@ def create_evaluation_env(
 
 
 def create_rollout_env(
-    metadata: dict[str, Any], rollout: EvaluationConfig
+    environment: EnvironmentMetadata, rollout: EvaluationConfig
 ) -> tuple[Any, dict[str, Any]]:
     """Convert the rollout time limit using the checkpoint's recorded action cadence."""
-    replay = metadata["dataset_metadata"]["replay"]
-    repeat = metadata["architecture"]["physics_steps_per_action"]
-    max_steps = max_steps_for_seconds(rollout.max_seconds, replay["dt"] * repeat)
+    max_steps = max_steps_for_seconds(rollout.max_seconds, environment.action_dt)
     return create_evaluation_env(
-        metadata,
+        environment,
         xy_range=rollout.xy_range,
         min_gap=rollout.min_gap,
         max_steps=max_steps,
@@ -79,20 +78,19 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
     rollout = config.evaluation
     device = torch.device(config.device)
     model, normalizer, metadata = load_checkpoint(config.checkpoint)
-    scene_name = metadata["dataset_metadata"]["replay"]["scene"]
+    environment = metadata.environment
+    scene_name = environment.scene.scene
     if expected_scene is not None and scene_name != expected_scene:
         raise ValueError(f"Expected {expected_scene} checkpoint, recorded scene is {scene_name}")
-    architecture = metadata["architecture"]
-    sampling_num_steps = metadata["train_config"]["sampling_num_steps"]
-    if not isinstance(sampling_num_steps, int) or sampling_num_steps <= 0:
-        raise ValueError("sampling_num_steps must be a positive integer")
-    env, scene = create_rollout_env(metadata, rollout)
+    architecture = metadata.policy
+    sampling_num_steps = architecture.sampling_num_steps
+    env, scene = create_rollout_env(environment, rollout)
     model.to(device)
 
     eval_seeds = list(range(rollout.seed, rollout.seed + rollout.num_episodes))
-    dataset = metadata["dataset_metadata"]
+    dataset = metadata.dataset
     overlaps = {
-        split: sorted(set(eval_seeds) & set(dataset.get(f"{split}_seeds", [])))
+        split: sorted(set(eval_seeds) & set(getattr(dataset, f"{split}_seeds", ()) or ()))
         for split in ("train", "validation", "test")
     }
     for split, seeds in overlaps.items():
@@ -107,16 +105,16 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
         **scene,
         "env_seeds": eval_seeds,
         "seed_overlaps": overlaps,
-        "checkpoint_metadata": metadata,
+        "checkpoint_metadata": metadata.to_dict(),
     }
     run_dir = (
         config.output_dir
         / "eval"
-        / architecture["policy_type"]
+        / architecture.policy_type
         / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}"
     )
     name = config.run_name or (
-        f"{scene['robot_name']}-{architecture['policy_type']}-eval-seed{rollout.seed}"
+        f"{scene['robot_name']}-{architecture.policy_type}-eval-seed{rollout.seed}"
     )
     with Logger(
         run_dir,
@@ -146,7 +144,7 @@ def run(config: BCEvalConfig, *, expected_scene: str | None = None) -> tuple[Pat
             json.dump(summary, summary_file, indent=2, allow_nan=False)
             summary_file.write("\n")
         logger.log_evaluation(
-            evaluation_log_metrics(summary), episodes, step=metadata["optimizer_step"]
+            evaluation_log_metrics(summary), episodes, step=metadata.optimizer_step
         )
     return run_dir, summary
 

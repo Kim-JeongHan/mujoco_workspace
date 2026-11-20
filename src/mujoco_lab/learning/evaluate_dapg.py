@@ -11,10 +11,10 @@ from uuid import uuid4
 import torch
 import tyro
 
+from mujoco_lab.learning.checkpoint import load_training_checkpoint
 from mujoco_lab.learning.evaluate import create_evaluation_env
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.logging import Logger
-from mujoco_lab.learning.rl_checkpoint import load_training_checkpoint
 from mujoco_lab.learning.trainers.train_dapg import (
     environment_settings,
     evaluate_training_policy,
@@ -41,7 +41,7 @@ def run(
     if max_seconds is not None:
         state.agent.config.max_seconds = max_seconds
     max_steps, settings = environment_settings(state)
-    env, _ = create_evaluation_env(state.metadata, **settings)
+    env, _ = create_evaluation_env(state.metadata.environment, **settings)
     rollout = replace(
         evaluation_config(state), num_episodes=episodes, seed=seed, video_episodes=video_episodes
     )
@@ -53,7 +53,7 @@ def run(
                 "checkpoint": str(checkpoint.resolve()),
                 "device": device,
                 "rollout": asdict(rollout),
-                "checkpoint_metadata": state.metadata,
+                "checkpoint_metadata": state.metadata.to_dict(),
             },
             wandb_mode=wandb_mode,
             run_name=f"dapg-eval-seed{seed}",

@@ -1,10 +1,9 @@
 """Train DDPG with future-goal HER in the existing physical manipulation environments."""
 
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -12,18 +11,7 @@ import torch
 import tyro
 
 from mujoco_lab.learning.agents.ddpg import DDPGAgent
-from mujoco_lab.learning.config.ddpg import DDPGConfig
-from mujoco_lab.learning.config.replay import BookReplayConfig, CubeStackReplayConfig
-from mujoco_lab.learning.datasets.normalizer import Normalizer, RunningMoments
-from mujoco_lab.learning.envs.factory import create_env
-from mujoco_lab.learning.envs.goals import GoalEnv
-from mujoco_lab.learning.envs.joint_action_env import JointActionEnv
-from mujoco_lab.learning.evaluation import PolicyEvaluator, evaluation_log_metrics
-from mujoco_lab.learning.infrastructure.utils import set_seed
-from mujoco_lab.learning.logging import Logger
-from mujoco_lab.learning.models.critic import QCritic
-from mujoco_lab.learning.policies.mse import MSEPolicy
-from mujoco_lab.learning.rl_checkpoint import (
+from mujoco_lab.learning.checkpoint import (
     DDPGTrainingState,
     capture_rng,
     config_dict,
@@ -31,45 +19,52 @@ from mujoco_lab.learning.rl_checkpoint import (
     restore_rng,
     save_ddpg_checkpoint,
 )
+from mujoco_lab.learning.config.ddpg import DDPGConfig
+from mujoco_lab.learning.config.replay import BookReplayConfig, CubeStackReplayConfig
+from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.envs.factory import create_env
+from mujoco_lab.learning.envs.goals import GoalEnv
+from mujoco_lab.learning.envs.joint_action_env import JointActionEnv
+from mujoco_lab.learning.evaluate import create_rollout_env
+from mujoco_lab.learning.evaluation import PolicyEvaluator, evaluation_log_metrics
+from mujoco_lab.learning.infrastructure.utils import set_seed
+from mujoco_lab.learning.logging import Logger
+from mujoco_lab.learning.metadata import (
+    CheckpointMetadata,
+    EnvironmentMetadata,
+    ObservationMetadata,
+    PolicyMetadata,
+)
+from mujoco_lab.learning.models.critic import QCritic
+from mujoco_lab.learning.policies.mse import MSEPolicy
 from mujoco_lab.learning.rollout.off_policy import collect_episode
-from mujoco_lab.learning.rollout.replay_buffer import HERReplayBuffer
 from mujoco_lab.learning.timing import max_steps_for_seconds
 
 
-def scene_config(
-    config: DDPGConfig, *, evaluation: bool = False
-) -> CubeStackReplayConfig | BookReplayConfig:
-    """Use the same scene description for fresh training and checkpoint evaluation."""
-    xy_range = config.xy_range
-    if evaluation and config.evaluation.xy_range is not None:
-        xy_range = config.evaluation.xy_range
+def scene_config(config: DDPGConfig) -> CubeStackReplayConfig | BookReplayConfig:
+    """Describe the fresh training environment from user configuration."""
     if config.scene == "cube_stack":
         return CubeStackReplayConfig(
             robot=config.robot,
             cubes=config.cubes,
             environment=config.environment,
             physics_steps_per_action=config.physics_steps_per_action,
-            xy_range=xy_range,
-            min_gap=config.evaluation.min_gap if evaluation else config.min_gap,
-            cube_yaw_range_degrees=(
-                config.evaluation.cube_yaw_range_degrees
-                if evaluation
-                else config.cube_yaw_range_degrees
-            ),
+            xy_range=config.xy_range,
+            min_gap=config.min_gap,
+            cube_yaw_range_degrees=config.cube_yaw_range_degrees,
         )
-    yaw = config.book_yaw_range_degrees
-    if evaluation and config.evaluation.book_yaw_range_degrees is not None:
-        yaw = config.evaluation.book_yaw_range_degrees
     return BookReplayConfig(
         robot=config.robot,
         book=config.book,
         physics_steps_per_action=config.physics_steps_per_action,
-        xy_range=xy_range,
-        book_yaw_range_degrees=yaw,
+        xy_range=config.xy_range,
+        book_yaw_range_degrees=config.book_yaw_range_degrees,
     )
 
 
-def initialize_training(config: DDPGConfig, env: JointActionEnv) -> DDPGTrainingState:
+def initialize_training(
+    config: DDPGConfig, env: JointActionEnv, environment: EnvironmentMetadata
+) -> DDPGTrainingState:
     """Initialize bounded actions, online frame statistics, and independent Q weights."""
     frame_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -84,33 +79,22 @@ def initialize_training(config: DDPGConfig, env: JointActionEnv) -> DDPGTraining
         (env.action_space.high - env.action_space.low) / 2,
         state_clip=5.0,
     )
-    metadata: dict[str, Any] = {
-        "algorithm": "ddpg",
-        "reward": "goal_pose_sparse",
-        "architecture": {
-            "policy_type": "mse",
-            "bounded_actions": True,
-            "frame_dim": frame_dim,
-            "state_dim": policy.state_dim,
-            "action_dim": action_dim,
-            "chunk_size": 1,
-            "execution_horizon": 1,
-            "obs_horizon": config.obs_horizon,
-            "hidden_dims": list(config.hidden_dims),
-            "physics_steps_per_action": config.physics_steps_per_action,
-            "simulation_hz": 1 / config.dt,
-            "action_execution_hz": 1 / env.action_dt,
-        },
-        "dataset_metadata": {
-            "replay": {**asdict(scene_config(config)), "dt": config.dt, "robot_name": config.robot},
-            "observation": env.observation_metadata,
-        },
-    }
+    metadata = CheckpointMetadata(
+        policy=PolicyMetadata(
+            policy_type="mse",
+            bounded_actions=True,
+            state_dim=policy.state_dim,
+            action_dim=action_dim,
+            obs_horizon=config.obs_horizon,
+            hidden_dims=config.hidden_dims,
+        ),
+        environment=environment,
+        observation=ObservationMetadata.from_dict(env.observation_metadata),
+        algorithm="ddpg",
+    )
     return DDPGTrainingState(
         DDPGAgent(policy, critic, config),
         normalizer,
-        RunningMoments(frame_dim, env._rotation_indices),
-        HERReplayBuffer(config.replay_capacity),
         metadata,
     )
 
@@ -122,7 +106,7 @@ def train_episode(state: DDPGTrainingState, env: GoalEnv, *, max_steps: int) -> 
         env,
         state.agent.policy,
         state.normalizer,
-        obs_horizon=config.obs_horizon,
+        obs_horizon=state.metadata.policy.obs_horizon,
         max_steps=min(max_steps, config.total_steps - state.env_steps),
         seed=config.seed + state.episodes,
         env_steps=state.env_steps,
@@ -135,7 +119,10 @@ def train_episode(state: DDPGTrainingState, env: GoalEnv, *, max_steps: int) -> 
     state.env_steps += len(episode.actions)
     state.episodes += 1
     sample = state.replay.sample(
-        config.batch_size, env, obs_horizon=config.obs_horizon, her_ratio=config.her.ratio
+        config.batch_size,
+        env,
+        obs_horizon=state.metadata.policy.obs_horizon,
+        her_ratio=config.her.ratio,
     )
     # Include virtual goals in scaling, instead of fitting only the original fixed goal.
     state.moments.update(
@@ -148,7 +135,7 @@ def train_episode(state: DDPGTrainingState, env: GoalEnv, *, max_steps: int) -> 
                 sample = state.replay.sample(
                     config.batch_size,
                     env,
-                    obs_horizon=config.obs_horizon,
+                    obs_horizon=state.metadata.policy.obs_horizon,
                     her_ratio=config.her.ratio,
                 )
             updates.append(state.agent.update(sample.to_batch(state.normalizer, config.device)))
@@ -188,29 +175,33 @@ def run(config: DDPGConfig) -> Path:
         state.agent.config = config
     if state is not None and config.total_steps <= state.env_steps:
         raise ValueError("total_steps must exceed the checkpoint's collected steps")
-    max_steps = max_steps_for_seconds(
-        config.max_seconds, config.dt * config.physics_steps_per_action
+    environment = (
+        state.metadata.environment
+        if state is not None
+        else EnvironmentMetadata(scene_config(config), config.dt, config.robot)
     )
+    max_steps = max_steps_for_seconds(config.max_seconds, environment.action_dt)
     if config.replay_capacity < max_steps:
         raise ValueError("replay_capacity must fit a full training episode")
     env = create_env(
-        scene_config(config), dt=config.dt, max_steps=max_steps, terminate_on_success=False
+        environment.scene,
+        dt=environment.dt,
+        robot_name=environment.robot_name,
+        max_steps=max_steps,
+        terminate_on_success=False,
     )
     eval_env = None
     evaluator = None
     run_dir = config.output_dir / "ddpg" / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}"
     try:
         if state is None:
-            state = initialize_training(config, env)
+            state = initialize_training(config, env, environment)
         if config.eval_interval_episodes:
-            eval_steps = max_steps_for_seconds(config.evaluation.max_seconds, env.action_dt)
-            eval_env = create_env(
-                scene_config(config, evaluation=True), dt=config.dt, max_steps=eval_steps
-            )
+            eval_env, _ = create_rollout_env(environment, config.evaluation)
             evaluator = PolicyEvaluator(eval_env, config.evaluation, torch.device(config.device))
         with Logger(
             run_dir,
-            {**config_dict(config), "metadata": state.metadata},
+            {**config_dict(config), "metadata": state.metadata.to_dict()},
             wandb_mode=config.wandb_mode,
             step_metric="train/env_steps",
         ) as logger:

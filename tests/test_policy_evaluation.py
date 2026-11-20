@@ -5,11 +5,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig, EvaluationConfig
+from mujoco_lab.learning.config import EvaluationConfig, FlowBCTrainConfig, MSEBCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation import PolicyEvaluator
+from mujoco_lab.learning.metadata import CheckpointMetadata, ObservationMetadata, PolicyMetadata
 from mujoco_lab.learning.policies.factory import build_policy
 from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 
@@ -56,18 +58,17 @@ class TinyEnv:
 
 
 def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2):
-    config = BCTrainConfig(
-        robot="forte",
+    config_type = MSEBCTrainConfig if policy_type == "mse" else FlowBCTrainConfig
+    config = config_type(
         policy_type=policy_type,
+        robot="forte",
         hidden_dims=(),
         obs_horizon=2,
         chunk_size=chunk_size,
         execution_horizon=execution_horizon,
         action_execution_hz=500,
     )
-    model = build_policy(
-        policy_type, state_dim=2, action_dim=1, chunk_size=chunk_size, hidden_dims=()
-    )
+    model = build_policy(config, state_dim=2, action_dim=1)
     normalizer = Normalizer(
         state_mean=np.array([1.0], dtype=np.float32),
         state_std=np.array([2.0], dtype=np.float32),
@@ -81,7 +82,7 @@ def checkpoint(tmp_path, *, policy_type="mse", chunk_size=2, execution_horizon=2
         normalizer,
         config,
         optimizer_step=7,
-        dataset_metadata={"replay": {"physics_steps_per_action": 1}},
+        environment=checkpoint_environment(config),
     )
     return load_checkpoint(path)
 
@@ -129,7 +130,11 @@ def test_gaussian_evaluation_uses_mean_and_preserves_training_rng():
     with torch.no_grad():
         model.log_std.fill_(2.0)
     normalizer = Normalizer(*(np.array([value], dtype=np.float32) for value in (0, 1, 0, 1)))
-    metadata = {"architecture": {"obs_horizon": 2, "execution_horizon": 1}}
+    metadata = CheckpointMetadata(
+        PolicyMetadata("gaussian", 2, 1, obs_horizon=2),
+        ObservationMetadata(1),
+        environment=checkpoint_environment(MSEBCTrainConfig(action_execution_hz=500)),
+    )
     env = TinyEnv(finish=3, success=True)
     rng = torch.random.get_rng_state().clone()
     rows, summary = evaluate(env, model, normalizer, metadata)

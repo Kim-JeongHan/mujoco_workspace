@@ -46,7 +46,7 @@ class FakeTask(CubeStackTask):
         )
 
 
-def test_progress_requires_grasped_lift_and_held_released_placement(monkeypatch):
+def test_progress_requires_grasped_lift_and_records_released_placement_immediately(monkeypatch):
     task = FakeTask()
     gripped = {0: False, 1: False}
     monkeypatch.setattr(
@@ -69,34 +69,18 @@ def test_progress_requires_grasped_lift_and_held_released_placement(monkeypatch)
     assert tracker.result()["best_progress"] == pytest.approx(1 / 3)
     gripped[0] = False
     task.stable[0] = True
-    task.simulator.data.time = 1.0
-    task.status()
     tracker.observe()
-    task.simulator.data.time = 1.49
-    task.status()
-    tracker.observe()
-    assert tracker.result()["placed"] == [False, False]
-    task.stable[0] = False
-    task.simulator.data.time = 1.5
-    task.status()
-    tracker.observe()  # Interrupted contact starts the hold again.
-    task.stable[0] = True
-    task.simulator.data.time = 2.0
-    task.status()
-    tracker.observe()
-    task.simulator.data.time = 2.5
-    task.status()
-    tracker.observe()
+    assert tracker.result()["placed"] == [True, False]
+    assert task.simulator.data.time == 0
     task.stable[0] = False
     task.position_errors[0] = 0.6
-    task.status()
     tracker.observe()  # History remains, while final position error records the drop.
     result = tracker.result()
     assert result["best_stage"] == [3, 0]
     assert result["placed"] == [True, False]
     assert result["best_progress"] == pytest.approx(0.5)
     assert result["final_position_error"] == pytest.approx(0.45)
-    assert task.samples == 16  # Initial sample, nine observations, and six task updates.
+    assert task.samples == 6  # Initial sample and five observations.
 
     fresh = CubeProgressTracker(task)
     assert fresh.result()["best_stage"] == [0, 0]
@@ -124,16 +108,8 @@ def test_progress_retains_placement_completed_between_observations():
     task = FakeTask()
     tracker = CubeProgressTracker(task)
     task.stable[0] = True
-    task.simulator.data.time = 1.0
-    task.status()
-    task.simulator.data.time = 1.49
-    tracker.observe()
-    assert tracker.result()["placed"] == [False, False]
-
-    task.simulator.data.time = 1.5
     task.status()
     task.stable[0] = False
-    task.simulator.data.time = 1.51
     task.status()
     before_hold = task._stable_since.copy()
     before_time = float(task.simulator.data.time)
@@ -169,11 +145,12 @@ def test_status_reports_placement_conditions_and_updates_history_without_steppin
     assert placed.supported[0] and placed.stable_placement[0]
     assert task._stable_since[0] == before_time
     assert not placed.is_released_stable
+    np.testing.assert_array_equal(task.completed_placements(), [True, False])
     task.status()
     assert task._stable_since[0] == before_time
     simulator.data.qvel[dof] = 0.1
-    assert not task.status().stable_placement[0]
-    assert task._stable_since[0] is None
+    assert task.status().stable_placement[0]
+    assert task._stable_since[0] == before_time
     simulator.data.qvel[dof] = 0
     simulator.data.qpos[adr + 2] += 0.011
     mujoco.mj_forward(simulator.model, simulator.data)
@@ -181,8 +158,32 @@ def test_status_reports_placement_conditions_and_updates_history_without_steppin
     assert floating.aligned[0] and floating.at_height[0]
     assert not floating.supported[0] and not floating.stable_placement[0]
     np.testing.assert_allclose(task.max_height, np.maximum(before_lift, floating.centers[:, 2]))
-    np.testing.assert_array_equal(task.completed_placements(), before_placed)
+    np.testing.assert_array_equal(task.completed_placements(), [True, False])
     assert simulator.data.time == before_time
+
+
+def test_cube_environment_succeeds_on_first_supported_robot_free_physics_step():
+    simulator = Simulator(
+        create_cube_stack(1),
+        robots=[RobotSpec("forte", "forte", config=load_robot_config("forte"))],
+    )
+    task = CubeStackTask(simulator, 1)
+    env = CubeStackEnv(task, physics_steps_per_action=5)
+    env.reset(seed=5000)
+    joint = simulator.model.joint("cube0/object_joint_0")
+    adr = int(joint.qposadr[0])
+    simulator.data.qpos[adr : adr + 3] = task.goals[0]
+    mujoco.mj_forward(simulator.model, simulator.data)
+    robot = env.robots[0]
+    _, slots = robot.get_arm_joint_mapping()
+    assert robot.gripper is not None
+    action = np.r_[robot.state.snapshot().qpos[slots], robot.gripper.get_width()]
+
+    _, reward, terminated, truncated, info = env.step(action)
+
+    assert (reward, terminated, truncated) == (1.0, True, False)
+    assert info["physics_steps"] == 1
+    assert info["elapsed_dt"] == pytest.approx(simulator.dt)
 
 
 @pytest.mark.parametrize("robot_type", ["forte", "panda"])

@@ -7,11 +7,13 @@ from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 
 
-class ChunkDataset(Dataset):
+class ChunkDataset(Dataset[tuple[np.ndarray, np.ndarray, np.ndarray]]):
     """Pair an action chunk with oldest-to-current observation history.
 
     Missing early frames repeat the episode's first observation. Normalize each
     raw frame before flattening the history into one policy input vector.
+    Every action-bearing observation is retained. Incomplete tail chunks use
+    zero padding in normalized action coordinates and a per-action validity mask.
     """
 
     def __init__(
@@ -33,10 +35,7 @@ class ChunkDataset(Dataset):
 
         for episode_idx, episode in enumerate(episodes):
             episode_len = len(episode)
-            if episode_len < chunk_size:
-                continue
-
-            for start in range(episode_len - chunk_size + 1):
+            for start in range(episode_len):
                 self.indices.append((episode_idx, start))
 
     def __len__(self) -> int:
@@ -54,6 +53,8 @@ class ChunkDataset(Dataset):
             history = self.normalizer.normalize_state(history)
             actions = self.normalizer.normalize_action(actions)
 
-        return history.reshape(-1).astype(np.float32, copy=False), actions.astype(
-            np.float32, copy=False
-        )
+        valid_count = len(actions)
+        action_chunk = np.zeros((self.chunk_size, episode.actions.shape[1]), dtype=np.float32)
+        action_chunk[:valid_count] = actions
+        valid_mask = np.arange(self.chunk_size) < valid_count
+        return history.reshape(-1).astype(np.float32, copy=False), action_chunk, valid_mask

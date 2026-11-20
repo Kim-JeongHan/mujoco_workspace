@@ -7,10 +7,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
-from mujoco_lab.learning.config import EvaluationConfig
+from mujoco_lab.learning.config import EvaluationConfig, MSEBCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.evaluation import PolicyEvaluator
+from mujoco_lab.learning.metadata import CheckpointMetadata, ObservationMetadata, PolicyMetadata
 from mujoco_lab.learning.policies.mse import MSEPolicy
 
 
@@ -73,18 +75,11 @@ def run(env, *, video_dir=None, num_video_episodes=0, on_episode=None, viewer=Fa
         action_mean=np.zeros(1),
         action_std=np.ones(1),
     )
-    metadata = {
-        "architecture": {
-            "frame_dim": 1,
-            "state_dim": 1,
-            "action_dim": 1,
-            "obs_horizon": 1,
-            "chunk_size": 1,
-            "execution_horizon": 1,
-            "physics_steps_per_action": 1,
-        },
-        "train_config": {},
-    }
+    metadata = CheckpointMetadata(
+        PolicyMetadata("mse", 1, 1),
+        ObservationMetadata(1),
+        environment=checkpoint_environment(MSEBCTrainConfig(action_execution_hz=500)),
+    )
     return PolicyEvaluator(
         env,
         EvaluationConfig(

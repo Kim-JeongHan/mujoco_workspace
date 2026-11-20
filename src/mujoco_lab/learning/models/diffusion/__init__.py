@@ -1,6 +1,5 @@
 """Model modules for diffusion training and guidance policy."""
 
-from .conditional_unet import ConditionalTemporalUnet
 from .diffusion import DiffusionModel
 from .nn import (
     Conv1dBlock,
@@ -14,7 +13,6 @@ from .nn import (
 from .value import ValueModel
 
 __all__ = [
-    "ConditionalTemporalUnet",
     "Conv1dBlock",
     "DiffusionModel",
     "Downsample1d",

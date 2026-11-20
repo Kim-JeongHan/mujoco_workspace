@@ -9,7 +9,7 @@ from mujoco_lab.behaviors import BookInsertionExpert, BookTask
 from mujoco_lab.behaviors.bookshelf_recipe import load_recipe
 from mujoco_lab.learning.collect_book import Config
 from mujoco_lab.learning.config.replay import BookReplayConfig
-from mujoco_lab.learning.datasets.episode import load_episode, save_episode
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.replay import capture_frame, capture_metadata
 from mujoco_lab.learning.envs.book import BookEnv
 from mujoco_lab.learning.replay import EpisodeReplay
@@ -53,8 +53,8 @@ def test_book_recording_round_trip_restores_geometry(tmp_path):
         env, expert, seed=12, max_steps=4, record_frame=record, replay_metadata=metadata
     )
     path = tmp_path / "book.npz"
-    save_episode(path, episode)
-    loaded = load_episode(path)
+    episode.save(path)
+    loaded = Episode.load(path)
     assert loaded.qpos is not None
     assert loaded.metadata["replay"]["book"] == "medium"
     assert loaded.metadata["replay"]["xy_range"] == 0.01

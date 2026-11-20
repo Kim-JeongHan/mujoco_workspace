@@ -3,8 +3,7 @@
 import numpy as np
 import pytest
 
-from mujoco_lab.learning.datasets import load_episodes
-from mujoco_lab.learning.datasets.episode import Episode, save_episode
+from mujoco_lab.learning.datasets.episode import Episode
 
 
 def make_episode(seed, *, success=True, steps=2, state_dim=54, action_dim=8):
@@ -29,13 +28,13 @@ def test_load_sorted_successes_and_preserve_episode_contents(tmp_path):
     episodes[1].rewards = np.array([0.0, 1.0])
     episodes[1].qpos = np.ones((3, 23))
     for name, episode in zip(("c", "b", "a", "d"), episodes, strict=True):
-        save_episode(tmp_path / f"{name}.npz", episode)
+        episode.save(tmp_path / f"{name}.npz")
 
-    successful = load_episodes(tmp_path)
+    successful = Episode.load_all(tmp_path)
     assert [episode.metadata["seed"] for episode in successful] == [2, 4]
     np.testing.assert_array_equal(successful[0].rewards, episodes[1].rewards)
     np.testing.assert_array_equal(successful[0].qpos, episodes[1].qpos)
-    all_episodes = load_episodes(tmp_path, success_only=False)
+    all_episodes = Episode.load_all(tmp_path, success_only=False)
     assert [episode.metadata["seed"] for episode in all_episodes] == [
         1,
         2,
@@ -46,23 +45,23 @@ def test_load_sorted_successes_and_preserve_episode_contents(tmp_path):
 
 def test_load_rejects_mixed_feature_dimensions_and_missing_data(tmp_path):
     with pytest.raises(ValueError, match="does not exist"):
-        load_episodes(tmp_path / "missing")
+        Episode.load_all(tmp_path / "missing")
     with pytest.raises(ValueError, match="No NPZ"):
-        load_episodes(tmp_path)
+        Episode.load_all(tmp_path)
 
-    save_episode(tmp_path / "a.npz", make_episode(1))
-    save_episode(tmp_path / "b.npz", make_episode(2, state_dim=53))
+    make_episode(1).save(tmp_path / "a.npz")
+    make_episode(2, state_dim=53).save(tmp_path / "b.npz")
     with pytest.raises(ValueError, match="feature dimensions"):
-        load_episodes(tmp_path)
+        Episode.load_all(tmp_path)
 
 
 def test_load_rejects_corrupt_file_and_no_successful_episodes(tmp_path):
     (tmp_path / "corrupt.npz").write_bytes(b"not a zip archive")
     with pytest.raises(ValueError):
-        load_episodes(tmp_path)
+        Episode.load_all(tmp_path)
 
     (tmp_path / "corrupt.npz").unlink()
-    save_episode(tmp_path / "failure.npz", make_episode(1, success=False))
+    make_episode(1, success=False).save(tmp_path / "failure.npz")
     with pytest.raises(ValueError, match="No eligible episodes"):
-        load_episodes(tmp_path)
-    assert len(load_episodes(tmp_path, success_only=False)) == 1
+        Episode.load_all(tmp_path)
+    assert len(Episode.load_all(tmp_path, success_only=False)) == 1

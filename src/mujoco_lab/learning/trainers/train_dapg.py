@@ -1,7 +1,6 @@
 """Fine-tune a BC-initialized single-action Gaussian policy with DAPG."""
 
 import math
-from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -16,36 +15,38 @@ import tyro
 from mujoco_lab.learning.agents import DAPGAgent, Demonstrations
 from mujoco_lab.learning.agents.initialization import initialize_actor
 from mujoco_lab.learning.algorithms.advantage import compute_discounted_returns, compute_gae
-from mujoco_lab.learning.config import EvaluationConfig
-from mujoco_lab.learning.config.dapg import DAPGConfig
-from mujoco_lab.learning.datasets.episode import load_episodes
-from mujoco_lab.learning.datasets.sequence import ChunkDataset
-from mujoco_lab.learning.evaluate import create_evaluation_env
-from mujoco_lab.learning.evaluation import PolicyEvaluator, evaluation_log_metrics
-from mujoco_lab.learning.infrastructure.utils import set_seed
-from mujoco_lab.learning.logging import Logger
-from mujoco_lab.learning.models.critic import ValueCritic
-from mujoco_lab.learning.policies.gaussian import GaussianPolicy
-from mujoco_lab.learning.rl_checkpoint import (
-    TrainingState,
+from mujoco_lab.learning.checkpoint import (
+    DAPGTrainingState,
     config_dict,
     load_training_checkpoint,
     restore_rng,
     save_training_checkpoint,
 )
+from mujoco_lab.learning.config import EvaluationConfig
+from mujoco_lab.learning.config.dapg import DAPGConfig
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
+from mujoco_lab.learning.datasets.episode import Episode
+from mujoco_lab.learning.datasets.sequence import ChunkDataset
+from mujoco_lab.learning.evaluate import create_evaluation_env
+from mujoco_lab.learning.evaluation import PolicyEvaluator, evaluation_log_metrics
+from mujoco_lab.learning.infrastructure.utils import set_seed
+from mujoco_lab.learning.logging import Logger
+from mujoco_lab.learning.metadata import BCSourceMetadata, describe_episodes
+from mujoco_lab.learning.models.critic import ValueCritic
+from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.rollout.buffer import RolloutBuffer
 from mujoco_lab.learning.rollout.online import RolloutEnv, collect_rollout
 from mujoco_lab.learning.timing import max_steps_for_seconds
 
 
-def initialize_training(config: DAPGConfig) -> TrainingState:
+def initialize_training(config: DAPGConfig) -> DAPGTrainingState:
     """Use the first BC action head and retain its observation normalization/history."""
     if config.init_from is None:
         raise ValueError("init_from is required for fresh training")
     source, normalizer, metadata = initialize_actor(config.init_from, device=config.device)
-    architecture = metadata["architecture"]
+    architecture = metadata.policy
     actor = GaussianPolicy(
-        source.state_dim, source.action_dim, 1, tuple(architecture["hidden_dims"])
+        source.state_dim, source.action_dim, 1, tuple(architecture.hidden_dims)
     ).to(config.device)
     actor.net.load_state_dict(source.net.state_dict())
     actor.mean_head.load_state_dict(
@@ -59,25 +60,28 @@ def initialize_training(config: DAPGConfig) -> TrainingState:
             normalizer.action_std, dtype=actor.log_std.dtype, device=config.device
         )
         actor.log_std.copy_((physical_std / action_scale).log())
-    metadata = deepcopy(metadata)
-    metadata["source_bc_architecture"] = dict(architecture)
-    metadata["architecture"].update(policy_type="gaussian", chunk_size=1, execution_horizon=1)
+    metadata = replace(
+        metadata,
+        policy=replace(architecture, policy_type="gaussian", chunk_size=1, execution_horizon=1),
+        algorithm="dapg",
+        source_bc=BCSourceMetadata(architecture, metadata.train_config, metadata.optimizer_step),
+        train_config={},
+        optimizer_step=0,
+    )
     critic = ValueCritic(
         actor.state_dim,
         config.critic.hidden_dims,
         config.critic.learning_rate,
         device=config.device,
     )
-    return TrainingState(DAPGAgent(actor, critic, config), normalizer, metadata)
+    return DAPGTrainingState(DAPGAgent(actor, critic, config), normalizer, metadata)
 
 
-def load_demonstrations(state: TrainingState) -> Demonstrations:
+def load_demonstrations(state: DAPGTrainingState) -> Demonstrations:
     """Load successful BC training episodes with matching scene, cadence, and observations."""
-    episodes = load_episodes(state.agent.config.data_dir)
-    dataset = state.metadata["dataset_metadata"]
-    architecture = state.metadata["architecture"]
-    replay = dataset["replay"]
-    train_seeds = dataset.get("train_seeds")
+    episodes = Episode.load_all(state.agent.config.data_dir)
+    dataset = state.metadata.dataset
+    train_seeds = dataset.train_seeds if dataset is not None else None
     if train_seeds is not None:
         seeds = set(train_seeds)
         episodes = [episode for episode in episodes if episode.metadata.get("seed") in seeds]
@@ -85,24 +89,18 @@ def load_demonstrations(state: TrainingState) -> Demonstrations:
         raise ValueError(
             "no BC training demonstrations remain after filtering recorded train seeds"
         )
-    for episode in episodes:
-        recorded = episode.metadata["replay"]
-        episode.check_physics_step_consistency(
-            architecture["physics_steps_per_action"], simulation_dt=replay["dt"]
-        )
-        keys = ("scene", "robot", "robot_name", "environment", "cubes", "book")
-        if any(recorded.get(key) != replay.get(key) for key in keys):
-            raise ValueError("demonstration scene differs from the BC checkpoint")
-        if (
-            episode.states.shape[1] != len(state.normalizer.state_mean)
-            or episode.actions.shape[1] != state.agent.policy.action_dim
-            or episode.metadata["observation"] != dataset["observation"]
-        ):
-            raise ValueError(
-                "demonstration observation/action layout differs from the BC checkpoint"
-            )
-    chunks = ChunkDataset(episodes, 1, state.normalizer, obs_horizon=architecture["obs_horizon"])
-    observations, actions = zip(*(chunks[index] for index in range(len(chunks))), strict=True)
+    environment, observation = describe_episodes(episodes)
+    if environment != state.metadata.environment:
+        raise ValueError("demonstration environment differs from the BC checkpoint")
+    if (
+        observation != state.metadata.observation
+        or episodes[0].actions.shape[1] != state.agent.policy.action_dim
+    ):
+        raise ValueError("demonstration observation/action layout differs from the BC checkpoint")
+    chunks = ChunkDataset(
+        episodes, 1, state.normalizer, obs_horizon=state.metadata.policy.obs_horizon
+    )
+    observations, actions, _ = zip(*(chunks[index] for index in range(len(chunks))), strict=True)
     return Demonstrations(
         torch.from_numpy(np.stack(observations)).to(state.agent.config.device),
         torch.from_numpy(np.stack(actions)).to(state.agent.config.device),
@@ -110,7 +108,7 @@ def load_demonstrations(state: TrainingState) -> Demonstrations:
 
 
 def train_iteration(
-    state: TrainingState, env: RolloutEnv, demos: Demonstrations
+    state: DAPGTrainingState, env: RolloutEnv, demos: Demonstrations
 ) -> dict[str, float]:
     """Collect complete trajectories and update once using their actual transition count."""
     config = state.agent.config
@@ -124,7 +122,7 @@ def train_iteration(
         state.normalizer,
         buffer,
         trajectories=config.rollout_trajectories,
-        obs_horizon=state.metadata["architecture"]["obs_horizon"],
+        obs_horizon=state.metadata.policy.obs_horizon,
         seed=config.seed + state.env_steps,
     )
     steps = len(buffer)
@@ -155,10 +153,9 @@ def train_iteration(
     return metrics
 
 
-def environment_settings(state: TrainingState) -> tuple[int, dict[str, Any]]:
+def environment_settings(state: DAPGTrainingState) -> tuple[int, dict[str, Any]]:
     """Preserve the BC scene, randomization, and physical action cadence."""
-    replay = state.metadata["dataset_metadata"]["replay"]
-    dt = replay["dt"] * state.metadata["architecture"]["physics_steps_per_action"]
+    dt = state.metadata.environment.action_dt
     max_steps = max_steps_for_seconds(state.agent.config.max_seconds, dt)
     return max_steps, {
         "xy_range": None,
@@ -169,28 +166,26 @@ def environment_settings(state: TrainingState) -> tuple[int, dict[str, Any]]:
     }
 
 
-def evaluation_config(state: TrainingState) -> EvaluationConfig:
+def evaluation_config(state: DAPGTrainingState) -> EvaluationConfig:
     """Use BC recording defaults while preserving the DAPG evaluation scene and seeds."""
     config = state.agent.config
-    replay = state.metadata["dataset_metadata"]["replay"]
-    randomization = {"xy_range": replay["xy_range"]}
-    if replay["scene"] == "cube_stack":
-        randomization.update(
-            min_gap=replay["min_gap"], cube_yaw_range_degrees=replay["cube_yaw_range_degrees"]
-        )
-    elif replay["scene"] == "book_insertion":
-        randomization["book_yaw_range_degrees"] = replay["book_yaw_range_degrees"]
-    return EvaluationConfig(
+    replay = state.metadata.environment.scene
+    rollout = EvaluationConfig(
         num_episodes=config.eval_episodes,
         seed=config.eval_seed,
         max_seconds=config.max_seconds,
         video_episodes=config.eval_video_episodes,
-        **randomization,
+        xy_range=replay.xy_range,
     )
+    if isinstance(replay, CubeStackReplayConfig):
+        return replace(
+            rollout, min_gap=replay.min_gap, cube_yaw_range_degrees=replay.cube_yaw_range_degrees
+        )
+    return replace(rollout, book_yaw_range_degrees=replay.book_yaw_range_degrees)
 
 
 def evaluate_training_policy(
-    state: TrainingState, evaluator: PolicyEvaluator, output_dir: Path
+    state: DAPGTrainingState, evaluator: PolicyEvaluator, output_dir: Path
 ) -> tuple[list[dict[str, Any]], dict[str, int | float]]:
     """Save episode outcomes, task progress, and videos through the shared evaluator."""
     episodes, summary = evaluator.evaluate_to_directory(
@@ -226,19 +221,18 @@ def run(config: DAPGConfig) -> Path:
         raise ValueError("total_steps must exceed the checkpoint's collected steps")
     demos = load_demonstrations(state)
     max_steps, settings = environment_settings(state)
-    env, _ = create_evaluation_env(state.metadata, **settings)
+    env, _ = create_evaluation_env(state.metadata.environment, **settings)
     eval_env = None
     evaluator = None
     rollout = evaluation_config(state)
     run_dir = config.output_dir / "dapg" / f"{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}"
     try:
         if config.eval_interval_iterations:
-            eval_env, _ = create_evaluation_env(state.metadata, **settings)
+            eval_env, _ = create_evaluation_env(state.metadata.environment, **settings)
             evaluator = PolicyEvaluator(eval_env, rollout, torch.device(config.device))
         logged_config = {
             **config_dict(config),
-            "architecture": state.metadata["architecture"],
-            "dataset": state.metadata["dataset_metadata"],
+            "metadata": state.metadata.to_dict(),
             "evaluation": asdict(rollout),
         }
         with Logger(

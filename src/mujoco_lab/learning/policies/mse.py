@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import torch
-from torch import nn
+from torch.nn import functional as F  # noqa: N812
 
 from mujoco_lab.learning.infrastructure.utils import build_mlp
-from mujoco_lab.learning.policies.base import BasePolicy
+from mujoco_lab.learning.policies.base import BasePolicy, masked_action_mean
 
 
 class MSEPolicy(BasePolicy):
@@ -38,12 +38,13 @@ class MSEPolicy(BasePolicy):
             output_dim=action_dim * chunk_size,
             hidden_layers=hidden_dims,
         )
-        self.criterion = nn.MSELoss()
 
     def compute_loss(
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
+        *,
+        valid_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute the mean squared error against expert action chunks.
 
@@ -54,7 +55,8 @@ class MSEPolicy(BasePolicy):
         Returns:
             torch.Tensor: Scalar mean squared error with shape ().
         """
-        return self.criterion(action_chunk, self.sample_actions(state))
+        loss = F.mse_loss(self.sample_actions(state), action_chunk, reduction="none")
+        return masked_action_mean(loss, valid_mask)
 
     def sample_actions(
         self,

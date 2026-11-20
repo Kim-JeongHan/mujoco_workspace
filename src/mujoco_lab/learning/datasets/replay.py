@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict
 from typing import Any
 
 import mujoco
 import numpy as np
 
 from mujoco_lab.learning.config.replay import BookReplayConfig, CubeStackReplayConfig
+from mujoco_lab.learning.metadata import EnvironmentMetadata
 from mujoco_lab.simulation import Simulator
 
 
@@ -35,10 +35,10 @@ def capture_metadata(
     simulator: Simulator, config: CubeStackReplayConfig | BookReplayConfig
 ) -> dict[str, Any]:
     """Serialize scene settings and capture compiled-model information."""
-    return {
-        **asdict(config),
-        "robot_name": next(iter(simulator.robots)),
-        "dt": simulator.dt,
-        "mujoco_version": mujoco.__version__,
-        "model_sha256": model_signature(simulator.model),
-    }
+    return EnvironmentMetadata(
+        scene=config,
+        robot_name=next(iter(simulator.robots)),
+        dt=simulator.dt,
+        mujoco_version=mujoco.__version__,
+        model_sha256=model_signature(simulator.model),
+    ).to_recording()

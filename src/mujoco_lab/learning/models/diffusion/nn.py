@@ -73,10 +73,10 @@ class Conv1dBlock(nn.Module):
 
 
 class ResidualTemporalBlock(nn.Module):
-    """Two Conv1dBlocks with a time-step conditioning and skip connection.
+    """Two Conv1dBlocks with additive or scale/bias conditioning and a skip.
 
     Input ``x``: ``[B, in_channels, H]`` (channels-first, as used by Conv1d).
-    Input ``t``: ``[B, embed_dim]`` time embedding.
+    Input ``condition``: ``[B, embed_dim]`` conditioning features.
     Output: ``[B, out_channels, H]``.
     """
 
@@ -86,15 +86,21 @@ class ResidualTemporalBlock(nn.Module):
         out_channels: int,
         embed_dim: int,
         kernel_size: int = 5,
+        *,
+        scale_bias: bool = False,
     ) -> None:
         super().__init__()
         self.conv1 = Conv1dBlock(in_channels, out_channels, kernel_size)
         self.conv2 = Conv1dBlock(out_channels, out_channels, kernel_size)
-        # Projects time embedding → out_channels, broadcast over H.
-        self.time_proj = nn.Sequential(
-            nn.SiLU(),
-            *build_mlp(input_dim=embed_dim, output_dim=out_channels, hidden_layers=()),
-        )
+        self.scale_bias = scale_bias
+        if scale_bias:
+            self.condition = nn.Sequential(nn.SiLU(), nn.Linear(embed_dim, 2 * out_channels))
+        else:
+            # Keep the value encoder's additive conditioning and parameter names.
+            self.time_proj = nn.Sequential(
+                nn.SiLU(),
+                *build_mlp(input_dim=embed_dim, output_dim=out_channels, hidden_layers=()),
+            )
         # 1x1 projection for skip connection when channel sizes differ.
         self.skip = (
             nn.Conv1d(in_channels, out_channels, 1)
@@ -102,11 +108,13 @@ class ResidualTemporalBlock(nn.Module):
             else nn.Identity()
         )
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # x: [B, C_in, H],  t: [B, embed_dim]
-        h = self.conv1(x) + self.time_proj(t).unsqueeze(-1)  # broadcast over H
-        h = self.conv2(h)
-        return h + self.skip(x)
+    def forward(self, x: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
+        if self.scale_bias:
+            scale, bias = self.condition(condition).unsqueeze(-1).chunk(2, dim=1)
+            h = scale * self.conv1(x) + bias
+        else:
+            h = self.conv1(x) + self.time_proj(condition).unsqueeze(-1)
+        return self.conv2(h) + self.skip(x)
 
 
 class Downsample1d(nn.Module):
@@ -136,132 +144,119 @@ class Upsample1d(nn.Module):
 # ---------------------------------------------------------------------------
 
 
+class _TemporalStage(nn.Module):
+    """Apply two FiLM residual blocks at one temporal resolution."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, condition_dim: int, kernel_size: int
+    ) -> None:
+        super().__init__()
+        self.first = ResidualTemporalBlock(
+            in_channels, out_channels, condition_dim, kernel_size, scale_bias=True
+        )
+        self.second = ResidualTemporalBlock(
+            out_channels, out_channels, condition_dim, kernel_size, scale_bias=True
+        )
+
+    def forward(self, x: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
+        return self.second(self.first(x, condition), condition)
+
+
 class TemporalUnet(nn.Module):
-    """Temporal U-Net for trajectory denoising.
+    """Denoise temporal sequences with an optional global condition.
 
-    Architecture from Janner et al. 2022 (Figure 2 / Appendix A):
-    - 1D temporal convolutions with a small receptive field (kernel_size=5)
-    - Multi-scale encoder / decoder with skip connections
-    - Sinusoidal time-step conditioning injected into every residual block
+    Temporal convolutions follow Janner et al. (2022), "Planning with Diffusion
+    for Flexible Behavior Synthesis". FiLM conditioning follows Chi et al.
+    (2023), "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion".
 
-    Input shape:  ``x: [B, H, transition_dim]``, ``t: [B]`` (integer timesteps)
-    Output shape: ``[B, H, transition_dim]`` (predicted noise ε)
+    Inputs are sequences ``(B, H, transition_dim)``, timesteps ``(B,)``, and an
+    optional condition ``(B, condition_dim)``. Output matches the sequence shape.
+    ``down_dims`` sets each level's channel width; ``time_embed_dim`` sets the
+    timestep feature width independently. With ``condition_dim=0``, only the
+    timestep conditions the network. An omitted condition uses zeros for its
+    configured features. Temporal padding supports short and odd horizons.
     """
 
     def __init__(
         self,
         transition_dim: int,
         *,
-        dim: int = 32,
-        dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        down_dims: tuple[int, ...] = (32, 64, 128, 256),
+        time_embed_dim: int = 128,
+        condition_dim: int = 0,
         kernel_size: int = 5,
     ) -> None:
         super().__init__()
-        self.transition_dim = int(transition_dim)
-        self.dim = int(dim)
-        self.dim_mults = tuple(dim_mults)
-        self._n_downs = len(dim_mults) - 1  # number of Downsample/Upsample ops
-
-        time_embed_dim = dim * 4
+        if not down_dims or any(width <= 0 for width in down_dims):
+            raise ValueError("down_dims must contain positive channel widths")
+        if time_embed_dim < 2 or time_embed_dim % 2:
+            raise ValueError("time_embed_dim must be a positive even integer of at least 2")
+        if condition_dim < 0:
+            raise ValueError("condition_dim must be nonnegative")
+        self.transition_dim = transition_dim
+        self.down_dims = down_dims
+        self.time_embed_dim = time_embed_dim
+        self.condition_dim = condition_dim
+        self.time_embedding = SinusoidalPosEmb(time_embed_dim)
         self.time_mlp = nn.Sequential(
-            SinusoidalPosEmb(dim),
-            *build_mlp(
-                input_dim=dim,
-                output_dim=time_embed_dim,
-                hidden_layers=(time_embed_dim,),
-                activation_fn=nn.SiLU,
-            ),
+            nn.Linear(time_embed_dim, time_embed_dim * 4),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim * 4, time_embed_dim),
+        )
+        embed_dim = time_embed_dim + condition_dim
+        self.downs = nn.ModuleList(
+            _TemporalStage(in_width, out_width, embed_dim, kernel_size)
+            for in_width, out_width in zip(
+                (transition_dim, *down_dims[:-1]), down_dims, strict=True
+            )
+        )
+        self.downsamples = nn.ModuleList(Downsample1d(width) for width in down_dims[:-1])
+        self.mid = _TemporalStage(down_dims[-1], down_dims[-1], embed_dim, kernel_size)
+        self.upsamples = nn.ModuleList(Upsample1d(width) for width in reversed(down_dims[1:]))
+        self.ups = nn.ModuleList(
+            _TemporalStage(deep_width + skip_width, skip_width, embed_dim, kernel_size)
+            for deep_width, skip_width in zip(
+                reversed(down_dims[1:]), reversed(down_dims[:-1]), strict=True
+            )
+        )
+        self.output = nn.Sequential(
+            Conv1dBlock(down_dims[0], down_dims[0], kernel_size),
+            nn.Conv1d(down_dims[0], transition_dim, kernel_size=1),
         )
 
-        # Channel sizes at each U-Net level.
-        dims = [transition_dim] + [dim * m for m in dim_mults]
-        in_out = list(pairwise(dims))
-
-        self.downs = nn.ModuleList([])
-        for idx, (d_in, d_out) in enumerate(in_out):
-            is_last = idx == len(in_out) - 1
-            self.downs.append(
-                nn.ModuleList(
-                    [
-                        ResidualTemporalBlock(d_in, d_out, time_embed_dim, kernel_size),
-                        ResidualTemporalBlock(d_out, d_out, time_embed_dim, kernel_size),
-                        nn.Identity() if is_last else Downsample1d(d_out),
-                    ]
-                )
-            )
-
-        mid_dim = dims[-1]
-        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, time_embed_dim, kernel_size)
-        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, time_embed_dim, kernel_size)
-
-        self.ups = nn.ModuleList([])
-        for idx, (d_in, d_out) in enumerate(list(reversed(in_out[1:]))):
-            is_last = idx >= len(in_out) - 1
-            self.ups.append(
-                nn.ModuleList(
-                    [
-                        # skip connection doubles the input channels
-                        ResidualTemporalBlock(d_out * 2, d_in, time_embed_dim, kernel_size),
-                        ResidualTemporalBlock(d_in, d_in, time_embed_dim, kernel_size),
-                        nn.Identity() if is_last else Upsample1d(d_in),
-                    ]
-                )
-            )
-
-        self.final_conv = nn.Sequential(
-            Conv1dBlock(dims[1], dims[1], kernel_size),
-            nn.Conv1d(dims[1], transition_dim, 1),
+    def forward(
+        self,
+        x: torch.Tensor,
+        timesteps: torch.Tensor,
+        condition: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if condition is None:
+            if self.condition_dim:
+                condition = x.new_zeros((x.shape[0], self.condition_dim))
+        elif condition.shape != (x.shape[0], self.condition_dim):
+            raise ValueError("condition must have shape (B, condition_dim)")
+        length = x.shape[1]
+        x = x.transpose(1, 2)
+        divisor = 2 ** len(self.downsamples)
+        padding = (-length) % divisor
+        if padding:
+            x = F.pad(x, (0, padding))
+        time_features = self.time_mlp(
+            self.time_embedding(timesteps.to(device=x.device)).to(dtype=x.dtype)
         )
-
-    def _pad_to_multiple(self, x: torch.Tensor) -> tuple[torch.Tensor, int]:
-        """Pad sequence length to the nearest multiple of 2^n_downs."""
-        if self._n_downs == 0:
-            return x, 0
-        divisor = 2**self._n_downs
-        h = x.shape[-1]
-        pad = (-h) % divisor  # smallest non-negative pad to reach a multiple
-        if pad > 0:
-            x = F.pad(x, (0, pad))
-        return x, pad
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # x: [batch, horizon, dim],  t: [batch]
-        orig_h = x.shape[1]
-        x = x.permute(0, 2, 1)  # [batch, dim, horizon] - channels-first for Conv1d
-        t = t.to(device=x.device)
-
-        x, pad = self._pad_to_multiple(x)
-
-        t_emb = self.time_mlp(t)  # [B, time_embed_dim]
-
-        skips: list[torch.Tensor] = []
-        # __init__ creates ModuleList stages; PyTorch types their elements as Module.
-        for resnet1, resnet2, downsample in self.downs:  # ty: ignore[not-iterable]
-            x = resnet1(x, t_emb)
-            x = resnet2(x, t_emb)
+        features = (
+            time_features if condition is None else torch.cat((time_features, condition), dim=-1)
+        )
+        skips = []
+        for stage, downsample in zip(self.downs[:-1], self.downsamples, strict=True):
+            x = stage(x, features)
             skips.append(x)
             x = downsample(x)
-
-        x = self.mid_block1(x, t_emb)
-        x = self.mid_block2(x, t_emb)
-
-        # __init__ creates ModuleList stages; PyTorch types their elements as Module.
-        for resnet1, resnet2, upsample in self.ups:  # ty: ignore[not-iterable]
-            skip = skips.pop()
-            # Crop skip to match x if sizes differ (can happen with odd lengths).
-            if skip.shape[-1] != x.shape[-1]:
-                skip = skip[..., : x.shape[-1]]
-            x = torch.cat([x, skip], dim=1)
-            x = resnet1(x, t_emb)
-            x = resnet2(x, t_emb)
+        x = self.mid(self.downs[-1](x, features), features)
+        for upsample, stage, skip in zip(self.upsamples, self.ups, reversed(skips), strict=True):
             x = upsample(x)
-
-        x = self.final_conv(x)
-
-        # Crop padding, restore original shape.
-        if pad > 0:
-            x = x[..., :orig_h]
-        return x.permute(0, 2, 1)  # [batch, horizon, dim]
+            x = stage(torch.cat((x, skip), dim=1), features)
+        return self.output(x)[..., :length].transpose(1, 2)
 
 
 # ---------------------------------------------------------------------------

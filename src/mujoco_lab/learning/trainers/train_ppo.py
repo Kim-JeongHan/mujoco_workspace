@@ -1,7 +1,6 @@
 """Initialize a BC-derived PPO agent with an independent critic and optimizers."""
 
 from pathlib import Path
-from typing import Any
 
 import tyro
 
@@ -9,6 +8,7 @@ from mujoco_lab.learning.agents.initialization import initialize_actor
 from mujoco_lab.learning.agents.ppo import PPOAgent
 from mujoco_lab.learning.config.critic import CriticConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.metadata import CheckpointMetadata
 from mujoco_lab.learning.models.critic import ValueCritic
 
 
@@ -20,7 +20,7 @@ def initialize_agent(
     critic_hidden_dims: tuple[int, ...] = (128, 128),
     critic_learning_rate: float = 3e-4,
     device: str = "cpu",
-) -> tuple[PPOAgent, Normalizer, dict[str, Any]]:
+) -> tuple[PPOAgent, Normalizer, CheckpointMetadata]:
     """Load a BC actor and return an agent owning both networks and optimizer state.
 
     PPO rollout execution and policy updates are still pending. The source BC

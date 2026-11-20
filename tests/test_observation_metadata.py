@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from mujoco_lab.learning.config import BCTrainConfig
-from mujoco_lab.learning.datasets.episode import Episode, load_episode, load_episodes, save_episode
+from mujoco_lab.learning.config import MSEBCTrainConfig
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.trainers.train_bc import run_training
 
 
@@ -32,9 +32,9 @@ def _episode():
 def test_invalid_observation_contract_is_rejected_when_loading(observation, tmp_path):
     episode = _episode()
     episode.metadata["observation"] = observation
-    save_episode(tmp_path / "episode.npz", episode)
+    episode.save(tmp_path / "episode.npz")
     with pytest.raises(ValueError, match="Observation"):
-        load_episodes(tmp_path, success_only=False)
+        Episode.load_all(tmp_path, success_only=False)
 
 
 @pytest.mark.parametrize("split", ["train", "validation"])
@@ -46,16 +46,16 @@ def test_mixed_layouts_fail_before_training(split):
     train = [episode, different] if split == "train" else [episode]
     validation = [different] if split == "validation" else [episode]
     with pytest.raises(ValueError, match="layouts must match"):
-        run_training(BCTrainConfig(), train, validation)
+        run_training(MSEBCTrainConfig(), train, validation)
 
 
 def test_missing_observation_metadata_is_rejected_when_loading(tmp_path):
     episode = _episode()
     del episode.metadata["observation"]
     episode.metadata["replay"] = {"scene": "book_insertion"}
-    save_episode(tmp_path / "episode.npz", episode)
-    with pytest.raises(ValueError, match="Observation metadata"):
-        load_episodes(tmp_path, success_only=False)
+    episode.save(tmp_path / "episode.npz")
+    with pytest.raises(KeyError, match="observation"):
+        Episode.load_all(tmp_path, success_only=False)
 
 
 def test_collector_copies_observation_metadata(tmp_path):
@@ -85,5 +85,5 @@ def test_collector_copies_observation_metadata(tmp_path):
     env.observation_metadata["rotation_indices"].clear()
     assert episode.metadata["observation"]["rotation_indices"]
     path = tmp_path / "collected.npz"
-    save_episode(path, episode)
-    assert load_episode(path).metadata["observation"] == episode.metadata["observation"]
+    episode.save(path)
+    assert Episode.load(path).metadata["observation"] == episode.metadata["observation"]

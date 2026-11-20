@@ -10,23 +10,32 @@ import numpy as np
 import pytest
 import torch
 from gymnasium import spaces
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.agents import DAPGAgent, Demonstrations
-from mujoco_lab.learning.checkpoint import save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig, CriticConfig
+from mujoco_lab.learning.checkpoint import (
+    DAPGTrainingState,
+    load_training_checkpoint,
+    restore_rng,
+    save_checkpoint,
+    save_training_checkpoint,
+)
+from mujoco_lab.learning.config import CriticConfig, MSEBCTrainConfig
 from mujoco_lab.learning.config.dapg import DAPGConfig
 from mujoco_lab.learning.config.npg import NPGConfig
-from mujoco_lab.learning.datasets.episode import Episode, save_episode
+from mujoco_lab.learning.config.replay import CubeStackReplayConfig
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.datasets.normalizer import Normalizer
+from mujoco_lab.learning.metadata import (
+    CheckpointMetadata,
+    DatasetMetadata,
+    EnvironmentMetadata,
+    ObservationMetadata,
+    PolicyMetadata,
+)
 from mujoco_lab.learning.models.critic import ValueCritic
 from mujoco_lab.learning.policies.gaussian import GaussianPolicy
 from mujoco_lab.learning.policies.mse import MSEPolicy
-from mujoco_lab.learning.rl_checkpoint import (
-    TrainingState,
-    load_training_checkpoint,
-    restore_rng,
-    save_training_checkpoint,
-)
 from mujoco_lab.learning.trainers import train_dapg
 
 
@@ -62,7 +71,7 @@ class BanditEnv:
 
 
 def create_bc_data(tmp_path):
-    config = BCTrainConfig(
+    config = MSEBCTrainConfig(
         hidden_dims=(8,),
         obs_horizon=2,
         chunk_size=3,
@@ -89,27 +98,30 @@ def create_bc_data(tmp_path):
         "min_gap": 0.01,
     }
     observation = {"frame_dim": 1, "rotation_indices": []}
-    dataset_metadata = {"replay": replay, "observation": observation, "train_seeds": [0]}
     path = tmp_path / "bc.pt"
     save_checkpoint(
-        path, model, normalizer, config, optimizer_step=12, dataset_metadata=dataset_metadata
+        path,
+        model,
+        normalizer,
+        config,
+        optimizer_step=12,
+        dataset=DatasetMetadata(train_seeds=(0,)),
+        environment=EnvironmentMetadata.from_recording(replay),
+        observation=ObservationMetadata.from_dict(observation),
     )
     data_dir = tmp_path / "demos"
     data_dir.mkdir()
     for seed in range(2):
-        save_episode(
-            data_dir / f"episode_{seed:06d}.npz",
-            Episode(
-                states=np.ones((5, 1), dtype=np.float32),
-                actions=np.full((4, 1), 0.5, dtype=np.float32),
-                metadata={
-                    "success": True,
-                    "seed": seed,
-                    "replay": replay,
-                    "observation": observation,
-                },
-            ),
-        )
+        Episode(
+            states=np.ones((5, 1), dtype=np.float32),
+            actions=np.full((4, 1), 0.5, dtype=np.float32),
+            metadata={
+                "success": True,
+                "seed": seed,
+                "replay": replay,
+                "observation": observation,
+            },
+        ).save(data_dir / f"episode_{seed:06d}.npz")
     return model, DAPGConfig(
         init_from=path,
         data_dir=data_dir,
@@ -135,9 +147,10 @@ def test_initialization_keeps_first_bc_action_and_observation_history(tmp_path):
     for name, tensor in state.agent.policy.mean_head.state_dict().items():
         torch.testing.assert_close(tensor, bc.net[-1].state_dict()[name][:1], rtol=0, atol=0)
     assert state.agent.policy.chunk_size == 1
-    assert state.metadata["architecture"]["execution_horizon"] == 1
-    assert state.metadata["source_bc_architecture"]["chunk_size"] == 3
-    assert state.metadata["architecture"]["obs_horizon"] == 2
+    assert state.metadata.policy.execution_horizon == 1
+    assert state.metadata.source_bc is not None
+    assert state.metadata.source_bc.policy.chunk_size == 3
+    assert state.metadata.policy.obs_horizon == 2
     demos = train_dapg.load_demonstrations(state)
     # The held-out seed 1 must not become demonstration supervision.
     assert demos.states.shape == (4, 2)
@@ -155,7 +168,12 @@ def test_initial_exploration_is_independent_of_dataset_action_scale(tmp_path, sc
     )
     path = tmp_path / "bc.pt"
     save_checkpoint(
-        path, bc, normalizer, BCTrainConfig(hidden_dims=(8,), chunk_size=3), optimizer_step=0
+        path,
+        bc,
+        normalizer,
+        MSEBCTrainConfig(hidden_dims=(8,), chunk_size=3),
+        optimizer_step=0,
+        environment=checkpoint_environment(MSEBCTrainConfig(hidden_dims=(8,), chunk_size=3)),
     )
     state = train_dapg.initialize_training(DAPGConfig(init_from=path, device="cpu"))
     physical_std = state.agent.policy.log_std.detach().exp()[0] * torch.from_numpy(
@@ -190,6 +208,20 @@ def test_checkpoint_resume_reproduces_next_training_iteration(tmp_path):
     ):
         for name, tensor in model.state_dict().items():
             torch.testing.assert_close(tensor, other.state_dict()[name], rtol=0, atol=0)
+
+
+def test_state_dict_can_be_restored_repeatedly_without_changing_saved_config(tmp_path):
+    _, config = create_bc_data(tmp_path)
+    state = train_dapg.initialize_training(config)
+    payload = state.state_dict()
+    saved_config = deepcopy(payload["config"])
+
+    for _ in range(2):
+        restored = DAPGTrainingState.from_state_dict(payload)
+        assert restored.agent.config == config
+        for name, tensor in state.agent.policy.state_dict().items():
+            torch.testing.assert_close(tensor, restored.agent.policy.state_dict()[name])
+        assert payload["config"] == saved_config
 
 
 def test_training_bootstraps_critic_at_episode_time_limits(tmp_path, monkeypatch):
@@ -287,10 +319,14 @@ def test_training_improves_known_bandit_objective():
         critic=CriticConfig(hidden_dims=(), num_epochs=2, batch_size=32),
         demo_weight=0.1,
     )
-    state = TrainingState(
+    state = DAPGTrainingState(
         DAPGAgent(policy, ValueCritic(1, (), 0.01), config),
         normalizer,
-        {"architecture": {"obs_horizon": 1}},
+        CheckpointMetadata(
+            PolicyMetadata("gaussian", 1, 1),
+            ObservationMetadata(1),
+            environment=checkpoint_environment(MSEBCTrainConfig(action_execution_hz=500)),
+        ),
     )
     demos = Demonstrations(torch.ones(32, 1), torch.full((32, 1, 1), 0.5))
     before = deepcopy(policy)
@@ -304,24 +340,8 @@ def test_training_improves_known_bandit_objective():
 def test_training_step_uses_real_mujoco_environment():
     from mujoco_lab.learning.evaluate_cube import create_cube_evaluation_env
 
-    metadata = {
-        "architecture": {"physics_steps_per_action": 1, "obs_horizon": 1},
-        "dataset_metadata": {
-            "replay": {
-                "scene": "cube_stack",
-                "robot": "panda",
-                "robot_name": "panda",
-                "environment": "table_shelf",
-                "cubes": 1,
-                "dt": 0.002,
-                "physics_steps_per_action": 1,
-                "cube_yaw_range_degrees": 0.0,
-                "xy_range": 0.02,
-                "min_gap": 0.01,
-            }
-        },
-    }
-    env, _ = create_cube_evaluation_env(metadata, xy_range=0, min_gap=0.01, max_steps=4)
+    environment = EnvironmentMetadata(CubeStackReplayConfig(robot="panda", cubes=1), 0.002, "panda")
+    env, _ = create_cube_evaluation_env(environment, xy_range=0, min_gap=0.01, max_steps=4)
     try:
         obs, _ = env.reset(seed=0)
         action = (env.action_space.low + env.action_space.high) / 2
@@ -334,7 +354,12 @@ def test_training_step_uses_real_mujoco_environment():
             critic=CriticConfig(num_epochs=1),
             npg=NPGConfig(cg_iterations=2, backtrack_steps=4),
         )
-        state = TrainingState(DAPGAgent(policy, critic, config), normalizer, metadata)
+        metadata = CheckpointMetadata(
+            PolicyMetadata("gaussian", len(obs), len(action), hidden_dims=(8,)),
+            ObservationMetadata.from_dict(env.observation_metadata),
+            environment,
+        )
+        state = DAPGTrainingState(DAPGAgent(policy, critic, config), normalizer, metadata)
         demos = Demonstrations(torch.from_numpy(obs).repeat(4, 1), torch.zeros(4, 1, len(action)))
         metrics = train_dapg.train_iteration(state, env, demos)
         assert state.env_steps == 8

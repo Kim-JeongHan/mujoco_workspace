@@ -1,5 +1,6 @@
 """Book checkpoint reconstruction, physical cadence, and video camera contract."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -8,13 +9,19 @@ import torch
 
 from mujoco_lab import RobotSpec, Simulator, create_book_insertion
 from mujoco_lab.assets.loader import load_robot_config
-from mujoco_lab.learning.config import EvaluationConfig
-from mujoco_lab.learning.config.replay import BookReplayConfig
+from mujoco_lab.learning.config import DiffusionBCTrainConfig, EvaluationConfig, MSEBCTrainConfig
+from mujoco_lab.learning.config.replay import BookReplayConfig, CubeStackReplayConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.datasets.replay import capture_metadata
 from mujoco_lab.learning.evaluate import create_rollout_env
 from mujoco_lab.learning.evaluate_book import BookEvalConfig
 from mujoco_lab.learning.evaluation import PolicyEvaluator
+from mujoco_lab.learning.metadata import (
+    CheckpointMetadata,
+    EnvironmentMetadata,
+    ObservationMetadata,
+    PolicyMetadata,
+)
 from mujoco_lab.learning.policies.factory import build_policy
 
 
@@ -23,37 +30,37 @@ def metadata():
     sim = Simulator(
         create_book_insertion("small"), robots=[RobotSpec("arm", "panda", config=config)], dt=0.002
     )
-    return {
-        "architecture": {"physics_steps_per_action": 5, "obs_horizon": 1, "execution_horizon": 1},
-        "dataset_metadata": {
-            "replay": capture_metadata(
-                sim,
-                BookReplayConfig(
-                    book="small",
-                    robot="panda",
-                    physics_steps_per_action=5,
-                    xy_range=0.031,
-                    book_yaw_range_degrees=17.0,
-                ),
-            )
-        },
-    }
+    environment = EnvironmentMetadata.from_recording(
+        capture_metadata(
+            sim,
+            BookReplayConfig(
+                book="small",
+                robot="panda",
+                physics_steps_per_action=5,
+                xy_range=0.031,
+                book_yaw_range_degrees=17.0,
+            ),
+        )
+    )
+    return CheckpointMetadata(PolicyMetadata("mse", 48, 8), ObservationMetadata(48), environment)
 
 
-@pytest.mark.parametrize("policy_type", ["mse", "diffusion"])
-def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(
-    tmp_path, monkeypatch, policy_type
-):
+@pytest.mark.parametrize(
+    "config",
+    [
+        MSEBCTrainConfig(hidden_dims=(), chunk_size=1),
+        DiffusionBCTrainConfig(
+            policy_type="diffusion", down_dims=(16,), time_embed_dim=16, chunk_size=1
+        ),
+    ],
+)
+def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(tmp_path, monkeypatch, config):
     rollout = EvaluationConfig(num_episodes=1, xy_range=None, max_seconds=0.02, video_episodes=1)
-    env, _ = create_rollout_env(metadata(), rollout)
+    env, _ = create_rollout_env(metadata().environment, rollout)
     model = build_policy(
-        policy_type,
+        config,
         state_dim=48,
         action_dim=env.action_space.shape[0],
-        chunk_size=1,
-        hidden_dims=(),
-        diffusion_down_dims=(16,),
-        diffusion_time_embed_dim=16,
     )
     with torch.no_grad():
         for parameter in model.parameters():
@@ -95,18 +102,13 @@ def test_actual_book_policy_rollout_uses_book_camera_and_diagnostics(
 
 @pytest.mark.parametrize("scene,repeat", [("cube_stack", 5), ("book_insertion", 10)])
 def test_rollout_env_converts_seconds_using_recorded_cadence(scene, repeat):
-    recorded = metadata()
-    replay = recorded["dataset_metadata"]["replay"]
-    replay["physics_steps_per_action"] = repeat
-    recorded["architecture"]["physics_steps_per_action"] = repeat
-    if scene == "cube_stack":
-        replay.update(
-            scene=scene,
-            environment="table_shelf",
-            cubes=1,
-            min_gap=0.01,
-            cube_yaw_range_degrees=0.0,
-        )
+    recorded = metadata().environment
+    config = (
+        CubeStackReplayConfig(robot="panda", cubes=1, physics_steps_per_action=repeat)
+        if scene == "cube_stack"
+        else replace(recorded.scene, physics_steps_per_action=repeat)
+    )
+    recorded = replace(recorded, scene=config)
     env, effective = create_rollout_env(recorded, EvaluationConfig(max_seconds=15.0))
     assert env.max_steps == (1500 if repeat == 5 else 750)
     assert env.max_steps * env.action_dt == pytest.approx(15.0)

@@ -13,6 +13,7 @@ from mujoco_lab.learning.config.replay import CubeStackReplayConfig
 from mujoco_lab.learning.datasets.replay import capture_metadata
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.evaluate import create_evaluation_env
+from mujoco_lab.learning.metadata import EnvironmentMetadata
 
 
 def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
@@ -74,23 +75,13 @@ def test_seeded_cube_yaw_rotates_qpos_and_keeps_rotated_footprints_apart():
 
 @pytest.mark.parametrize("xy_range,min_gap", [(0.02, 0.01), (0.04, 0.02)])
 def test_evaluation_restores_recorded_randomization(xy_range, min_gap):
-    metadata = {
-        "architecture": {"physics_steps_per_action": 1},
-        "dataset_metadata": {
-            "replay": {
-                "scene": "cube_stack",
-                "robot": "forte",
-                "robot_name": "forte",
-                "cubes": 2,
-                "environment": "table_shelf",
-                "dt": 0.002,
-                "cube_yaw_range_degrees": 45.0,
-                "physics_steps_per_action": 1,
-                "xy_range": xy_range,
-                "min_gap": min_gap,
-            }
-        },
-    }
+    metadata = EnvironmentMetadata(
+        CubeStackReplayConfig(
+            robot="forte", cubes=2, cube_yaw_range_degrees=45.0, xy_range=xy_range, min_gap=min_gap
+        ),
+        dt=0.002,
+        robot_name="forte",
+    )
     env, scene = create_evaluation_env(metadata, xy_range=None, min_gap=None, max_steps=1)
     assert env.xy_range == scene["xy_range"] == xy_range
     assert env.min_gap == scene["min_gap"] == min_gap

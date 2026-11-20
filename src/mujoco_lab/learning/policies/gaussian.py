@@ -94,7 +94,7 @@ class GaussianPolicy(BasePolicy):
         )
         return kl.sum(dim=(-1, -2))
 
-    def compute_loss(self, state, action_chunk):
+    def compute_loss(self, state, action_chunk, *, valid_mask: torch.Tensor | None = None):
         """Compute the negative log likelihood of expert action chunks.
 
         Args:
@@ -104,4 +104,9 @@ class GaussianPolicy(BasePolicy):
         Returns:
             torch.Tensor: Mean negative log likelihood with shape ().
         """
-        return -self.log_prob(state, action_chunk).mean()
+        log_probs = self(state).log_prob(action_chunk)
+        if valid_mask is not None:
+            if valid_mask.shape != log_probs.shape[:-1]:
+                raise ValueError("valid_mask must have shape (B, chunk_size)")
+            log_probs = log_probs * valid_mask.unsqueeze(-1)
+        return -log_probs.sum(dim=(-1, -2)).mean()

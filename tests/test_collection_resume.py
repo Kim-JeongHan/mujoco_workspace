@@ -6,7 +6,7 @@ from zipfile import BadZipFile
 import numpy as np
 import pytest
 
-from mujoco_lab.learning.datasets.episode import Episode, save_episode
+from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.rollout import iter_episodes
 
 
@@ -104,7 +104,7 @@ def test_resume_accepts_auxiliary_metadata_changes(tmp_path, monkeypatch):
     }
     current = {"scene": "cube_stack", "model_sha256": "same", "mujoco_version": "newer"}
     path = tmp_path / "episode_000000.npz"
-    save_episode(path, episode(10, recorded))
+    episode(10, recorded).save(path)
     original = path.read_bytes()
     monkeypatch.setattr(
         "mujoco_lab.learning.rollout.collector.collect_episode",
@@ -134,7 +134,7 @@ def test_resume_accepts_auxiliary_metadata_changes(tmp_path, monkeypatch):
     ],
 )
 def test_resume_rejects_core_setting_and_model_changes(tmp_path, field, recorded, current):
-    save_episode(tmp_path / "episode_000000.npz", episode(10, {field: recorded}))
+    episode(10, {field: recorded}).save(tmp_path / "episode_000000.npz")
     with pytest.raises(ValueError, match="different replay metadata"):
         list(
             iter_episodes(
@@ -159,13 +159,13 @@ def test_atomic_save_never_exposes_partial_final_or_replaces_existing(tmp_path, 
 
     monkeypatch.setattr(np, "savez_compressed", fail)
     with pytest.raises(RuntimeError, match="write failed"):
-        save_episode(path, episode(10))
+        episode(10).save(path)
     assert not path.exists()
     assert list(tmp_path.iterdir()) == []
     monkeypatch.setattr(np, "savez_compressed", original_save)
-    save_episode(path, episode(10))
+    episode(10).save(path)
     before = path.read_bytes()
     with pytest.raises(FileExistsError):
-        save_episode(path, episode(11))
+        episode(11).save(path)
     assert path.read_bytes() == before
     assert list(tmp_path.iterdir()) == [path]

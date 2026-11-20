@@ -16,8 +16,8 @@ class DiffusionModel(nn.Module):
     """Temporal U-Net that predicts the denoising noise ε for a trajectory.
 
     Replaces the original MLP backbone with the temporally-local 1D convolutional
-    U-Net described in the paper.  Conditions on the diffusion timestep ``t`` via
-    sinusoidal embeddings injected into every residual block.
+    U-Net described in the paper. Uses the shared FiLM-conditioned TemporalUnet
+    with a diffusion timestep and an optional global condition.
 
     Args:
         state_dim: Dimension of each state (= ``transition_dim`` for the U-Net).
@@ -25,6 +25,7 @@ class DiffusionModel(nn.Module):
         n_diffusion_steps: Total number of denoising steps.
         dim: Base hidden-channel dimension for the U-Net (default 32).
         dim_mults: Channel multipliers at each U-Net level (default (1, 2, 4, 8)).
+        condition_dim: Width of the optional global condition; zero disables it.
     """
 
     def __init__(
@@ -35,6 +36,7 @@ class DiffusionModel(nn.Module):
         n_diffusion_steps: int = 100,
         dim: int = 32,
         dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        condition_dim: int = 0,
     ) -> None:
         super().__init__()
         self.state_dim = int(state_dim)
@@ -42,11 +44,13 @@ class DiffusionModel(nn.Module):
         self.n_diffusion_steps = int(n_diffusion_steps)
         self.dim = int(dim)
         self.dim_mults = tuple(dim_mults)
+        self.condition_dim = condition_dim
 
         self.unet = TemporalUnet(
             transition_dim=self.state_dim,
-            dim=self.dim,
-            dim_mults=self.dim_mults,
+            down_dims=tuple(self.dim * multiplier for multiplier in self.dim_mults),
+            time_embed_dim=self.dim * 4,
+            condition_dim=condition_dim,
         )
 
         self.hparams = {
@@ -55,6 +59,7 @@ class DiffusionModel(nn.Module):
             "n_diffusion_steps": self.n_diffusion_steps,
             "dim": self.dim,
             "dim_mults": list(self.dim_mults),
+            "condition_dim": self.condition_dim,
             "model_class_path": "mujoco_lab.learning.models.diffusion.DiffusionModel",
         }
 
@@ -62,12 +67,14 @@ class DiffusionModel(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
+        condition: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Predict noise ε for a noisy trajectory at diffusion step t.
 
         Args:
             x: Noisy trajectory ``[B, H, state_dim]``.
             t: Diffusion timesteps ``[B]`` (integer).
+            condition: Optional global features ``[B, condition_dim]``.
 
         Returns:
             Predicted noise ``[B, H, state_dim]``.
@@ -76,7 +83,7 @@ class DiffusionModel(nn.Module):
             t = t.reshape(1).expand(x.shape[0])
         elif t.ndim == 1 and t.shape[0] == 1 and x.shape[0] != 1:
             t = t.expand(x.shape[0])
-        return self.unet(x, t)
+        return self.unet(x, t, condition)
 
     def set_seed(self, seed: int) -> None:
         torch.manual_seed(seed)

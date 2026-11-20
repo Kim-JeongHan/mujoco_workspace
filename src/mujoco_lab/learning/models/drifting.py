@@ -341,7 +341,9 @@ def complex_example(
             super().__init__()
             # Append condition, latent noise, and waypoint phase as input channels.
             channels = 4 + latent_dim + 1
-            self.net = TemporalUnet(transition_dim=channels, dim=16, dim_mults=(1, 2, 4))
+            self.net = TemporalUnet(
+                transition_dim=channels, down_dims=(16, 32, 64), time_embed_dim=64
+            )
             # TemporalUnet preserves its channel count; read out 2D coordinates.
             self.readout = nn.Linear(channels, 2)
 

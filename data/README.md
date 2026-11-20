@@ -83,6 +83,6 @@ values. Episodes with replay data may also contain `qpos`, `frame_times`,
 and action dimensions can vary by task; metadata and the workspace's collection
 code describe the corresponding setup.
 
-Load episodes with the workspace's `mujoco_lab.learning.datasets.load_episodes`
+Load episodes with the workspace's `mujoco_lab.learning.datasets.Episode.load_all`
 API. It keeps successful episodes by default; set `success_only=False` to
 include failed and unlabeled attempts.

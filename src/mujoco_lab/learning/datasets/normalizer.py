@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
+import torch
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,26 @@ class Normalizer:
     action_mean: np.ndarray
     action_std: np.ndarray
     state_clip: float | None = field(default=None, kw_only=True)
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Snapshot state and action statistics as checkpoint tensors."""
+        return {
+            name: torch.from_numpy(getattr(self, name).copy())
+            for name in ("state_mean", "state_std", "action_mean", "action_std")
+        }
+
+    @staticmethod
+    def from_state_dict(
+        stats: dict[str, torch.Tensor], *, state_clip: float | None = None
+    ) -> Normalizer:
+        """Restore normalization arrays and optional observation clipping."""
+        return Normalizer(
+            state_mean=stats["state_mean"].numpy(),
+            state_std=stats["state_std"].numpy(),
+            action_mean=stats["action_mean"].numpy(),
+            action_std=stats["action_std"].numpy(),
+            state_clip=state_clip,
+        )
 
     @staticmethod
     def _safe_std(std: np.ndarray, eps: float = 1e-6) -> np.ndarray:

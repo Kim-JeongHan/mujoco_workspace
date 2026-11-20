@@ -8,11 +8,13 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.checkpoint import load_checkpoint, save_checkpoint
-from mujoco_lab.learning.config import BCTrainConfig
+from mujoco_lab.learning.config import MSEBCTrainConfig
 from mujoco_lab.learning.datasets.normalizer import Normalizer
 from mujoco_lab.learning.logging import Logger
+from mujoco_lab.learning.metadata import DatasetMetadata
 from mujoco_lab.learning.policies.factory import build_policy
 
 
@@ -101,16 +103,15 @@ def test_wandb_flushes_pending_history_before_failed_finish(tmp_path, monkeypatc
 
 
 def test_checkpoint_round_trip_is_weights_only_and_preserves_normalizer(tmp_path):
-    config = BCTrainConfig(
+    config = MSEBCTrainConfig(
         robot="forte",
-        policy_type="mse",
         hidden_dims=(8,),
         obs_horizon=2,
         chunk_size=1,
         execution_horizon=1,
         action_execution_hz=500,
     )
-    model = build_policy("mse", state_dim=108, action_dim=8, chunk_size=1, hidden_dims=(8,))
+    model = build_policy(config, state_dim=108, action_dim=8)
     normalizer = Normalizer(
         state_mean=np.arange(54, dtype=np.float32),
         state_std=np.ones(54, dtype=np.float32),
@@ -119,15 +120,29 @@ def test_checkpoint_round_trip_is_weights_only_and_preserves_normalizer(tmp_path
     )
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(
-        path, model, normalizer, config, optimizer_step=12, dataset_metadata={"dt": 0.002}
+        path,
+        model,
+        normalizer,
+        config,
+        optimizer_step=12,
+        dataset=DatasetMetadata(data_dir="demonstrations"),
+        environment=checkpoint_environment(config),
     )
     raw = torch.load(path, weights_only=True, map_location="cpu")
-    assert raw["architecture"]["obs_horizon"] == 2
+    assert raw["policy"]["obs_horizon"] == 2
     loaded, stats, info = load_checkpoint(path)
     np.testing.assert_array_equal(stats.state_mean, normalizer.state_mean)
-    assert info["optimizer_step"] == 12 and info["dataset_metadata"]["dt"] == 0.002
+    assert info.dataset is not None
+    assert info.optimizer_step == 12 and info.dataset.data_dir == "demonstrations"
     sample = torch.ones((2, 108))
     with torch.no_grad():
         torch.testing.assert_close(model.sample_actions(sample), loaded.sample_actions(sample))
     with pytest.raises(FileExistsError):
-        save_checkpoint(path, model, normalizer, config, optimizer_step=13)
+        save_checkpoint(
+            path,
+            model,
+            normalizer,
+            config,
+            optimizer_step=13,
+            environment=checkpoint_environment(config),
+        )

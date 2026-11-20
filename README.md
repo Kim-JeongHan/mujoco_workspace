@@ -97,30 +97,14 @@ observation-conditioned temporal U-Net, epsilon-prediction training, and DDIM
 sampling. It shares the dataset, normalization, EMA, and action-chunk execution
 pipeline with the other BC policies.
 
+For local BC training, `--split-file <DATA_DIR>/splits.json` reuses recorded
+train/validation/test seed assignments, omitting unsuccessful attempts without
+replacing them or changing the remaining order.
+
 ```bash
-uv run python -m mujoco_lab.learning.train --policy-type diffusion \
-  --data-dir data/forte_mixed_1 --run-name forte-diffusion-cube1 \
-  --diffusion-num-train-timesteps 100 --sampling-num-steps 20
+uv run --extra learning python -m mujoco_lab.learning.train \
+  --policy-type diffusion --scheduler.num-train-timesteps 40 --sampling-num-steps 7
 ```
-
-`sampling_num_steps` controls Flow Euler steps or Diffusion DDIM steps. Diffusion
-defaults to a cosine noise schedule, U-Net widths `(128, 256, 512)`, observation
-history 2, action chunk 16, and execution horizon 4. DDIM uses fresh initial
-Gaussian noise and `eta=0`; standardized actions are not clipped to `[-1, 1]`.
-Checkpoints preserve the U-Net architecture and complete scheduler settings;
-evaluation uses the saved sampling step count. Diffusion validation loss measures
-noise prediction, while rollout success measures physical task performance.
-
-See [`BCTrainConfig` and `BCEvalConfig`](src/mujoco_lab/learning/config/bc.py) and
-[`EvaluationConfig`](src/mujoco_lab/learning/config/evaluation.py) for settings.
-
-Run from the project root. Training and evaluation load W&B credentials from `.env`:
-
-```dotenv
-WANDB_API_KEY=your_api_key
-```
-
-The `.env` file is ignored by Git.
 
 ## DAPG fine-tuning
 
@@ -153,22 +137,3 @@ uv run --extra learning python -m mujoco_lab.learning.trainers.train_ddpg --resu
 
 uv run --extra learning python -m mujoco_lab.learning.evaluate_ddpg --checkpoint <DDPG_PATH>
 ```
-
-Use `--device cpu` when training without CUDA. Training uses fixed horizons and
-recomputes sparse rewards from the next object's goal pose: zero within the
-task's position/rotation tolerances and minus one otherwise. Evaluation reports
-`goal_success_rate` separately from `success_rate`, which retains physical
-release, support contact, and the 0.5-second placement hold. Pose rewards do not
-encode those release/hold conditions.
-
-Replay stores raw final observations and clipped executed actions. Observation
-histories are relabeled before normalization. Cube goals contain all cube
-positions from one future state; book goals contain position and rotation.
-Checkpoints include replay contents, normalization statistics, target networks,
-optimizers, counters, and RNG state. Resume starts the next seeded episode and
-retains saved scene and learning settings; only the action budget, output
-directory, device, and W&B mode are overridden.
-
-See [`DDPGConfig`](src/mujoco_lab/learning/config/ddpg.py) for settings and the
-[DDPG](https://arxiv.org/abs/1509.02971) and
-[HER](https://arxiv.org/abs/1707.01495) papers for the algorithms.

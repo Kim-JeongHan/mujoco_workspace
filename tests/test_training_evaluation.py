@@ -1,14 +1,22 @@
 """Periodic training evaluation uses the live policy and preserves optimization."""
 
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+from metadata_config import checkpoint_environment
 
 from mujoco_lab.learning.checkpoint import checkpoint_metadata
-from mujoco_lab.learning.config import BCTrainConfig, EvaluationConfig
+from mujoco_lab.learning.config import (
+    DiffusionBCTrainConfig,
+    DiffusionSchedulerConfig,
+    EvaluationConfig,
+    FlowBCTrainConfig,
+    MSEBCTrainConfig,
+)
 from mujoco_lab.learning.datasets.episode import Episode
 from mujoco_lab.learning.evaluation import PolicyEvaluator
 from mujoco_lab.learning.trainers.train_bc import run_training
@@ -39,12 +47,13 @@ class TinyEnv:
 
 @pytest.mark.parametrize("ratios", [(0.0, 0.0), (0.25, 0.0), (0.0, 0.25), (0.25, 0.25)])
 @pytest.mark.parametrize("eval_interval_steps", [0, 30_000])
+@pytest.mark.parametrize("file_splits", [None, ([6, 4, 1, 99], [0, 7], [2])])
 def test_training_split_preserves_seeded_random_split_order(
-    tmp_path, monkeypatch, ratios, eval_interval_steps
+    tmp_path, monkeypatch, ratios, eval_interval_steps, file_splits
 ):
     from mujoco_lab.learning import train as cli
 
-    config = BCTrainConfig(
+    config = MSEBCTrainConfig(
         output_dir=tmp_path,
         validation_ratio=ratios[0],
         test_ratio=ratios[1],
@@ -52,6 +61,15 @@ def test_training_split_preserves_seeded_random_split_order(
         eval_interval_steps=eval_interval_steps,
         seed=7,
     )
+    if file_splits is not None:
+        config.split_file = tmp_path / "splits.json"
+        config.split_file.write_text(
+            json.dumps(
+                dict(
+                    zip(("train_seeds", "validation_seeds", "test_seeds"), file_splits, strict=True)
+                )
+            )
+        )
     demonstrations = [
         Episode(
             states=np.zeros((2, 1), dtype=np.float32),
@@ -60,6 +78,12 @@ def test_training_split_preserves_seeded_random_split_order(
                 "seed": index,
                 "replay": {
                     "physics_steps_per_action": 1,
+                    "scene": "cube_stack",
+                    "environment": "table_shelf",
+                    "robot": "panda",
+                    "robot_name": "panda",
+                    "cubes": 1,
+                    "dt": 0.002,
                 },
                 "observation": {"frame_dim": 1, "rotation_indices": []},
             },
@@ -86,18 +110,22 @@ def test_training_split_preserves_seeded_random_split_order(
 
     def capture_rollout_env(metadata, rollout):
         captured["evaluation_metadata"] = metadata
-        assert metadata["architecture"]["physics_steps_per_action"] == 1
+        assert metadata.scene.physics_steps_per_action == 1
         assert rollout is config.evaluation
         return object(), {}
 
     monkeypatch.setattr(cli, "create_rollout_env", capture_rollout_env)
     monkeypatch.setattr(cli.tyro, "cli", lambda *args, **kwargs: config)
-    monkeypatch.setattr(cli, "load_episodes", lambda _path: demonstrations)
+    monkeypatch.setattr(cli.Episode, "load_all", lambda _path: demonstrations)
     monkeypatch.setattr(cli, "Logger", CaptureLogger)
     monkeypatch.setattr(cli, "run_training", stop_before_training)
     with pytest.raises(RuntimeError, match="split captured"):
         cli.main()
     assert ("evaluation_metadata" in captured) == (eval_interval_steps > 0)
+    if file_splits is not None:
+        for name, seeds in zip(("train", "validation", "test"), file_splits, strict=True):
+            assert captured[f"{name}_seeds"] == tuple(seed for seed in seeds if seed != 99)
+        return
     validation_count = round(8 * ratios[0])
     test_count = round(8 * ratios[1])
     reference = torch.utils.data.random_split(
@@ -106,12 +134,23 @@ def test_training_split_preserves_seeded_random_split_order(
         generator=torch.Generator().manual_seed(config.seed),
     )
     for name, subset in zip(("train", "validation", "test"), reference, strict=True):
-        assert captured[f"{name}_seeds"] == list(subset.indices)
+        assert captured[f"{name}_seeds"] == tuple(subset.indices)
 
 
 @pytest.mark.parametrize("ema_decay", [None, 0.5])
-@pytest.mark.parametrize("policy_type", ["flow", "diffusion"])
-def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay, policy_type):
+@pytest.mark.parametrize(
+    "policy_config",
+    [
+        FlowBCTrainConfig(policy_type="flow", hidden_dims=(8,)),
+        DiffusionBCTrainConfig(
+            policy_type="diffusion",
+            down_dims=(16,),
+            time_embed_dim=16,
+            scheduler=DiffusionSchedulerConfig(num_train_timesteps=40, beta_schedule="linear"),
+        ),
+    ],
+)
+def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay, policy_config):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     demonstration = Episode(
         states=np.arange(6, dtype=np.float32).reshape(-1, 1),
@@ -122,11 +161,8 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay,
         },
     )
     demonstration.validate_training_data()
-    config = BCTrainConfig(
-        policy_type=policy_type,
-        hidden_dims=(8,),
-        diffusion_down_dims=(16,),
-        diffusion_time_embed_dim=16,
+    config = replace(
+        policy_config,
         obs_horizon=1,
         chunk_size=1,
         execution_horizon=1,
@@ -141,7 +177,17 @@ def test_evaluation_interval_final_step_and_training_rng(monkeypatch, ema_decay,
 
     def evaluate(model, normalizer, step):
         assert model.training == (ema_decay is None)
-        metadata = checkpoint_metadata(model, normalizer, config, optimizer_step=step)
+        metadata = checkpoint_metadata(
+            model,
+            normalizer,
+            config,
+            optimizer_step=step,
+            environment=checkpoint_environment(config),
+        )
+        if isinstance(config, DiffusionBCTrainConfig):
+            scheduler = metadata.policy.diffusion_scheduler_config
+            assert scheduler["num_train_timesteps"] == 40
+            assert scheduler["beta_schedule"] == "linear"
         rows, summary = PolicyEvaluator(
             TinyEnv(),
             EvaluationConfig(num_episodes=1, seed=100, max_seconds=0.002, video_episodes=0),
