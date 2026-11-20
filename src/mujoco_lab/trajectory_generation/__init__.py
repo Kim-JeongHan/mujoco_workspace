@@ -6,8 +6,9 @@ from mujoco_lab.trajectory_generation.interpolation import (
     min_jerk_duration,
 )
 from mujoco_lab.trajectory_generation.references import (
-    AnalyticJerkReference,
+    JerkLQRReference,
     MinJerkReference,
+    PositionHoldReference,
     ReferenceGenerator,
     ReferenceType,
     create_reference_generator,
@@ -19,8 +20,9 @@ from mujoco_lab.trajectory_generation.trajectory import (
 )
 
 __all__ = [
-    "AnalyticJerkReference",
+    "JerkLQRReference",
     "MinJerkReference",
+    "PositionHoldReference",
     "ReferenceGenerator",
     "ReferenceType",
     "ControlTarget",

@@ -30,7 +30,7 @@ class CubeStackEnv(JointActionEnv):
     Rotations flatten the first two matrix columns row-major. Arm positions
     and gripper targets use their joints' native radians or meters. Configure
     joint-target arm controllers through the robot settings.
-    Arm goals drive persistent analytic jerk references with configured velocity
+    Arm goals drive persistent JerkLQR references with configured velocity
     and acceleration limits. New actions retain the current reference state.
     """
 

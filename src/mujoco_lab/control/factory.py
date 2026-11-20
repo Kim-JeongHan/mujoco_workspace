@@ -32,6 +32,7 @@ def create_controller(robot: Robot, config: ControllerConfig) -> Controller:
             gravity_compensation=config.gravity_compensation,
             frame=config.frame,
             control_dt=robot._simulator.dt,
+            desired_velocity=config.desired_velocity,
         )
     elif name == "computed_torque":
         algorithm = JointSpaceComputedTorque(

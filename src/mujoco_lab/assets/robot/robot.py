@@ -13,7 +13,7 @@ from dacite import Config, from_dict
 
 # dacite requires runtime Literal aliases rather than PEP 695 aliases.
 ControllerType = Literal["pd", "position", "computed_torque"]  # noqa: UP040
-ReferenceType = Literal["analytic_jerk", "min_jerk"]  # noqa: UP040
+ReferenceType = Literal["jerk_lqr", "min_jerk", "position_hold"]  # noqa: UP040
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,7 @@ class ControllerConfig:
     pd_gains: FortePDGain | dict[str, PDGain] | None = None
     natural_frequency: float = 20.0  # Computed-torque acceleration gains, in rad/s.
     damping_ratio: float = 1.0
+    desired_velocity: Literal["reference_velocity", "zero"] = "reference_velocity"
 
     def pd_gain(self, joint_names: tuple[str, ...]) -> tuple[list[float], list[float]]:
         """Return Kp and Kd arrays in controlled-joint order."""
@@ -124,7 +125,7 @@ class ControllerConfig:
 class ReferenceConfig:
     """Algorithm selection and tuning for robot-owned arm references, with times in seconds."""
 
-    name: ReferenceType = "analytic_jerk"
+    name: ReferenceType = "jerk_lqr"
     response_time: float = 0.15
     horizon: float = 0.6
     terminal_weight: float = 0.0

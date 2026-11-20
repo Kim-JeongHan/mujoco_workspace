@@ -7,7 +7,7 @@ from mujoco_lab import RobotSpec, Simulator, create_cube_stack
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackTask
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
-from mujoco_lab.trajectory_generation import AnalyticJerkReference
+from mujoco_lab.trajectory_generation import JerkLQRReference
 
 
 def make_robot():
@@ -26,7 +26,7 @@ def test_goal_bounds_joint_order_and_input_ownership():
     original = action.copy()
     robot.set_goal(action, joint_names=names)
     reference = robot.reference_generator
-    assert isinstance(reference, AnalyticJerkReference)
+    assert isinstance(reference, JerkLQRReference)
     np.testing.assert_array_equal(reference.goal, limits[:-1, 1])
     assert robot.gripper is not None
     assert robot.gripper.get_target() == limits[-1, 1]
@@ -38,7 +38,7 @@ def test_goal_bounds_joint_order_and_input_ownership():
 def test_goal_rejects_extra_values_before_changing_reference():
     _, robot = make_robot()
     reference = robot.reference_generator
-    assert isinstance(reference, AnalyticJerkReference)
+    assert isinstance(reference, JerkLQRReference)
     before = reference.goal.copy()
     expected = len(robot.control_joint_names) + int(robot.has_gripper())
     with pytest.raises(ValueError, match="goal must contain"):
@@ -92,7 +92,7 @@ def test_simulator_reset_reuses_reference_and_clears_pending_goal():
     action[1] -= 0.1
     robot.set_goal(action)
     reference = robot.reference_generator
-    assert isinstance(reference, AnalyticJerkReference)
+    assert isinstance(reference, JerkLQRReference)
     sim.run_steps(5)
     sim.reset()
     assert robot.reference_generator is reference

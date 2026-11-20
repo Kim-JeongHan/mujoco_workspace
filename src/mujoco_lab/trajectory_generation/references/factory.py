@@ -2,9 +2,10 @@
 
 from mujoco_lab.assets.robot.robot import Constraints, ReferenceConfig
 from mujoco_lab.assets.robot.robot import ReferenceType as ReferenceType
-from mujoco_lab.trajectory_generation.references.analytic_jerk import AnalyticJerkReference
 from mujoco_lab.trajectory_generation.references.base import ReferenceGenerator
+from mujoco_lab.trajectory_generation.references.jerk_lqr import JerkLQRReference
 from mujoco_lab.trajectory_generation.references.min_jerk import MinJerkReference
+from mujoco_lab.trajectory_generation.references.position_hold import PositionHoldReference
 from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
@@ -15,14 +16,17 @@ def create_reference_generator(
     *,
     control_dt: float = 0.002,
 ) -> ReferenceGenerator:
-    """Build an analytic jerk or minimum-jerk reference without advancing time.
+    """Build a configured reference without advancing time.
 
-    ``control_dt`` comes from Simulator. Analytic jerk uses the configured
+    ``control_dt`` comes from Simulator. JerkLQR uses the configured
     horizon, response time, and terminal weight. Minimum jerk uses duration
     and constrain; its minimum segment duration is independent of update cadence.
+    Position hold repeats the raw goal with zero desired derivatives.
     """
-    if config.name == "analytic_jerk":
-        return AnalyticJerkReference(
+    if config.name == "position_hold":
+        return PositionHoldReference(initial, control_dt=control_dt)
+    if config.name == "jerk_lqr":
+        return JerkLQRReference(
             initial,
             constraints,
             control_dt=control_dt,

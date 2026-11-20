@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 from mujoco_lab.assets.robot.robot import Constraints
-from mujoco_lab.trajectory_generation.references.analytic_jerk import AnalyticJerkReference
+from mujoco_lab.trajectory_generation.references.jerk_lqr import JerkLQRReference
 from mujoco_lab.trajectory_generation.target import ControlTarget
 
 
 @pytest.mark.parametrize("parameter", ["control_dt", "response_time", "horizon"])
 def test_zero_time_parameters_are_rejected(parameter):
     with pytest.raises(ValueError, match="must be positive"):
-        AnalyticJerkReference(
+        JerkLQRReference(
             ControlTarget(np.zeros(1)),
             Constraints(["joint"], [[-1, 1]], [1], [1]),
             **{parameter: 0.0},
@@ -23,7 +23,7 @@ def test_first_jerk_matches_dense_finite_horizon_solution(terminal_weight):
     dt, tau, steps = 0.02, 0.1, 8
     state = np.array([0.2, 0.3, -0.1])
     goal = np.full(1, 0.4)
-    reference = AnalyticJerkReference(
+    reference = JerkLQRReference(
         ControlTarget(state[:1], state[1:2], state[2:3]),
         Constraints(["joint"], [[-100, 100]], [100], [100]),
         control_dt=dt,
@@ -53,7 +53,7 @@ def test_first_jerk_matches_dense_finite_horizon_solution(terminal_weight):
 
 
 def test_changing_goal_preserves_state_and_constant_jerk_integration():
-    reference = AnalyticJerkReference(
+    reference = JerkLQRReference(
         ControlTarget(np.arange(2) * 0.2),
         Constraints(["first", "second"], [[-1, 1], [-1, 1]], [1, 1], [2, 2]),
     )
@@ -81,7 +81,7 @@ def test_changing_goal_preserves_state_and_constant_jerk_integration():
 
 
 def test_goal_reversals_obey_bounds_at_endpoints_and_interior_velocity_extrema():
-    reference = AnalyticJerkReference(
+    reference = JerkLQRReference(
         ControlTarget(np.zeros(7)),
         Constraints(
             [f"joint_{i}" for i in range(7)],
@@ -107,7 +107,7 @@ def test_goal_reversals_obey_bounds_at_endpoints_and_interior_velocity_extrema()
 
 
 def test_unrecoverable_outward_acceleration_at_speed_bound_is_reported():
-    reference = AnalyticJerkReference(
+    reference = JerkLQRReference(
         ControlTarget(np.zeros(1), np.full(1, 0.1), np.full(1, 0.2)),
         Constraints(["joint"], [[-1, 1]], [0.1], [1]),
     )

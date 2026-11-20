@@ -10,7 +10,7 @@ from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import BookTask
 from mujoco_lab.learning.envs import BookEnv
 from mujoco_lab.learning.envs.book import book_observation_layout
-from mujoco_lab.trajectory_generation import AnalyticJerkReference, ControlTarget
+from mujoco_lab.trajectory_generation import ControlTarget, JerkLQRReference
 
 
 def make_env(**kwargs):
@@ -82,9 +82,7 @@ def test_book_action_preserves_target_derivatives_and_stops_on_success(monkeypat
     start = ControlTarget(env.robot.target.position, np.full(7, 0.1), np.full(7, -0.2))
     env.robot.target = start
     env.robot.set_reference_generator(
-        AnalyticJerkReference(
-            start, env.robot.get_reference_constraints(), control_dt=env.simulator.dt
-        )
+        JerkLQRReference(start, env.robot.get_reference_constraints(), control_dt=env.simulator.dt)
     )
     action = np.r_[start.position - 0.001, 0.0]
     captured = []

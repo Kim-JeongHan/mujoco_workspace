@@ -12,7 +12,7 @@ from mujoco_lab.behaviors import CubeStackTask, Expert
 from mujoco_lab.learning.datasets.replay import capture_frame
 from mujoco_lab.learning.envs.cube_stack import CubeStackEnv
 from mujoco_lab.learning.rollout import collect_episode
-from mujoco_lab.trajectory_generation import AnalyticJerkReference
+from mujoco_lab.trajectory_generation import JerkLQRReference
 
 
 def make_env(repeat, *, dt=0.002):
@@ -99,7 +99,7 @@ def test_reference_uses_configured_motion_limits(monkeypatch):
     action[0] += 0.005
     env.step(action)
     reference = robot.reference_generator
-    assert isinstance(reference, AnalyticJerkReference)
+    assert isinstance(reference, JerkLQRReference)
     assert reference.amax[0] == pytest.approx(0.01)
     assert robot.target is not None
     assert 0 < robot.target.acceleration[0] <= 0.01 + 1e-12
@@ -144,7 +144,7 @@ def test_success_can_end_partial_action_and_reset_clears_terminal_state(monkeypa
     np.testing.assert_array_equal(robot.target.velocity, 0)
     np.testing.assert_array_equal(robot.target.acceleration, 0)
     reset_reference = robot.reference_generator
-    assert isinstance(reset_reference, AnalyticJerkReference)
+    assert isinstance(reset_reference, JerkLQRReference)
     np.testing.assert_array_equal(reset_reference.goal, robot.target.position)
 
 
