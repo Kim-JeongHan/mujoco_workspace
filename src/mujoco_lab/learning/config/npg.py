@@ -11,9 +11,10 @@ class NPGConfig:
     damping: float = 0.1
     cg_iterations: int = 10
     backtrack_steps: int = 10
+    batch_size: int = 2048  # Compute full-rollout statistics in chunks to bound autograd memory.
 
     def __post_init__(self) -> None:
         if self.max_kl <= 0 or self.damping <= 0:
             raise ValueError("max_kl and damping must be positive")
-        if self.cg_iterations <= 0 or self.backtrack_steps <= 0:
-            raise ValueError("CG iterations and backtrack steps must be positive")
+        if self.cg_iterations <= 0 or self.backtrack_steps <= 0 or self.batch_size <= 0:
+            raise ValueError("CG iterations, backtrack steps, and batch_size must be positive")

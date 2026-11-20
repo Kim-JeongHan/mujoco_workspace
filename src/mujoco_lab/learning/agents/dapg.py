@@ -1,6 +1,6 @@
 """Demonstration-augmented natural-gradient agent."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import torch
@@ -32,7 +32,7 @@ class DAPGAgent(NPGAgent):
         self,
         batch: RolloutBatch,
         *,
-        augmentation: Callable[[], torch.Tensor] | None = None,
+        augmentation: Callable[[], Iterator[torch.Tensor]] | None = None,
     ) -> dict[str, float]:
         """Add a decaying imitation gradient using the agent's learning iteration.
 
@@ -55,14 +55,14 @@ class DAPGAgent(NPGAgent):
                 indices = torch.randperm(count, device=states.device)[: config.demo_batch_size]
                 states, actions = states[indices], actions[indices]
 
-            def demo_objective() -> torch.Tensor:
-                result = (
-                    weight
-                    * count
-                    / batch.states.shape[0]
-                    * self.policy.log_prob(states, actions).mean()
-                )
-                return result if augmentation is None else result + augmentation()
+            def demo_objective() -> Iterator[torch.Tensor]:
+                coefficient = weight * count / batch.states.shape[0] / states.shape[0]
+                for start in range(0, states.shape[0], config.npg.batch_size):
+                    section = slice(start, start + config.npg.batch_size)
+                    log_probs = self.policy.log_prob(states[section], actions[section])
+                    yield coefficient * log_probs.sum()
+                if augmentation is not None:
+                    yield from augmentation()
 
             objective = demo_objective
         metrics = super().update_policy(batch, augmentation=objective)

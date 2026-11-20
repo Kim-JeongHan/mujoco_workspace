@@ -17,6 +17,7 @@ class RolloutEnv(Protocol):
     """Physical-action environment used by the single-environment RL trainer."""
 
     action_space: spaces.Box
+    max_steps: int
 
     def reset(self, *, seed: int | None = None) -> tuple[np.ndarray, dict[str, Any]]: ...
 
@@ -47,22 +48,23 @@ def collect_rollout(
     normalizer: Normalizer,
     buffer: RolloutBuffer,
     *,
-    steps: int,
+    trajectories: int,
     obs_horizon: int,
     seed: int,
 ) -> dict[str, float]:
-    """Collect exactly ``steps`` actions, resetting episodes and the rollout boundary.
+    """Collect exactly ``trajectories`` complete episodes, including time limits.
 
     This collector requires a single-action policy and one environment. Each
     call starts from a seeded reset, so iteration-boundary checkpoints need no
-    simulator snapshot. The last unfinished transition is marked truncated.
+    simulator snapshot. Stop only at a natural termination or episode time limit;
+    the buffer must hold ``trajectories * env.max_steps`` transitions.
     Next values use the post-action history before reset, and stored actions are
     the original normalized samples, independent of physical-action clipping.
     """
     if policy.chunk_size != 1 or buffer.rewards.shape[1] != 1:
         raise ValueError("online collection requires a single-action policy and one environment")
-    if not 0 < steps <= buffer.rollout_length or obs_horizon <= 0:
-        raise ValueError("steps must fit the buffer and obs_horizon must be positive")
+    if trajectories <= 0 or obs_horizon <= 0:
+        raise ValueError("trajectories and obs_horizon must be positive")
     device = next(policy.parameters()).device
     buffer.reset()
     obs, _ = env.reset(seed=seed)
@@ -72,7 +74,7 @@ def collect_rollout(
     successes = 0
     episode_return, episode_length = 0.0, 0
     completed = 0
-    for step in range(steps):
+    while completed < trajectories:
         state = history_state(history, normalizer, device)
         actions = policy(state).sample()
         log_probs = policy.log_prob(state, actions)
@@ -84,7 +86,6 @@ def collect_rollout(
             if terminated
             else critic(history_state(history, normalizer, device))
         )
-        cutoff = step + 1 == steps and not (terminated or truncated)
         buffer.add(
             states=state,
             actions=actions,
@@ -93,7 +94,7 @@ def collect_rollout(
             next_values=next_values,
             log_probs=log_probs,
             terminated=torch.tensor([terminated], device=device),
-            truncated=torch.tensor([truncated or cutoff], device=device),
+            truncated=torch.tensor([truncated], device=device),
         )
         episode_return += reward
         episode_length += 1
@@ -102,17 +103,17 @@ def collect_rollout(
             successes += int(bool(info.get("success", False)))
             episode_returns.append(episode_return)
             episode_lengths.append(episode_length)
-            if step + 1 < steps:
-                obs, _ = env.reset(seed=seed + step + 1)
+            if completed < trajectories:
+                obs, _ = env.reset(seed=seed + len(buffer))
                 history = deque([obs.copy()] * obs_horizon, maxlen=obs_horizon)
                 episode_return, episode_length = 0.0, 0
     return {
-        "rollout/steps": float(steps),
+        "rollout/steps": float(len(buffer)),
         "rollout/completed_episodes": float(completed),
-        "rollout/success_rate": successes / completed if completed else 0.0,
-        "rollout/mean_return": float(np.mean(episode_returns)) if completed else 0.0,
-        "rollout/mean_length": float(np.mean(episode_lengths)) if completed else 0.0,
-        "rollout/cutoff": float(cutoff),
+        "rollout/success_rate": successes / completed,
+        "rollout/mean_return": float(np.mean(episode_returns)),
+        "rollout/mean_length": float(np.mean(episode_lengths)),
+        "rollout/cutoff": 0.0,
     }
 
 

@@ -139,7 +139,7 @@ def test_failed_candidate_restores_original_policy():
         calls += 1
         if calls > 1:
             raise RuntimeError("candidate failed")
-        return policy.log_std.sum() * 0
+        yield policy.log_std.sum() * 0
 
     with pytest.raises(RuntimeError, match="candidate failed"):
         make_agent(policy).update_policy(make_batch(policy), augmentation=augmentation)
@@ -193,4 +193,26 @@ def test_zero_demo_weight_is_identical_to_npg():
         parameters_to_vector(other.parameters()),
         rtol=0,
         atol=0,
+    )
+
+
+def test_chunked_policy_update_matches_full_rollout_and_demo_statistics():
+    torch.manual_seed(31)
+    reference = make_policy()
+    chunked = deepcopy(reference)
+    batch = make_batch(reference)
+    demos = Demonstrations(torch.randn(23, 2).double(), torch.ones(23, 1, 1).double())
+    metrics = []
+    for policy, batch_size in ((reference, 128), (chunked, 7)):
+        config = DAPGConfig(demo_weight=0.3, npg=NPGConfig(batch_size=batch_size))
+        agent = DAPGAgent(policy, ValueCritic(2, (), 0.001), config)
+        agent.demonstrations = demos
+        metrics.append(agent.update_policy(batch))
+    assert metrics[0]["policy/accepted"] == metrics[1]["policy/accepted"] == 1
+    assert metrics[0] == pytest.approx(metrics[1], rel=1e-8, abs=1e-10)
+    torch.testing.assert_close(
+        parameters_to_vector(reference.parameters()),
+        parameters_to_vector(chunked.parameters()),
+        rtol=1e-8,
+        atol=1e-10,
     )

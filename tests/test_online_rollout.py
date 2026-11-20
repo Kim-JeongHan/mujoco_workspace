@@ -15,6 +15,7 @@ from mujoco_lab.learning.rollout.online import collect_rollout, evaluate_policy
 class HistoryEnv:
     def __init__(self, *, terminal=False):
         self.action_space = spaces.Box(-1, 1, (1,), dtype=np.float32)
+        self.max_steps = 2
         self.terminal = terminal
         self.resets = 0
         self.actions = []
@@ -63,28 +64,33 @@ def test_collection_preserves_raw_actions_history_and_boundary_values(terminal):
     torch.manual_seed(7)
     policy, critic, normalizer = setup_policy()
     env = HistoryEnv(terminal=terminal)
-    buffer = RolloutBuffer(3, 2, (1, 1))
+    buffer = RolloutBuffer(6, 2, (1, 1))
     metrics = collect_rollout(
-        env, policy, critic, normalizer, buffer, steps=3, obs_horizon=2, seed=3
+        env, policy, critic, normalizer, buffer, trajectories=2, obs_horizon=2, seed=3
+    )
+    n = len(buffer)
+    assert n == 4
+    assert env.resets == 2
+    torch.testing.assert_close(
+        buffer.states[:n, 0], torch.tensor([[0.0, 0.0], [0.0, 0.5], [5.0, 5.0], [5.0, 5.5]])
     )
     torch.testing.assert_close(
-        buffer.states[:, 0], torch.tensor([[0.0, 0.0], [0.0, 0.5], [5.0, 5.0]])
+        buffer.next_values[:n, 0],
+        torch.tensor([0.5, 0.0 if terminal else 1.5, 10.5, 0.0 if terminal else 11.5]),
     )
-    torch.testing.assert_close(
-        buffer.next_values[:, 0], torch.tensor([0.5, 0.0 if terminal else 1.5, 10.5])
-    )
-    assert buffer.truncated[-1, 0]
+    assert buffer.truncated[n - 1, 0].item() == (not terminal)
     assert buffer.terminated[1, 0].item() == terminal
     np.testing.assert_allclose(
-        np.stack(env.actions), normalizer.denormalize_action(buffer.actions[:, 0, 0].numpy())
+        np.stack(env.actions), normalizer.denormalize_action(buffer.actions[:n, 0, 0].numpy())
     )
-    assert (buffer.actions > 4).all()
+    assert (buffer.actions[:n] > 4).all()
     torch.testing.assert_close(
-        buffer.log_probs[:, 0], policy.log_prob(buffer.states[:, 0], buffer.actions[:, 0])
+        buffer.log_probs[:n, 0], policy.log_prob(buffer.states[:n, 0], buffer.actions[:n, 0])
     )
     assert not buffer.actions.requires_grad
-    assert metrics["rollout/completed_episodes"] == 1
-    assert metrics["rollout/cutoff"] == 1
+    assert metrics["rollout/completed_episodes"] == 2
+    assert metrics["rollout/steps"] == 4
+    assert metrics["rollout/cutoff"] == 0
 
 
 def test_evaluation_uses_mean_without_consuming_sampling_rng():

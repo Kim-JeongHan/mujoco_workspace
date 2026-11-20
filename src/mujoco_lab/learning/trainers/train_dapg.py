@@ -110,37 +110,42 @@ def load_demonstrations(state: TrainingState) -> Demonstrations:
 
 
 def train_iteration(
-    state: TrainingState, env: RolloutEnv, demos: Demonstrations, *, steps: int
+    state: TrainingState, env: RolloutEnv, demos: Demonstrations
 ) -> dict[str, float]:
-    """Collect rollouts and estimate targets before the agent updates its learned state."""
+    """Collect complete trajectories and update once using their actual transition count."""
     config = state.agent.config
     actor, critic = state.agent.policy, state.agent.critic
-    buffer = RolloutBuffer(steps, actor.state_dim, (1, actor.action_dim), device=config.device)
+    capacity = config.rollout_trajectories * env.max_steps
+    buffer = RolloutBuffer(capacity, actor.state_dim, (1, actor.action_dim), device=config.device)
     metrics = collect_rollout(
         env,
         actor,
         critic,
         state.normalizer,
         buffer,
-        steps=steps,
+        trajectories=config.rollout_trajectories,
         obs_horizon=state.metadata["architecture"]["obs_horizon"],
         seed=config.seed + state.env_steps,
     )
+    steps = len(buffer)
+    rewards = buffer.rewards[:steps]
+    terminated, truncated = buffer.terminated[:steps], buffer.truncated[:steps]
+    next_values = buffer.next_values[:steps]
     advantages = compute_gae(
-        buffer.rewards,
-        buffer.values,
-        buffer.next_values,
-        buffer.terminated,
-        buffer.truncated,
+        rewards,
+        buffer.values[:steps],
+        next_values,
+        terminated,
+        truncated,
         gamma=config.gamma,
         gae_lambda=config.gae_lambda,
     )
     returns = compute_discounted_returns(
-        buffer.rewards,
-        buffer.terminated,
-        buffer.truncated,
+        rewards,
+        terminated,
+        truncated,
         gamma=config.gamma,
-        next_values=buffer.next_values if config.bootstrap_returns else None,
+        next_values=next_values if config.bootstrap_returns else None,
     )
     buffer.set_targets(advantages, returns)
     state.agent.demonstrations = demos
@@ -195,7 +200,7 @@ def evaluate_training_policy(
 
 
 def run(config: DAPGConfig) -> Path:
-    """Run to an action budget, saving evaluation metrics and resumable checkpoints.
+    """Run complete trajectory batches until reaching or exceeding the action target.
 
     Resume restores saved learning settings and dataset paths. Only total_steps,
     output_dir, device, and wandb_mode are taken from the new command. Each resume
@@ -255,16 +260,11 @@ def run(config: DAPGConfig) -> Path:
                 step=state.agent.iteration,
             )
             while state.env_steps < config.total_steps:
-                metrics = train_iteration(
-                    state,
-                    env,
-                    demos,
-                    steps=min(config.rollout_steps, config.total_steps - state.env_steps),
-                )
+                metrics = train_iteration(state, env, demos)
                 episodes = None
                 if evaluator is not None and (
                     state.agent.iteration % config.eval_interval_iterations == 0
-                    or state.env_steps == config.total_steps
+                    or state.env_steps >= config.total_steps
                 ):
                     episodes, evaluation_metrics = evaluate_training_policy(
                         state, evaluator, run_dir / "eval" / f"step_{state.env_steps:08d}"

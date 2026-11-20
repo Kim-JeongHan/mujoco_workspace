@@ -18,12 +18,12 @@ class DAPGConfig:
     output_dir: Path = Path("log")
     device: Literal["cpu", "cuda"] = "cuda"
     seed: int = 42
-    total_steps: int = 100_000  # Total collected actions, including resumed steps.
-    rollout_steps: int = 2048
+    total_steps: int = 100_000  # Action target; finish the final trajectory batch in full.
+    rollout_trajectories: int = 200  # Completed episodes per policy update, including timeouts.
     max_seconds: float = 15.0
     gamma: float = 0.995
     gae_lambda: float = 0.97
-    bootstrap_returns: bool = True  # Retain next-state value at fixed-length rollout cutoffs.
+    bootstrap_returns: bool = True  # Retain next-state value at episode time limits.
     initial_arm_std_degrees: float = 0.5  # Initial joint-target exploration standard deviation.
     initial_gripper_std_m: float = 0.0005  # Initial opening-width exploration standard deviation.
     demo_weight: float = 0.1
@@ -44,11 +44,16 @@ class DAPGConfig:
             raise ValueError("provide exactly one of init_from or resume")
         if (
             min(
-                self.total_steps, self.rollout_steps, self.critic.num_epochs, self.critic.batch_size
+                self.total_steps,
+                self.rollout_trajectories,
+                self.critic.num_epochs,
+                self.critic.batch_size,
             )
             <= 0
         ):
-            raise ValueError("step budgets and critic training sizes must be positive")
+            raise ValueError(
+                "step budget, trajectory count, and critic training sizes must be positive"
+            )
         if self.max_seconds <= 0 or self.eval_episodes <= 0:
             raise ValueError("max_seconds and eval_episodes must be positive")
         if self.initial_arm_std_degrees <= 0 or self.initial_gripper_std_m <= 0:

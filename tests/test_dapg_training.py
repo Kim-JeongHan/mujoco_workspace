@@ -35,12 +35,14 @@ class BanditEnv:
 
     def __init__(self):
         self.action_space = spaces.Box(-2, 2, (1,), dtype=np.float32)
+        self.max_steps = 2
         self.action_dt = 0.002
         self.simulator = SimpleNamespace(data=SimpleNamespace(time=0.0))
         self.task = None
         self.closed = False
 
     def reset(self, *, seed=None):
+        self.steps = 0
         self.simulator.data.time = 0.0
         return np.array([1.0], dtype=np.float32), {}
 
@@ -114,7 +116,7 @@ def create_bc_data(tmp_path):
         output_dir=tmp_path / "log",
         device="cpu",
         total_steps=16,
-        rollout_steps=8,
+        rollout_trajectories=8,
         critic=CriticConfig(hidden_dims=(8, 4), num_epochs=1, batch_size=4),
         eval_interval_iterations=1,
         eval_episodes=1,
@@ -168,16 +170,16 @@ def test_checkpoint_resume_reproduces_next_training_iteration(tmp_path):
     _, config = create_bc_data(tmp_path)
     state = train_dapg.initialize_training(config)
     demos = train_dapg.load_demonstrations(state)
-    train_dapg.train_iteration(state, BanditEnv(), demos, steps=8)
+    train_dapg.train_iteration(state, BanditEnv(), demos)
     path = tmp_path / "rl.pt"
     save_training_checkpoint(path, state)
-    expected = train_dapg.train_iteration(state, BanditEnv(), demos, steps=8)
+    expected = train_dapg.train_iteration(state, BanditEnv(), demos)
     restored = load_training_checkpoint(path)
     assert restored.agent.config.critic.hidden_dims == (8, 4)
     assert restored.agent.critic.optimizer.state
     assert restored.rng is not None
     restore_rng(restored.rng)
-    actual = train_dapg.train_iteration(restored, BanditEnv(), demos, steps=8)
+    actual = train_dapg.train_iteration(restored, BanditEnv(), demos)
 
     assert actual == pytest.approx(expected, abs=0, rel=0)
     assert restored.agent.iteration == 2
@@ -190,15 +192,23 @@ def test_checkpoint_resume_reproduces_next_training_iteration(tmp_path):
             torch.testing.assert_close(tensor, other.state_dict()[name], rtol=0, atol=0)
 
 
-def test_training_bootstraps_critic_at_an_unfinished_rollout(tmp_path, monkeypatch):
+def test_training_bootstraps_critic_at_episode_time_limits(tmp_path, monkeypatch):
     _, config = create_bc_data(tmp_path)
+    config = replace(config, rollout_trajectories=1)
     state = train_dapg.initialize_training(config)
     demos = train_dapg.load_demonstrations(state)
     targets = []
 
-    class UnfinishedEnv(BanditEnv):
+    class TimeoutEnv(BanditEnv):
         def step(self, action):
-            return np.array([1.0], dtype=np.float32), 0.0, False, False, {"success": False}
+            self.steps += 1
+            return (
+                np.array([1.0], dtype=np.float32),
+                0.0,
+                False,
+                self.steps == self.max_steps,
+                {"success": False},
+            )
 
     monkeypatch.setattr(
         state.agent.critic, "forward", lambda observations: torch.ones(len(observations))
@@ -209,12 +219,13 @@ def test_training_bootstraps_critic_at_an_unfinished_rollout(tmp_path, monkeypat
         return {"Baseline Loss": 0.0}
 
     monkeypatch.setattr(state.agent.critic, "update", record_update)
-    train_dapg.train_iteration(state, UnfinishedEnv(), demos, steps=2)
+    train_dapg.train_iteration(state, TimeoutEnv(), demos)
     assert sorted(targets) == pytest.approx(sorted([config.gamma**2, config.gamma]))
 
 
-def test_train_run_records_evaluation_and_resumes_to_exact_budget(tmp_path, monkeypatch):
+def test_train_run_finishes_trajectory_batches_and_resumes(tmp_path, monkeypatch):
     _, config = create_bc_data(tmp_path)
+    config.eval_interval_iterations = 3
     environments = []
 
     def create_env(*args, **kwargs):
@@ -225,18 +236,20 @@ def test_train_run_records_evaluation_and_resumes_to_exact_budget(tmp_path, monk
     monkeypatch.setattr(train_dapg, "create_evaluation_env", create_env)
     run_dir = train_dapg.run(replace(config, total_steps=13))
     saved = load_training_checkpoint(run_dir / "checkpoint.pt")
-    assert saved.env_steps == 13
+    assert saved.env_steps == 16
     assert saved.agent.iteration == 2
     assert all(env.closed for env in environments)
     rows = [json.loads(row) for row in (run_dir / "metrics.jsonl").read_text().splitlines()]
     metrics = [row for row in rows if "rollout/steps" in row]
-    assert [row["train/env_steps"] for row in metrics] == [8, 13]
-    assert all("eval/mean_return" in row for row in metrics)
+    assert [row["train/env_steps"] for row in metrics] == [8, 16]
+    assert all(row["rollout/completed_episodes"] == 8 for row in metrics)
+    evaluations = [row for row in metrics if "eval/mean_return" in row]
+    assert evaluations[-1]["train/env_steps"] == 16
     assert [row["train/iteration"] for row in metrics] == [1, 2]
     assert all(row["elapsed_seconds"] >= 0 for row in metrics)
     reports = sorted((run_dir / "eval").glob("*/summary.json"))
-    assert len(reports) == 2
-    for report, row in zip(reports, metrics, strict=True):
+    assert len(reports) == 1
+    for report, row in zip(reports, evaluations, strict=True):
         summary = json.loads(report.read_text())
         assert summary["attempted"] == row["eval/attempted"] == 1
         assert summary["success_rate"] == row["eval/success_rate"]
@@ -252,10 +265,11 @@ def test_train_run_records_evaluation_and_resumes_to_exact_budget(tmp_path, monk
         )
     )
     resumed = load_training_checkpoint(resumed_dir / "checkpoint.pt")
-    assert resumed.env_steps == 17
+    assert resumed.env_steps == 24
     assert resumed.agent.iteration == 3
     assert resumed.agent.config.data_dir == config.data_dir
     assert resumed.agent.config.npg == config.npg
+    assert resumed.agent.config.rollout_trajectories == 8
     assert resumed_dir != run_dir
 
 
@@ -269,6 +283,7 @@ def test_training_improves_known_bandit_objective():
     normalizer = Normalizer(*(np.array([x], dtype=np.float32) for x in (0, 1, 0, 1)))
     config = DAPGConfig(
         device="cpu",
+        rollout_trajectories=64,
         critic=CriticConfig(hidden_dims=(), num_epochs=2, batch_size=32),
         demo_weight=0.1,
     )
@@ -280,7 +295,7 @@ def test_training_improves_known_bandit_objective():
     demos = Demonstrations(torch.ones(32, 1), torch.full((32, 1, 1), 0.5))
     before = deepcopy(policy)
     for _ in range(6):
-        metrics = train_dapg.train_iteration(state, BanditEnv(), demos, steps=64)
+        metrics = train_dapg.train_iteration(state, BanditEnv(), demos)
         assert metrics["policy/kl"] <= config.npg.max_kl
     observations = torch.ones(1, 1)
     assert abs(policy(observations).mean.item() - 0.5) < abs(before(observations).mean.item() - 0.5)
@@ -315,13 +330,15 @@ def test_training_step_uses_real_mujoco_environment():
         normalizer = Normalizer(np.zeros_like(obs), np.ones_like(obs), action, np.ones_like(action))
         config = DAPGConfig(
             device="cpu",
+            rollout_trajectories=2,
             critic=CriticConfig(num_epochs=1),
             npg=NPGConfig(cg_iterations=2, backtrack_steps=4),
         )
         state = TrainingState(DAPGAgent(policy, critic, config), normalizer, metadata)
         demos = Demonstrations(torch.from_numpy(obs).repeat(4, 1), torch.zeros(4, 1, len(action)))
-        metrics = train_dapg.train_iteration(state, env, demos, steps=4)
-        assert state.env_steps == 4
+        metrics = train_dapg.train_iteration(state, env, demos)
+        assert state.env_steps == 8
+        assert metrics["rollout/completed_episodes"] == 2
         assert state.agent.iteration == 1
         assert all(np.isfinite(value) for value in metrics.values())
     finally:
