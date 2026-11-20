@@ -97,6 +97,34 @@ observation-conditioned temporal U-Net, epsilon-prediction training, and DDIM
 sampling. It shares the dataset, normalization, EMA, and action-chunk execution
 pipeline with the other BC policies.
 
+Train the hover-5mm PD MSE baselines on Colab with W&B enabled:
+
+```bash
+# Export WANDB_API_KEY before launching; optional WANDB_ENTITY and WANDB_PROJECT select the workspace.
+bash scripts/colab_mse_train.sh --gpu T4
+# Minimum-jerk interpolation with zero desired PD velocity.
+bash scripts/colab_mse_minjerk_train.sh --gpu T4
+# Constrained quintic interpolation with reference-velocity PD tracking.
+bash scripts/colab_mse_quintic_train.sh --gpu L4
+```
+
+This uploads the selected dataset and current source, preserves the collection's
+ordered seed splits, and applies the recorded PD gains, reference settings, and
+desired velocity inside the Colab runtime. Position hold and unconstrained
+minimum jerk use zero desired PD velocity. Constrained quintic uses the reference
+velocity and enforces motion limits. Each experiment trains for 400 epochs with
+batch size 128, observation history 2, and masked action chunks of length 16.
+Every 30,000 optimizer steps and at the final step, it evaluates seeds 5000–5002
+for up to 15 simulated seconds each and logs three videos to W&B. Results are
+downloaded to `log/colab/` before the owned session is stopped. The launcher
+must remain running to retrieve results and stop the session automatically.
+Use `--session NAME` to reuse an existing session with the same cleanup behavior.
+
+Colab runtimes can terminate before training finishes. Every periodic inference
+checkpoint is uploaded to W&B as a model artifact, independently of the final
+result download. These checkpoints contain policy weights and normalization;
+they do not contain AdamW state or support an exact BC training resume.
+
 For local BC training, `--split-file <DATA_DIR>/splits.json` reuses recorded
 train/validation/test seed assignments, omitting unsuccessful attempts without
 replacing them or changing the remaining order.
