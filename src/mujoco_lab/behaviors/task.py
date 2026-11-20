@@ -200,12 +200,12 @@ class CubeStatus:
 
 
 class CubeStackTask(Task[CubeStatus]):
-    """Track cube goals and physical success independently of a controller."""
+    """Accept supported, robot-free cube placement without a velocity or dwell requirement."""
 
-    xy_tolerance_m = 0.018
+    place_hold_s = 0.0
+    xy_tolerance_m = 0.03
     height_tolerance_m = 0.012
     goal_tolerance_m = 0.04
-    velocity_norm_tolerance = 0.025  # Combined linear and angular free-joint velocity norm.
 
     def __init__(self, simulator: Simulator, cubes: int = 2) -> None:
         self.robot = next(iter(simulator.robots.values()), None)
@@ -221,8 +221,6 @@ class CubeStackTask(Task[CubeStatus]):
             raise ValueError("cubes must match the loaded cube environment")
         body_ids = [model.body(f"cube{i}/object_0").id for i in range(cubes)]
         geom_ids = [model.geom(f"cube{i}/object_0").id for i in range(cubes)]
-        joint_ids = [model.joint(f"cube{i}/object_joint_0").id for i in range(cubes)]
-        self._velocity_dofs = model.jnt_dofadr[joint_ids, None] + np.arange(6)
         goal_body_ids = [model.body(f"cube{i}/object_target_0").id for i in range(cubes)]
         self.goals = model.body_pos[goal_body_ids]
         self.cube_size = 2 * model.geom_size[geom_ids[0], 2]
@@ -256,11 +254,10 @@ class CubeStackTask(Task[CubeStatus]):
         return robot.gripper.has_contact_on_all_fingers(contacts)
 
     def status(self) -> CubeStatus:
-        """Measure cube placement and track stability for the configured hold."""
+        """Check position and contacts, recording completed placements immediately."""
         data = self.simulator.data
         centers = data.xpos[self._body_ids]
         position_errors = np.linalg.norm(centers - self.goals, axis=1)
-        velocities = np.linalg.norm(data.qvel[self._velocity_dofs], axis=1)
         aligned = np.linalg.norm(centers[:, :2] - self.goals[:, :2], axis=1) < self.xy_tolerance_m
         heights = np.abs(centers[:, 2] - self.goals[:, 2]) < self.height_tolerance_m
         contacts = {geom: set() for geom in self._geom_ids}
@@ -280,13 +277,7 @@ class CubeStackTask(Task[CubeStatus]):
             [bool(contacts[geom] & self._robot_geom_ids) for geom in self._geom_ids],
             dtype=bool,
         )
-        stable = (
-            aligned
-            & heights
-            & (velocities < self.velocity_norm_tolerance)
-            & support_contacts
-            & ~touching_robot
-        )
+        stable = aligned & heights & support_contacts & ~touching_robot
         self._track_heights(centers[:, 2])
         held = np.zeros(self.cubes, dtype=bool)
         for index, stable_placement in enumerate(stable):

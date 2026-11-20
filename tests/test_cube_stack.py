@@ -2,6 +2,7 @@
 
 import mujoco
 import numpy as np
+import pytest
 from controller_config import create_test_controller
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
@@ -42,7 +43,10 @@ def test_task_succeeds_from_physical_stack_without_executor():
     assert not simulator.robots
     place_cubes_at_goals(simulator, task)
     assert task.status().is_final_success
+    # Exact goal coordinates do not yet establish contact between the two cubes.
     assert not task.status().is_released_stable
+    assert simulator.data.time == 0
+    np.testing.assert_array_equal(task.completed_placements(), [True, False])
 
     for _ in range(400):
         task.status()
@@ -52,15 +56,16 @@ def test_task_succeeds_from_physical_stack_without_executor():
     assert task.status().is_support_contacts
 
     joint = simulator.model.joint("cube1/object_joint_0")
-    simulator.data.qpos[int(joint.qposadr[0])] += 0.03
+    simulator.data.qpos[int(joint.qposadr[0])] += 0.031
     mujoco.mj_forward(simulator.model, simulator.data)
     assert task.status().is_final_success
     assert not task.status().is_released_stable
-    simulator.data.qpos[int(joint.qposadr[0])] -= 0.03
+    simulator.data.qpos[int(joint.qposadr[0])] -= 0.031
     mujoco.mj_forward(simulator.model, simulator.data)
-    simulator.data.qvel[int(joint.dofadr[0])] = 0.1
-    assert not task.status().is_released_stable
-    simulator.data.qvel[int(joint.dofadr[0])] = 0
+    dof = int(joint.dofadr[0])
+    simulator.data.qvel[dof : dof + 6] = [0.1, 0, 0, 0, 0, 1]
+    assert task.status().is_released_stable
+    simulator.data.qvel[dof : dof + 6] = 0
     simulator.data.qpos[int(joint.qposadr[0]) + 2] += 0.1
     mujoco.mj_forward(simulator.model, simulator.data)
     assert not task.status().is_support_contacts
@@ -75,7 +80,25 @@ def test_task_succeeds_from_physical_stack_without_executor():
     assert not task.status().is_final_success
 
 
-def test_task_rejects_robot_contact_even_after_stable_hold(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("xy_offset", "height_error", "success"),
+    [(0.025, 0.0, True), (0.031, 0.0, False), (0.0, 0.011, True), (0.0, 0.013, False)],
+)
+def test_supported_cube_placement_uses_xy_and_height_tolerances(xy_offset, height_error, success):
+    scene = create_cube_stack(1)
+    scene.body("cube0/object_0").pos = (0.425 + xy_offset, 0, 0.02)
+    scene.body("cube0/object_target_0").pos = (0.425, 0, 0.02 + height_error)
+    simulator = Simulator(scene)
+    task = CubeStackTask(simulator, 1)
+
+    status = task.status()
+
+    assert status.is_support_contacts
+    assert status.is_released_stable == success
+    assert simulator.data.time == 0
+
+
+def test_task_rejects_robot_contact_at_goal(tmp_path, monkeypatch):
     path = tmp_path / "blocker.xml"
     path.write_text("""
         <mujoco><worldbody><body name="base">

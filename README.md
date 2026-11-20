@@ -87,6 +87,11 @@ real-time speed and closes after the requested episodes; closing its window ends
 evaluation early. Use `--evaluation.video-episodes 0` to watch without saving MP4s,
 or a positive count to record episodes while viewing.
 
+Cube placement succeeds when all cubes simultaneously have an XY goal error
+below 3 cm and a height error below 1.2 cm, touch their designated support, and
+have no robot contact. Placement is accepted immediately without a velocity
+threshold or stabilization delay.
+
 BC supports `--policy-type mse`, `flow`, and `diffusion`. Diffusion uses an
 observation-conditioned temporal U-Net, epsilon-prediction training, and DDIM
 sampling. It shares the dataset, normalization, EMA, and action-chunk execution
