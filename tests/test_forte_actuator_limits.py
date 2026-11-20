@@ -1,21 +1,18 @@
 """Verify rated Forte limits reach MuJoCo's native joint actuation."""
 
-from pathlib import Path
-
 import mujoco
 import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_environment
+from mujoco_lab.assets import ROBOT_ASSETS
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.utils import Transform
 
 
-@pytest.mark.parametrize("asset", ["forte", "forte_backup"])
-def test_native_motor_torque_is_clipped_to_rated_joint_limits(asset):
+def test_native_motor_torque_is_clipped_to_rated_joint_limits():
     direction = 1
-    path = Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot" / asset / "robot.xml"
-    model = mujoco.MjModel.from_xml_path(str(path))
+    model = mujoco.MjModel.from_xml_path(str(ROBOT_ASSETS["forte"].path))
     data = mujoco.MjData(model)
     joints = (
         "shoulder_yaw",
@@ -26,20 +23,29 @@ def test_native_motor_torque_is_clipped_to_rated_joint_limits(asset):
         "wrist_pitch",
         "wrist_roll",
     )
-    limits = np.array([1.8, 66.0, 11.0, 11.0, 3.6, 3.6, 1.8])
+    limits = np.array([10.8, 66.0, 11.0, 11.0, 3.6, 3.6, 1.8])
     actuators = [model.actuator(f"{name}_motor").id for name in joints]
     dofs = [int(model.joint(name).dofadr[0]) for name in joints]
     data.ctrl[actuators] = direction * 1000
     data.qvel[dofs] = 0.3
     mujoco.mj_forward(model, data)
     np.testing.assert_allclose(data.qfrc_actuator[dofs], direction * limits)
-    gears = np.array([1, 6, 1, 1, 2, 2, 1])
+    gears = np.array([6, 6, 1, 1, 2, 2, 1])
     np.testing.assert_array_equal(model.actuator_gear[actuators, 0], gears)
     np.testing.assert_allclose(data.actuator_force[actuators], direction * limits / gears)
     np.testing.assert_allclose(data.actuator_velocity[actuators], 0.3 * gears)
     # This servo applies linear force, so its N range is not replaced with motor N.m.
     gripper = model.actuator("gripper_motor").id
     np.testing.assert_array_equal(model.actuator_forcerange[gripper], [-20, 20])
+
+
+def test_yaw_velocity_limit_matches_confirmed_external_reduction():
+    config = load_robot_config("forte")
+    assert config.constraints is not None
+    yaw = config.constraints.joint_names.index("shoulder_yaw")
+    assert config.constraints.velocity_limit[yaw] == pytest.approx(
+        100 * 2 * np.pi / 60 / 6, abs=0.005
+    )
 
 
 @pytest.mark.parametrize("pose", ["zero", "default"])

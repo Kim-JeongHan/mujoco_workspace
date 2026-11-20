@@ -43,16 +43,17 @@ def test_every_step_updates_control_and_chunks_preserve_results():
     assert sim.run_steps(0) is None
     assert sim.data.time == 0
     assert not controller.times
-    controls = []
+    joint_torques = []
     for _ in range(11):
         assert sim.step() is None
-        controls.append(sim.data.ctrl[0])
+        # Controllers output joint torque; actuator controls include transmission gearing.
+        joint_torques.append(sim.data.ctrl[0] * sim.model.actuator_gear[0, 0])
     reference.run_steps(2)
     reference.step()
     reference.run_steps(8)
     np.testing.assert_allclose(controller.times, np.arange(11) * 0.001, atol=1e-15)
     assert controller.times == other.times
-    np.testing.assert_allclose(controls, 0.1 * np.arange(1, 12))
+    np.testing.assert_allclose(joint_torques, 0.1 * np.arange(1, 12))
     assert sim.data.time == pytest.approx(0.011)
     np.testing.assert_array_equal(sim.data.qpos, reference.data.qpos)
     np.testing.assert_array_equal(sim.data.ctrl, reference.data.ctrl)

@@ -2,7 +2,8 @@
 
 EL05 and RS06 rated output torques are 1.8 and 11 N.m, respectively. Their
 internal 9:1 reduction is already included in those output specifications.
-External ratios follow the Hardware Spec working assumptions, including the
+Shoulder yaw's external 6:1 ratio was confirmed by the user on 2026-10-21.
+Other ratios follow the Hardware Spec working assumptions, including the
 unverified 6:1 shoulder-pitch ratio. Transmission efficiency is taken as one;
 the scalar limits do not model the forearm/wrist transmission coupling.
 
@@ -15,7 +16,7 @@ import xml.etree.ElementTree as ET
 
 RATED_OUTPUT_TORQUE = {"EL05": 1.8, "RS06": 11.0}
 ARM_ACTUATORS = {
-    "shoulder_yaw": ("EL05", 1.0),
+    "shoulder_yaw": ("EL05", 6.0),
     "shoulder_pitch": ("RS06", 6.0),
     "shoulder_roll": ("RS06", 1.0),
     "elbow_pitch": ("RS06", 1.0),
@@ -29,7 +30,8 @@ RATED_JOINT_TORQUE = {
 }
 TORQUE_LIMIT_NOTE = (
     "Rated actuator-output torque limits (N.m); gear specifies external reduction. "
-    "Ideal transmission; shoulder_pitch assumes 6:1. Internal 9:1 is already in the motor specs."
+    "Ideal transmission; shoulder_yaw confirmed 6:1; shoulder_pitch assumes 6:1. "
+    "Internal 9:1 is already in the motor specs."
 )
 
 

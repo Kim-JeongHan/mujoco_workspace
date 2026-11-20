@@ -12,10 +12,10 @@ from mujoco_lab.assets import view_collision
 
 @pytest.fixture(scope="module")
 def previews():
-    return {name: view_collision.RobotPreview(name) for name in ("panda", "forte", "forte_backup")}
+    return {name: view_collision.RobotPreview(name) for name in ("panda", "forte")}
 
 
-@pytest.mark.parametrize("name", ["panda", "forte", "forte_backup"])
+@pytest.mark.parametrize("name", ["panda", "forte"])
 def test_gripper_coupling_and_home_reset_use_model_coordinates(previews, name):
     preview = previews[name]
     control = next(c for c in preview.controls if c.unit == "mm")

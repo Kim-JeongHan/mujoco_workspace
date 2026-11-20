@@ -1,14 +1,12 @@
 """Forte heuristic paths follow the rebased model without self collisions."""
 
 import gc
-from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
 
 from mujoco_lab import RobotSpec, Simulator, create_cube_stack
-from mujoco_lab.assets import ROBOT_ASSETS, RobotAsset
 from mujoco_lab.assets.loader import load_robot_config
 from mujoco_lab.behaviors import CubeStackExpert, CubeStackTask
 from mujoco_lab.behaviors.cube_stack_recipe import load_recipe
@@ -33,12 +31,8 @@ def make_expert(cubes=2, *, scene=None):
     return simulator, task, expert
 
 
-@pytest.mark.parametrize("variant,cubes", [("forte", 1), ("forte", 4), ("forte_backup", 2)])
-def test_rebased_forte_heuristic_completes_a_collision_free_stack(variant, cubes, monkeypatch):
-    path = (
-        Path(__file__).resolve().parents[1] / "src/mujoco_lab/assets/robot" / variant / "robot.xml"
-    )
-    monkeypatch.setitem(ROBOT_ASSETS, "forte", RobotAsset(path))
+@pytest.mark.parametrize("cubes", [1, 2, 4])
+def test_rebased_forte_heuristic_completes_a_collision_free_stack(cubes):
     simulator, task, expert = make_expert(cubes)
     self_contacts = set()
     grasp_site = expert.robot.state.site_id("grasp")

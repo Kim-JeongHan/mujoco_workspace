@@ -63,7 +63,7 @@
       <geom pos="-0.001932 -0.0243169 0" quat="0.996859 0 0 -0.0792" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.972549 0.529412 0.00392157 1" density="0" mesh="act_drum" />
       <body name="main_drum" pos="0 0 -0.001" quat="1 0 0 -1.86094195609e-13">
         <inertial mass="3.56513809637" pos="0.00546600876412 0.0176966974925 0.041268665854" fullinertia="0.0236783152368 0.0168314532973 0.0282237033839 -0.000586474111394 0.000507881355346 -0.00384634520163" />
-        <joint name="shoulder_yaw" range="-0.174532925199 0.174532925199" axis="0 0 -1" armature="0.01" damping="0.05" />
+        <joint name="shoulder_yaw" range="-0.174532925199 0.174532925199" axis="0 0 1" armature="0.01" damping="0.05" />
         <geom pos="0 0 0.001" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.615686 0.811765 0.929412 1" density="0" mesh="main_drum" />
         <geom pos="0 0 0.001" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="RightColumn" />
         <geom pos="1e-08 -3.5e-08 0.001" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.498039 0.498039 0.498039 1" density="0" mesh="Part_41" />
@@ -77,19 +77,19 @@
         <geom pos="0 0 0.001" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.729412 0.25098 0.105882 1" density="0" mesh="ShoulderCable" />
         <geom pos="0 0 0.001" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="ShoulderCable1" />
         <geom pos="0 0 -0.0005" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.498039 0.498039 0.498039 1" density="0" mesh="Cover_3DPrinting" />
-        <body name="lefthinge" pos="0 0.084 0.112" quat="0.831437203737 0 0.555618732803 0">
-          <inertial mass="0.726164158014" pos="0.00724891915666 -0.0645294234019 0.0165178297297" fullinertia="0.00274835943481 0.00185169745918 0.00210910120665 -0.000333889801309 -0.000185074789923 -0.000775671768736" />
+        <body name="lefthinge" pos="0 0 0.112" quat="1 0 0 0">
+          <inertial mass="0.726164158014" pos="0.0180344820813995 0.0194705765981 -0.000378132218719215" diaginertia="0.00288052665314787 0.00272014800265755 0.00110848344483458" quat="0.526112111093848 0.718370487431109 -0.00642387665691319 -0.45509188430147" />
           <joint name="shoulder_pitch" range="-3.15904594611 0" axis="0 1 0" armature="0.01" damping="0.05" />
-          <geom pos="0.102122 -0.084 -0.0434979" quat="0.834228 0 -0.55142 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.615686 0.811765 0.929412 1" density="0" mesh="LeftHinge" />
-          <geom pos="0.102123 -0.084 -0.043498" quat="0.834228 0 -0.55142 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.764706 0.545098 0.803922 1" density="0" mesh="ShoulderRoll" />
-          <geom pos="0.000195962 -0.084 0.000460017" quat="1.29999e-06 -0.979801 2.65329e-07 0.199974" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.760784 0.839216 0.92549 1" density="0" mesh="RS60_merged" />
-          <geom pos="0.0884324 -0.139505 -0.0376671" quat="-0.805803 0.215912 0.53263 0.142719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.768627 0.886275 0.952941 1" density="0" mesh="ShoulderRollActAdapter" />
-          <geom pos="0.0883148 -0.139505 -0.0379431" quat="-0.805803 0.215912 0.53263 0.142719" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.972549 0.529412 0.00392157 1" density="0" mesh="Part_46" />
-          <geom pos="-0.066875 -0.0840003 0.200186" quat="0.69287 -6.55325e-07 0.721062 2.39593e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.513726 0.737255 0.407843 1" density="0" mesh="ShoulderPitchActDrum" />
-          <geom pos="0.102122 -0.084 -0.0434977" quat="0.834228 0 -0.55142 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.647059 0.647059 0.647059 1" density="0" mesh="HingeCover" />
-          <geom pos="0.102122 -0.084 -0.0434979" quat="0.834228 0 -0.55142 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.501961 0.501961 0.501961 1" density="0" mesh="Belt1" />
-          <geom pos="-0.066875 -0.0840004 0.200185" quat="0.692871 3.01379e-07 0.721061 1.47664e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.231373 0.380392 0.705882 1" density="0" mesh="Part_30_1" />
-          <body name="upperarmright" pos="0.00841726 -0.0840051 0.0197838" quat="-0.834058560602 0.0168183271942 0.551307373056 0.0111194321597">
+          <geom pos="-0.00111937092604143 0 -0.110994221458326" quat="0.999987291051917 0 0.00504160040541996 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.615686 0.811765 0.929412 1" density="0" mesh="LeftHinge" />
+          <geom pos="-0.00111908074281103 0 -0.110995183640062" quat="0.999987291051917 0 0.00504160040541996 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.764706 0.545098 0.803922 1" density="0" mesh="ShoulderRoll" />
+          <geom pos="0.000499991114451681 0 -5.06272677183693e-06" quat="9.33438474287967e-07 -0.703533843794029 9.42903386736363e-07 0.710661755432666" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.760784 0.839216 0.92549 1" density="0" mesh="RS60_merged" />
+          <geom pos="-0.000969461453482935 -0.055505 -0.0961153470402111" quat="-0.965913848763512 0.258814632865011 -0.00487084417469408 -0.00130286562429999" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.768627 0.886275 0.952941 1" density="0" mesh="ShoulderRollActAdapter" />
+          <geom pos="-0.00126945542085216 -0.055505 -0.0961122844364053" quat="-0.965913848763512 0.258814632865011 -0.00487084417469408 -0.00130286562429999" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.972549 0.529412 0.00392157 1" density="0" mesh="Part_46" />
+          <geom pos="0.159371937686475 -3e-07 0.138373717515496" quat="0.175442406892329 7.86362301895948e-07 0.984489696166322 2.35617707537551e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.513726 0.737255 0.407843 1" density="0" mesh="ShoulderPitchActDrum" />
+          <geom pos="-0.00111918614120721 0 -0.110994144943197" quat="0.999987291051917 0 0.00504160040541996 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.647059 0.647059 0.647059 1" density="0" mesh="HingeCover" />
+          <geom pos="-0.00111937092604143 0 -0.110994221458326" quat="0.999987291051917 0 0.00504160040541996 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.501961 0.501961 0.501961 1" density="0" mesh="Belt1" />
+          <geom pos="0.159371013762304 -4e-07 0.138373334939849" quat="0.175443798895071 1.07102699327346e-06 0.984489448103429 1.06028204473446e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.231373 0.380392 0.705882 1" density="0" mesh="Part_30_1" />
+          <body name="upperarmright" pos="0.0214989697108571 -5.1e-06 -0.0002081098730248" quat="-0.999784021382076 0.0201615477399394 -0.00504109987190537 -9.94680615033928e-05">
             <inertial mass="0.798344812502" pos="0.138826233574 -0.000126225277861 -0.000116322208096" fullinertia="0.000715199252863 0.00861208668287 0.00856572707534 -0.000192239515194 4.47592126967e-06 4.7596435012e-06" />
             <joint name="shoulder_roll" range="-2.61799387799 2.09439510239" axis="-1 0 0" armature="0.01" damping="0.05" />
             <geom pos="-0.0215 0.00447502 -0.11091" quat="0.999797 0.0201618 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.972549 0.529412 0.00392157 1" density="0" mesh="UpperArmRight" />
@@ -101,14 +101,14 @@
             <geom pos="0.0105176 0.00377915 -0.0936648" quat="-0.999797 -0.0201609 1.80081e-06 -1.87894e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.768627 0.886275 0.952941 1" density="0" mesh="Part_64" />
             <geom pos="0.233323 0.0145869 -0.361449" quat="-0.880083 -0.0177524 0.474392 0.00956581" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Part_63" />
             <geom pos="0.233323 0.0145869 -0.361449" quat="-0.880083 -0.0177524 0.474392 0.00956581" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.498039 0.498039 0.498039 1" density="0" mesh="Part_67" />
-            <body name="elbowlink" pos="0.3385 -0.0264785 -0.00106836" quat="0.99978404626 0.0201603133518 -0.00504109587078 -9.98136078394e-05">
-              <inertial mass="0.490588704032" pos="0.0246328957059 0.0264380080532 0.0167296684128" fullinertia="0.000540367706562 0.00126697325808 0.00102464639929 -7.99104940883e-07 -9.55938815392e-06 -3.30425780621e-07" />
-              <joint name="elbow_pitch" axis="0 -1 0" armature="0.01" damping="0.05" />
-              <geom pos="-0.36 0.0265 -0.111" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.980392 0.796078 0.262745 1" density="0" mesh="ElbowLink" />
-              <geom pos="0.04675 0.0279692 0.0630647" quat="0.69352 -0.137949 -0.693521 0.137949" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
-              <geom pos="0.04875 0.0250304 -0.0230645" quat="0.137946 0.69352 -0.137951 -0.69352" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
-              <geom pos="-0.340002 -0.122216 0.0516732" quat="-0.555573 0.831468 -3.5678e-06 4.07452e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.501961 0.501961 0.501961 1" density="0" mesh="Part_56" />
-              <body name="spur_gear__40_teeth_" pos="0.047 0.0265 0.02" quat="-0.472193626548 -0.526338161745 0.472191846063 0.526342264169">
+            <body name="elbowlink" pos="0.338499902584957 -4.17544515247947e-08 -6.74701858321882e-08" quat="0.99978404626 0.0201603133518 -0.00504109587078 -9.98136078394e-05">
+              <inertial mass="0.490588704032" pos="0.0246328957059 -0.0000619919468 0.0167296684128" fullinertia="0.000540367706562 0.00126697325808 0.00102464639929 -7.99104940883e-07 -9.55938815392e-06 -3.30425780621e-07" />
+              <joint name="elbow_pitch" axis="0 1 0" armature="0.01" damping="0.05" />
+              <geom pos="-0.36 0 -0.111" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.980392 0.796078 0.262745 1" density="0" mesh="ElbowLink" />
+              <geom pos="0.04675 0.0014692 0.0630647" quat="0.69352 -0.137949 -0.693521 0.137949" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
+              <geom pos="0.04875 -0.0014696 -0.0230645" quat="0.137946 0.69352 -0.137951 -0.69352" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
+              <geom pos="-0.340002 -0.148716 0.0516732" quat="-0.555573 0.831468 -3.5678e-06 4.07452e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.501961 0.501961 0.501961 1" density="0" mesh="Part_56" />
+              <body name="spur_gear__40_teeth_" pos="0.047 0 0.02" quat="-0.472193626548 -0.526338161745 0.472191846063 0.526342264169">
                 <inertial mass="0.581584356315" pos="-2.3715762974e-05 -4.5931594948e-05 -0.179386989443" fullinertia="0.00530148588194 0.00531310896832 0.000154065154589 -1.31622380589e-06 -2.93152931766e-06 1.36436659234e-06" />
                 <joint name="lower_arm_roll" axis="0 0 -1" armature="0.01" damping="0.05" />
                 <geom pos="0.0298241 0.00324411 0.0015" quat="0.744357 0 0 -0.667782" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Spur_gear__40_teeth_" />
@@ -116,24 +116,24 @@
                 <geom pos="0.0141658 -0.13023 0.407001" quat="-0.472192 0.526341 -0.472193 -0.526339" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.498039 0.498039 0.498039 1" density="0" mesh="Part_58" />
                 <geom pos="0.116906 -0.0591082 0.407" quat="0.164 -0.687826 0.164003 0.687825" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.980392 0.713726 0.00392157 1" density="0" mesh="Part_59" />
                 <geom pos="0.062469 -0.0315853 0.0194997" quat="-0.523823 3.40862e-06 -6.92366e-07 0.851827" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Spur_gear__40_teeth__2" />
-                <body name="spiral_gear_2" pos="-0.0223679 -0.00243427 -0.32" quat="-0.713650323317 -0.189827514966 -0.211596776767 0.640230844816">
-                  <inertial mass="0.208852414626" pos="0.0238151718086 0.0228958888847 -0.0341179757091" fullinertia="0.000216625074956 0.000220649219125 0.000176375065336 2.95863518572e-06 6.15779823244e-05 -3.85152093854e-06" />
-                  <joint name="wrist_pitch" axis="0 -1 0" armature="0.01" damping="0.05" />
-                  <geom pos="-0.0708603 0.0025 0.10899" quat="0.878942 0 0.476928 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.796078 0.823529 0.937255 1" density="0" mesh="Spiral_Gear_2" />
-                  <geom pos="-0.286444 0.0224997 0.680911" quat="1.16618e-06 -0.878942 6.32786e-07 0.476928" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.615686 0.811765 0.929412 1" density="0" mesh="Part_61" />
-                  <geom pos="-0.286444 0.0224997 0.680911" quat="1.16618e-06 -0.878942 6.32786e-07 0.476928" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.654902 0.584314 0.823529 1" density="0" mesh="Part_62" />
-                  <geom pos="-0.00909729 0.013493 -0.097459" quat="0.852834 -0.115379 0.462762 -0.212635" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
-                  <body name="part_8_2" pos="0.0190809 0.0226394 -0.0678746" quat="-0.285399541384 0.70419691689 0.525972148797 -0.382108757699">
-                    <inertial mass="0.117080480703" pos="0.0154651522405 0.0519123047864 -0.0184250613291" fullinertia="8.85712685371e-05 4.75991793214e-05 9.08277136651e-05 -1.26462603016e-05 2.06699055103e-06 1.16355438662e-05" />
-                    <joint name="wrist_roll" axis="0 0 -1" armature="0.01" damping="0.05" />
-                    <geom pos="0.023433 0.123685 -0.0173578" quat="0.801187 0 0 0.598414" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.768627 0.886275 0.952941 1" density="0" mesh="Part_8_2" />
-                    <geom pos="0.0376195 0.114272 -0.0083676" quat="0.801187 0 0 0.598414" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Part_2_5" />
-                    <geom pos="0.022014 0.118891 -0.0173579" quat="0.566524 -0.566526 -0.423143 0.423142" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.301961 0.301961 0.301961 1" density="0" mesh="EL05_merged_1" />
-                    <geom pos="0.0376194 0.114272 -0.00836773" quat="0.801187 0 0 0.598414" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_4_2" />
-                    <geom pos="0.0461988 0.111733 -0.017212" quat="0.703528 0.383339 0.286319 0.525472" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_5_2" />
-                    <geom pos="0.0561891 0.0798359 -0.0292911" quat="-0.778351 0.189931 0.141858 -0.581354" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
-                    <geom pos="-0.00368604 0.0975575 -0.0127091" quat="0.189931 0.77835 0.581354 0.141859" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
-                    <body name="part_1_35" pos="0.0535650781324 0.076336890206 -0.0310000281831" quat="-5.26666e-07 0.989668 -0.14338 -3.63525e-06">
+                <body name="spiral_gear_2" pos="0.000138735300599671 1.39538062719157e-05 -0.32000001429542" quat="-0.47219362654786 0.526338161744844 -0.47219184606286 -0.526342264168844">
+                  <inertial mass="0.208852414626" pos="0.0415851299856233 -0.000256551141062509 -0.00136952798389901" diaginertia="0.000261283718893766 0.000220913021963061 0.000131452618560174" quat="0.0199272329779607 0.688611108542822 0.018563197141761 -0.724619247804765" />
+                  <joint name="wrist_pitch" axis="1.36852463751966e-06 0.999999999991445 -3.90359703287725e-06" armature="0.01" damping="0.05" />
+                  <geom pos="-0.129999980959585 0.0201395779111586 7.19709109460333e-07" quat="1.95179646525319e-06 0.999999999993368 -6.84268169572452e-07 -2.99765277256281e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.796078 0.823529 0.937255 1" density="0" mesh="Spiral_Gear_2" />
+                  <geom pos="-0.727000738621451 0.000140183563885209 -0.130995728806415" quat="0.999999999995078 -6.24997668567204e-07 2.99765186472881e-06 -6.84273849483037e-07" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.615686 0.811765 0.929412 1" density="0" mesh="Part_61" />
+                  <geom pos="-0.727000738621451 0.000140183563885209 -0.130995728806415" quat="0.999999999995078 -6.24997668567204e-07 2.99765186472881e-06 -6.84273849483037e-07" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.654902 0.584314 0.823529 1" density="0" mesh="Part_62" />
+                  <geom pos="0.0767497629421853 0.00914653210728984 0.0607493937256395" quat="1.03236225637571e-06 0.970296032723457 0.241920666483883 -2.83693915020811e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.866667 0.321569 0.156863 1" density="0" mesh="EL05_merged" />
+                  <body name="part_8_2" pos="0.0673055981785634 -1.37775311521857e-07 -5.12948711796097e-07" quat="1 0 0 0">
+                    <inertial mass="0.117080480703" pos="0.054166880760943 -9.65803920846251e-05 0.00257455473324554" diaginertia="9.42536624848416e-05 9.15227327043164e-05 4.12217663344418e-05" quat="-0.758057680433737 0.149483224615261 0.601892564287066 -0.201813428071539" />
+                    <joint name="wrist_roll" axis="-7.0988911115143e-06 -6.07806064287679e-06 -0.999999999956332" armature="0.01" damping="0.05" />
+                    <geom pos="0.12524982326194 0.0126322413698186 0.00364123408577283" quat="-0.999999999988629 3.03903370174517e-06 -3.54944266160758e-06 9.52338873150271e-07" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.768627 0.886275 0.952941 1" density="0" mesh="Part_8_2" />
+                    <geom pos="0.120250036751177 -0.00364231144475226 0.0126315684968244" quat="-0.999999999988629 3.03903370174517e-06 -3.54944266160758e-06 9.52338873150271e-07" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.917647 0.917647 0.917647 1" density="0" mesh="Part_2_5" />
+                    <geom pos="0.120250223578849 0.0126323625169966 0.00364116957665024" quat="-0.707103531857521 0.707110030489143 -3.60226027434907e-06 -1.81305138326022e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.301961 0.301961 0.301961 1" density="0" mesh="EL05_merged_1" />
+                    <geom pos="0.120250008370305 -0.00364221555717762 0.012631438496443" quat="-0.999999999988629 3.03903370174517e-06 -3.54944266160758e-06 9.52338873150271e-07" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_4_2" />
+                    <geom pos="0.120250169337081 -0.0125894825836405 0.00378722287694572" quat="-0.878108851817868 -0.478460912038768 -2.29744035182278e-06 2.20386170867359e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_5_2" />
+                    <geom pos="0.0924997180159388 -0.0312214719781084 -0.00829156687978808" quat="0.971494280025236 -0.237062995489327 6.2580063794615e-06 -2.95188505602998e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
+                    <geom pos="0.0925002540668829 0.0312213024879216 0.00829005358616074" quat="-0.237063744788676 -0.971494097188168 2.35346727811558e-06 5.45682245905525e-06" type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Part_6_3" />
+                    <body name="part_1_35" pos="0.0883998665448771 -0.029698367894823 -0.0100004752160825" quat="-2.06141123670946e-06 -0.707107686758483 0.70710587560426 2.95827165224758e-06">
                       <inertial mass="0.0406918624958" pos="-0.0243710489653 -0.0348702163403 -0.00925924919913" fullinertia="1.91083887711e-05 5.85671599913e-06 1.48505463967e-05 -1.69955927714e-06 -3.37939224658e-07 -8.01769760679e-07" />
                       <joint name="gripper_left_joint" type="slide" range="0 0.037" axis="1 0 0" />
                       <geom pos="-0.06 -0.0037 0" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_1_9" />
@@ -141,7 +141,7 @@
                       <geom pos="-0.06 -0.0037 0" quat="1 0 0 0" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_1_9" name="part_1_35_collision_0" friction="1 0.05 0.001" condim="4" priority="1" solref="0.006 1" solimp="0.995 0.999 0.001" />
                       <geom pos="-0.0375 -0.00459989 -0.00999992" quat="9.38184e-07 0.707105 -0.707108 -9.38187e-07" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_7_2" name="part_1_35_collision_1" friction="1 0.05 0.001" condim="4" priority="1" solref="0.006 1" solimp="0.995 0.999 0.001" />
                     </body>
-                    <body name="part_1_40" pos="-0.0033892434962 0.0931932889474 -0.0110001718172" quat="5.26674e-07 -0.989667 0.143383 3.63525e-06">
+                    <body name="part_1_40" pos="0.0883997262801692 0.0296981586955614 0.00999902013599596" quat="2.06140449725342e-06 0.707105485970078 -0.707108076391452 -2.95825381836647e-06">
                       <inertial mass="0.0406918624958" pos="0.0243707954071 -0.0348703402771 0.00925929395903" fullinertia="1.91084155463e-05 5.8566910282e-06 1.48505446128e-05 1.69945979196e-06 -3.37922036412e-07 8.01776765294e-07" />
                       <joint name="gripper_right_joint" type="slide" range="0 0.037" axis="-1 0 0" />
                       <geom pos="0 -0.0037 0" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="Part_1_9" />
@@ -149,26 +149,26 @@
                       <geom pos="0 -0.0037 0" quat="1 0 0 0" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_1_9" name="part_1_40_collision_0" friction="1 0.05 0.001" condim="4" priority="1" solref="0.006 1" solimp="0.995 0.999 0.001" />
                       <geom pos="0.0375 -0.00460011 0.01" quat="0.707105 0 0 -0.707108" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_7_2" name="part_1_40_collision_1" friction="1 0.05 0.001" condim="4" priority="1" solref="0.006 1" solimp="0.995 0.999 0.001" />
                     </body>
-                    <geom pos="0.0376194 0.114272 -0.00836773" quat="0.801187 0 0 0.598414" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_4_2" name="part_8_2_collision_3" />
-                    <geom pos="0.0461988 0.111733 -0.017212" quat="0.703528 0.383339 0.286319 0.525472" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_5_2" name="part_8_2_collision_4" />
-                    <geom pos="0.0561891 0.0798359 -0.0292911" quat="-0.778351 0.189931 0.141858 -0.581354" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_5" />
-                    <geom pos="-0.00368604 0.0975575 -0.0127091" quat="0.189931 0.77835 0.581354 0.141859" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_6" />
-                    <site name="grasp" pos="0.0398841241051 0.134757709764 -0.0268140270887" quat="0.699803114456 -0.699798319784 0.101384245058 -0.101386130611" size="0.004" rgba="0.1 0.8 0.2 1" />
-                    <geom name="palm_cylinder" type="cylinder" fromto="0.00979095023599 0.0330816924052 -0.0209999896597 0.0242648488448 0.0819847258923 -0.0210000185002" size="0.026" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+                    <geom pos="0.120250008370305 -0.00364221555717762 0.012631438496443" quat="-0.999999999988629 3.03903370174517e-06 -3.54944266160758e-06 9.52338873150271e-07" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_4_2" name="part_8_2_collision_3" />
+                    <geom pos="0.120250169337081 -0.0125894825836405 0.00378722287694572" quat="-0.878108851817868 -0.478460912038768 -2.29744035182278e-06 2.20386170867359e-06" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_5_2" name="part_8_2_collision_4" />
+                    <geom pos="0.0924997180159388 -0.0312214719781084 -0.00829156687978808" quat="0.971494280025236 -0.237062995489327 6.2580063794615e-06 -2.95188505602998e-06" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_5" />
+                    <geom pos="0.0925002540668829 0.0312213024879216 0.00829005358616074" quat="-0.237063744788676 -0.971494097188168 2.35346727811558e-06 5.45682245905525e-06" type="mesh" contype="1" conaffinity="1" group="3" rgba="0.4 0.4 0.45 0.3" density="0" mesh="Part_6_3" name="part_8_2_collision_6" />
+                    <site name="grasp" pos="0.140536017072996 -1.00630644556234e-07 -0.00581502473822474" quat="-0.499998526404658 0.500002401796567 -0.499997601161058 0.50000147062186" size="0.004" rgba="0.1 0.8 0.2 1" />
+                    <geom name="palm_cylinder" type="cylinder" fromto="0.0345001605623313 1.85309614972052e-07 -2.34573709495071e-07 0.0855001647290958 5.65091224480283e-08 -6.25456902921572e-07" size="0.026" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
                   </body>
-                  <geom name="wrist_link_capsule" type="capsule" fromto="0.0295319272887 0.0226393426874 -0.0461706994053 0.00612425494522 0.0226393426874 -0.00957476061055" size="0.045" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
-                  <geom name="wrist_motor_capsule" type="capsule" fromto="0.0247818843694 0.0226393499239 -0.0640642412881 0.0502086980143 0.0226393338376 -0.0475329338357" size="0.025" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+                  <geom name="wrist_link_capsule" type="capsule" fromto="0.0548060431811656 -1.61011225457941e-08 0.000407239225602986 0.0113655359401724 4.20882514851196e-08 8.44522205350896e-05" size="0.045" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+                  <geom name="wrist_motor_capsule" type="capsule" fromto="0.0672186472066571 1.32939976552955e-08 0.0141429230510356 0.0672184951436221 -8.90090331884903e-08 -0.0161853966878638" size="0.025" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
                 </body>
                 <geom name="forearm_end_capsule" type="capsule" fromto="1.50176337032e-06 -2.80051189528e-07 -0.325750963205 1.50176337032e-06 -2.80051189528e-07 -0.304433647618" size="0.037" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
                 <geom name="forearm_tube_capsule" type="capsule" fromto="0 0 0.03 0 0 -0.2665" size="0.025" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
               </body>
-              <geom name="elbow_upper_capsule" type="capsule" fromto="-0.0144141115237 0.0264999998882 0.0477312984064 0.0399141152276 0.0264999998882 0.0477312984064" size="0.04" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
-              <geom name="elbow_link_capsule" type="capsule" fromto="0.0689192275242 0.0265000002046 0.0187500019312 0.102423380741 0.0265000002046 0.0187500019312" size="0.035" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+              <geom name="elbow_upper_capsule" type="capsule" fromto="-0.0144141115237 -1.118E-10 0.0477312984064 0.0399141152276 -1.118E-10 0.0477312984064" size="0.04" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+              <geom name="elbow_link_capsule" type="capsule" fromto="0.0689192275242 2.046E-10 0.0187500019312 0.102423380741 2.046E-10 0.0187500019312" size="0.035" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
             </body>
             <geom name="upper_arm_capsule" type="capsule" fromto="0.0610162348197 0.00159432342896 -4.95390517389e-05 0.329 0.00159432342896 -4.95390517389e-05" size="0.07" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
           </body>
-          <geom name="shoulder_roll_capsule" type="capsule" fromto="-0.0054866777627 -0.113935145785 -0.00978249670973 -0.00316086159426 -0.0512832391741 -0.0107728567604" size="0.055" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
-          <geom name="shoulder_hinge_capsule" type="capsule" fromto="0.006354567746 -0.0063387486216 0.0134100340875 0.0388367676438 -0.00633911164439 0.0896700584993" size="0.055" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+          <geom name="shoulder_roll_capsule" type="capsule" fromto="-0.0111373544615231 -0.029935145785 0.00132672919089596 -0.0111625714237753 0.0327167608259 -0.001201036222301" size="0.055" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
+          <geom name="shoulder_hinge_capsule" type="capsule" fromto="0.0148209574987172 0.0776612513784 -0.000740786263124311 0.0977063359994772 0.07766088835561 -0.00157664765995946" size="0.055" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
         </body>
       </body>
       <geom name="base_drum_cylinder" type="cylinder" fromto="0 0 -0.0430000009566 0 0 0.188890007584" size="0.15" contype="1" conaffinity="1" density="0" group="3" rgba="1 0 0 0.3" />
@@ -192,8 +192,8 @@
     <joint name="gripper_parallel" joint1="gripper_left_joint" joint2="gripper_right_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
   </equality>
   <actuator>
-    <!--Rated actuator-output torque limits (N.m); gear specifies external reduction. Ideal transmission; shoulder_pitch assumes 6:1. Internal 9:1 is already in the motor specs.-->
-    <motor name="shoulder_yaw_motor" joint="shoulder_yaw" gear="1" ctrlrange="-1.8 1.8" />
+    <!--Rated actuator-output torque limits (N.m); gear specifies external reduction. Ideal transmission; shoulder_yaw confirmed 6:1; shoulder_pitch assumes 6:1. Internal 9:1 is already in the motor specs.-->
+    <motor name="shoulder_yaw_motor" joint="shoulder_yaw" gear="6" ctrlrange="-1.8 1.8" />
     <motor name="shoulder_pitch_motor" joint="shoulder_pitch" gear="6" ctrlrange="-11 11" />
     <motor name="shoulder_roll_motor" joint="shoulder_roll" gear="1" ctrlrange="-11 11" />
     <motor name="elbow_pitch_motor" joint="elbow_pitch" gear="1" ctrlrange="-11 11" />
@@ -203,6 +203,6 @@
     <position name="gripper_motor" joint="gripper_left_joint" kp="2000" kv="25" ctrlrange="0 0.037" forcerange="-20 20" />
   </actuator>
   <keyframe>
-    <key name="home" qpos="0 -1.57079632679 0 -1.57079632679 0 1.57079632679 0 0.037 0.037" />
+    <key name="home" qpos="0 -1.57079632679 0 1.57079632679 0 1.57079632679 0 0.037 0.037" />
   </keyframe>
 </mujoco>

@@ -1,6 +1,6 @@
 pose:
   # Seven arm angles in degrees, followed by the gripper opening width in meters (0 closed).
-  default: [0, -90, 0, -90, 0, 90, 0, 0.074]
+  default: [0, -90, 0, 90, 0, 90, 0, 0.074]
   zero: [0, 0, 0, 0, 0, 0, 0, 0.074]
 
 controller:
@@ -59,14 +59,15 @@ constraints:
     - [-10, 10]
     - [-180, 0]
     - [-150, 120]
-    - [-454, 266]
+    - [-266, 454]
     - [-368, 352]
     - [-287, 433]
     - [-368, 352]
   # Configured arm motion limits in rad/s and rad/s^2, in joint_names order.
   # Rated-load speeds with external reductions from the 3week meeting Hardware Spec.
+  # shoulder_yaw uses the user-confirmed 6:1 reduction.
   # shoulder_pitch uses the documented estimated 6:1 reduction.
-  velocity_limit: [10.47, 1.75, 10.47, 10.47, 5.24, 5.24, 10.47]
+  velocity_limit: [1.75, 1.75, 10.47, 10.47, 5.24, 5.24, 10.47]
   # Initial operating limits (rad/s^2), distinct from model acceleration maxima.
   # Checked against rated torques at 1,002 stationary, empty-hand poses with
   # open/closed fingers; moving states and payloads still require validation.

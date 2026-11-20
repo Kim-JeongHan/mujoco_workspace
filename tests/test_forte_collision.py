@@ -21,6 +21,66 @@ def test_forte_home_has_no_proxy_self_contacts():
     assert home_state(model).ncon == 0
 
 
+@pytest.mark.parametrize("angle", [-0.1, 0.1])
+def test_forte_yaw_rotates_the_arm_about_positive_z(angle):
+    model = mujoco.MjModel.from_xml_path(str(ASSET))
+    data = home_state(model)
+    joint = model.joint("shoulder_yaw").id
+    origin = data.xanchor[joint, :2].copy()
+    before = data.site("grasp").xpos[:2] - origin
+    data.qpos[model.jnt_qposadr[joint]] = angle
+    mujoco.mj_forward(model, data)
+    after = data.site("grasp").xpos[:2] - origin
+    rotation = np.arctan2(before[0] * after[1] - before[1] * after[0], before @ after)
+    assert rotation == pytest.approx(angle, abs=1e-12)
+
+
+@pytest.mark.parametrize("angle", [-np.pi, -np.pi / 2, 0])
+def test_pitch_frame_follows_pitch_without_a_fixed_rotation_offset(angle):
+    model = mujoco.MjModel.from_xml_path(str(ASSET))
+    data = home_state(model)
+    data.joint("shoulder_yaw").qpos[0] = 0.1
+    data.joint("shoulder_pitch").qpos[0] = angle
+    mujoco.mj_forward(model, data)
+    parent = data.body("main_drum").xmat.reshape(3, 3)
+    pitch = data.body("lefthinge").xmat.reshape(3, 3)
+    cosine, sine = np.cos(angle), np.sin(angle)
+    expected = np.array([[cosine, 0, sine], [0, 1, 0], [-sine, 0, cosine]])
+    np.testing.assert_allclose(parent.T @ pitch, expected, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("name", ["shoulder_pitch", "elbow_pitch", "wrist_pitch"])
+def test_pitch_joints_share_positive_y_rotation(name):
+    model = mujoco.MjModel.from_xml_path(str(ASSET))
+    data = mujoco.MjData(model)
+    joint = model.joint(name)
+    body = int(joint.bodyid[0])
+    data.joint(name).qpos[0] = -0.1
+    mujoco.mj_forward(model, data)
+    before = data.xmat[body].reshape(3, 3).copy()
+    data.joint(name).qpos[0] = 0
+    mujoco.mj_forward(model, data)
+    delta = data.xmat[body].reshape(3, 3) @ before.T
+    # The Y component of the rotation axis times sin(angle), in world coordinates.
+    positive_y = (delta[0, 2] - delta[2, 0]) / 2
+    assert positive_y == pytest.approx(np.sin(0.1), abs=1e-10)
+
+
+@pytest.mark.parametrize("roll", [-0.7, 0, 0.8])
+@pytest.mark.parametrize("body_name", ["spiral_gear_2", "part_8_2"])
+def test_wrist_frames_align_with_elbow_at_zero(roll, body_name):
+    model = mujoco.MjModel.from_xml_path(str(ASSET))
+    data = home_state(model)
+    data.joint("shoulder_roll").qpos[0] = roll
+    data.joint("lower_arm_roll").qpos[0] = 0
+    data.joint("wrist_pitch").qpos[0] = 0
+    data.joint("wrist_roll").qpos[0] = 0
+    mujoco.mj_forward(model, data)
+    elbow = data.body("elbowlink").xmat.reshape(3, 3)
+    wrist = data.body(body_name).xmat.reshape(3, 3)
+    np.testing.assert_allclose(elbow.T @ wrist, np.eye(3), rtol=0, atol=1e-12)
+
+
 @pytest.mark.parametrize(
     "geom_name", ["upper_arm_capsule", "shoulder_roll_capsule", "shoulder_hinge_capsule"]
 )
