@@ -5,6 +5,23 @@ the MuJoCo Lab workspace. The available directories contain demonstrations for
 cube stacking with a Forte robot; see each directory's episode metadata for its
 collection settings and recorded outcomes.
 
+## Available datasets
+
+| Directory | Cubes | Recorded attempts | Successful episodes |
+| --- | ---: | ---: | ---: |
+| `forte_mixed_1` | 1 | 2000 | 1999 |
+| `forte_cube2_mix_2000` | 2 | 2000 | 1989 |
+| `forte_cube4_mix_2000` | 4 | 2000 | 1618 |
+| `forte_ctc_hover5mm_mixed_1` | 1 | 2000 | 2000 |
+| `forte_pd_hold_hover5mm_mixed_1` | 1 | 2000 | 1995 |
+| `forte_pd_minjerk_hover5mm_mixed_1` | 1 | 2000 | 1997 |
+| `forte_pd_quintic_hover5mm_mixed_1` | 1 | 2000 | 1948 |
+
+The two- and four-cube mixtures each contain 1000 heuristic and 1000 sampling
+attempts. Failed attempts are retained. These datasets use 500 Hz physics and
+100 Hz action commands. Observation dimensions are 39, 54, and 84 for one, two,
+and four cubes; each action has seven arm targets and one gripper opening width.
+
 ## Joint coordinate convention
 
 These datasets use the Forte coordinate convention adopted on 2026-10-16.
@@ -34,6 +51,19 @@ model signature under `metadata.coordinate_migration`. See [coordinate_migration
 for model fingerprints and verification results, and each dataset's
 `file_hashes.json` for the migrated episode SHA-256 digests.
 
+The pre-hover PD datasets `forte_pd_mixed_1`, `forte_pd_minjerk_mixed_1`, and
+`forte_pd_quintic_mixed_1` are archived at
+[Hugging Face revision `529dd198b3c1`](https://huggingface.co/datasets/jeonghan/mujoco-lab-datasets/tree/529dd198b3c148cc2b8c845bc1c91485e68462a3)
+and were removed locally after file-hash and replacement verification.
+Each PD hover variant reuses its own 1,000 original heuristic attempts and
+recollects 1,000 sampling attempts with the 5 mm placement hover.
+The hold, fixed-duration minimum-jerk, and constrained quintic variants
+retain their original PD gains and reference behavior. See
+[pd_hover5mm_migration.json](pd_hover5mm_migration.json) and
+[reference_ablation_hover5mm_1cube.json](reference_ablation_hover5mm_1cube.json).
+
+The obsolete
+`forte_cube4_mix_rrt_star_snapshot_20261012-195554` dataset was removed.
 Pre-migration checkpoints and normalization statistics are unsupported;
 retrain policies with the migrated data. Loading, training, and replay do not
 perform automatic conversion of old joint conventions.

@@ -16,8 +16,9 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
 
     Construct carry stages only after observing a physical two-finger grasp.
     The active object follows its measured grasp-to-object pose only in private
-    MuJoCo data. Place paths may allow shallow support contact near the measured
-    departure and intended destination, but not between them. Call ``refresh``
+    MuJoCo data. Carry paths may leave a configured departure support. Place
+    paths may also allow shallow support contact at the intended destination,
+    but not between those locations. Call ``refresh``
     at a new stage boundary to capture the scene and current relative pose.
     """
 
@@ -172,11 +173,12 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
         if self._phase == "lift":
             self._support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
         elif self._phase == "place":
-            self._departure_support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
             if self._target_body is not None:
                 self._support_xy = self._snapshot.xpos[self._target_body, :2].copy()
             elif self._target_site is not None:
                 self._support_xy = self._snapshot.site_xpos[self._target_site, :2].copy()
+        if self._departure_support_geom_id is not None:
+            self._departure_support_xy = self._snapshot.xpos[self._cube_body, :2].copy()
         site_pos = self._snapshot.site_xpos[self._site_id]
         site_quat = np.empty(4)
         mujoco.mju_mat2Quat(site_quat, self._snapshot.site_xmat[self._site_id])
@@ -260,7 +262,7 @@ class ManipulationCollisionChecker(MuJoCoCollisionChecker):
             ):
                 continue
             if (
-                self._phase == "place"
+                self._phase in ("above_place", "place")
                 and self._departure_support_geom_id is not None
                 and cube_contact
                 and self._departure_support_geom_id in pair

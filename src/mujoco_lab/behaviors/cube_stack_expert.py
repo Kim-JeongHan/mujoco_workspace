@@ -44,7 +44,12 @@ class CubeStackExpert(Expert):
 
     The application explicitly selects heuristic or sampling execution.
     Sampling requires an explicit planner configuration.
+    Sampling targets a 5 mm placement clearance before a vertical final descent.
     """
+
+    SAMPLING_PLACE_CLEARANCE_M = 0.005
+    SAMPLING_SETTLE_SPEED_RAD_S = 0.005
+    SAMPLING_SETTLE_ACCELERATION_RAD_S2 = 0.05
 
     def __init__(
         self,
@@ -98,15 +103,19 @@ class CubeStackExpert(Expert):
         self.goals = np.array(
             [self.simulator.data.body(f"cube{i}/object_target_0").xpos for i in range(self.cubes)]
         )
-        self._plan = (
-            self.build_stages(self.starts, self.goals)
-            if self.method == "sampling"
-            else self.group_stages(self.starts, self.goals)
-        )
-        self.stage = 0
-        self.execution = TrajectoryExecution(self.simulator.data.time)
         self.failed = False
         self.failure_reason = None
+        try:
+            self._plan = (
+                self.build_stages(self.starts, self.goals)
+                if self.method == "sampling"
+                else self.group_stages(self.starts, self.goals)
+            )
+        except IKError as error:
+            self._plan = []
+            self.failed, self.failure_reason = True, str(error)
+        self.stage = 0
+        self.execution = TrajectoryExecution(self.simulator.data.time)
         self._transport_peak = float("-inf")
         self._release_checker: ManipulationCollisionChecker | None = None
         self._grasp.reset()
@@ -178,6 +187,19 @@ class CubeStackExpert(Expert):
         finger_close = abs(stage.gripper_target - finger_target) < self.recipe.gripper_tolerance
         if not (path_complete and close_enough and finger_close):
             return False
+        if self.method == "sampling" and stage.recipe.name == "above_place":
+            # Allow grasp settling while requiring clearance above the destination.
+            hover = self.goals[stage.cube_index] + [0, 0, self.SAMPLING_PLACE_CLEARANCE_M]
+            cube = self.simulator.data.body(f"cube{stage.cube_index}/object_0").xpos
+            if np.max(np.abs(cube - hover)) >= self.SAMPLING_PLACE_CLEARANCE_M:
+                return False
+        if self.method == "sampling" and stage.recipe.name in ("above_place", "place"):
+            target = self.robot.target
+            if (
+                np.max(np.abs(target.velocity)) > self.SAMPLING_SETTLE_SPEED_RAD_S
+                or np.max(np.abs(target.acceleration)) > self.SAMPLING_SETTLE_ACCELERATION_RAD_S2
+            ):
+                return False
         physical_ready = self._grasp.ready(
             stage.recipe.gripper_mode, self.task.has_grasp(stage.cube_index)
         )
@@ -256,7 +278,9 @@ class CubeStackExpert(Expert):
             translation=reference + yaw_rotation.apply(stage.offset_xyz_m),
         )
 
-    SAMPLING_STAGES = frozenset(("above_pick", "pick", "close", "place", "release", "retract"))
+    SAMPLING_STAGES = frozenset(
+        ("above_pick", "pick", "close", "above_place", "place", "release", "retract")
+    )
 
     def sampling_request(self, stage, planned_start):
         """Own cube workflow semantics; the planner receives only motion inputs."""
@@ -272,30 +296,42 @@ class CubeStackExpert(Expert):
         if hold:
             # Preserve the live command after Cartesian IK chooses a new branch.
             waypoints = (grasp_pose(robot),)
-        elif phase == "pick":
+        elif phase in ("pick", "place"):
             measured = grasp_pose(robot)
             destination = measured.as_translation().copy()
-            destination[2] = planned_start[2] + stage.recipe.offset_xyz_m[2]
+            if phase == "pick":
+                destination[2] = planned_start[2] + stage.recipe.offset_xyz_m[2]
+            else:
+                cube = self.simulator.data.body(f"cube{stage.cube_index}/object_0").xpos
+                destination[2] += self.goals[stage.cube_index, 2] - cube[2]
             waypoints = (Transform(rotation=measured.as_rotation(), translation=destination),)
-        elif phase == "place" and reason is None:
+        elif phase == "above_place" and reason is None:
             measured = grasp_pose(robot)
+            destination = self.motion.waypoint_poses(stage.waypoints)[-1]
+            cube = self.simulator.data.body(f"cube{stage.cube_index}/object_0").xpos
+            relative_cube = measured.as_rotation().inv().apply(cube - measured.as_translation())
+            hover = self.goals[stage.cube_index] + [0, 0, self.SAMPLING_PLACE_CLEARANCE_M]
             waypoints = (
                 Transform(
                     rotation=measured.as_rotation(),
                     translation=measured.as_translation() + [0, 0, 0.06],
                 ),
-                *waypoints,
+                Transform(
+                    rotation=destination.as_rotation(),
+                    translation=hover - destination.as_rotation().apply(relative_cube),
+                ),
             )
         arm_ratio, gripper_ratio = self.stage_ratios(stage)
         return MotionRequest(
             name=stage.name,
-            mode="hold" if hold else "cartesian" if phase == "pick" else "sampling",
+            mode="hold" if hold else "cartesian" if phase in ("pick", "place") else "sampling",
             waypoints=waypoints,
             gripper_target=stage.gripper_target,
             arm_ratio=arm_ratio,
             gripper_ratio=gripper_ratio,
             shape_preserving=True,
-            cartesian_resolution=0.005 if phase == "pick" else 0.01,
+            cartesian_resolution=0.005 if phase in ("pick", "place") else 0.01,
+            cartesian_fallback=phase != "place",
             checker=None if hold else self.collision_checker(stage.cube_index, phase),
             failure_reason=reason,
         )
@@ -306,14 +342,14 @@ class CubeStackExpert(Expert):
             self.robot,
             f"cube{cube_index}:{phase}",
             support_geom=self.task._supports[cube_index] if phase == "place" else None,
-            departure_support_geom="table/box" if phase == "place" else None,
+            departure_support_geom="table/box" if phase in ("above_place", "place") else None,
         )
 
     def min_transport_lift(self, stage: PlannedStage) -> float | None:
+        if self.method == "sampling":
+            return 0.04 if stage.recipe.name == "above_place" else None
         if stage.recipe.name != "place":
             return None
-        if self.method == "sampling":
-            return 0.04
         return next(
             recipe.min_lift_height_m for recipe in self.recipe.stages if recipe.name == "lift"
         )
@@ -342,7 +378,19 @@ class CubeStackExpert(Expert):
             rotation = Rotation.from_euler("xyz", self.recipe.euler_xyz_degrees, degrees=True)
         recipes = self.recipe.stages
         if self.method == "sampling":
-            recipes = tuple(stage for stage in recipes if stage.name in self.SAMPLING_STAGES)
+            place = next(stage for stage in recipes if stage.name == "place")
+            hover_offset = (
+                place.offset_xyz_m[0],
+                place.offset_xyz_m[1],
+                place.offset_xyz_m[2] + self.SAMPLING_PLACE_CLEARANCE_M,
+            )
+            recipes = tuple(
+                stage.model_copy(update={"offset_xyz_m": hover_offset})
+                if stage.name == "above_place"
+                else stage
+                for stage in recipes
+                if stage.name in self.SAMPLING_STAGES
+            )
         stages = []
         for index in np.argsort(goals[:, 2]):
             checker = (

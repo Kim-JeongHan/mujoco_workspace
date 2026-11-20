@@ -214,3 +214,29 @@ def test_pose_hold_keeps_commanded_arm_and_moves_only_gripper(motion, monkeypatc
     np.testing.assert_allclose(trajectory.path[:, 7], [0.03, 0.0])
     np.testing.assert_allclose(trajectory.sample(trajectory.duration).position, [*previous, 0.0])
     assert motion.robot.gripper.get_target() == 0.03
+
+
+def test_blocked_cartesian_descent_does_not_fall_back_to_a_different_route(motion, monkeypatch):
+    from mujoco_lab.planning.motion import grasp_pose
+
+    current = motion.robot.state.snapshot().qpos[:7]
+    monkeypatch.setattr(
+        motion, "cartesian_path", lambda *args, **kwargs: np.vstack((current, current))
+    )
+    monkeypatch.setattr(motion, "trajectory", lambda *args, **kwargs: None)
+
+    def unexpected_fallback(*args, **kwargs):
+        pytest.fail("A constrained final descent must not change its approach route")
+
+    monkeypatch.setattr(motion, "branch_trajectory", unexpected_fallback)
+    trajectory, reason = motion.make_trajectory(
+        MotionRequest(
+            name="final_descent",
+            mode="cartesian",
+            waypoints=(grasp_pose(motion.robot),),
+            gripper_target=0.02,
+            cartesian_fallback=False,
+        )
+    )
+    assert trajectory is None
+    assert reason == "Collision on final_descent path"

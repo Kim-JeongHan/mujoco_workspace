@@ -233,3 +233,18 @@ def test_place_allows_shallow_support_contact_only_at_departure_or_destination()
         departure_support_geom="table/box",
         support_penetration=0.001,
     ).is_collision_free(np.array([0.0]))
+
+
+def test_above_place_allows_departure_support_without_allowing_contact_at_destination():
+    robot = _robot(support_height=-0.045)
+    robot.data.mocap_pos[0, 1] = 0.07
+    mujoco.mj_forward(robot.model, robot.data)
+    checker = _checker(
+        robot,
+        "cube0:above_place",
+        departure_support_geom="table/box",
+        support_penetration=0.01,
+    )
+    assert checker.is_collision_free(np.array([0.0]))
+    assert not checker.is_collision_free(np.array([0.05]))
+    assert not checker.is_collision_free(np.array([0.1]))

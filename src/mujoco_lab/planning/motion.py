@@ -23,8 +23,9 @@ class MotionRequest:
     """Ordered motion inputs with explicit joint, sampling, or Cartesian execution.
 
     Hold and Cartesian requests use one waypoint. Sampling visits every
-    waypoint in order. Blocked routes retry alternate IK solutions without
-    changing the requested grasp poses or live physics.
+    waypoint in order. Blocked routes can retry alternate IK solutions without
+    changing the requested grasp poses or live physics. Constrained Cartesian
+    descents can disable that fallback to preserve their approach corridor.
     """
 
     name: str  # Stage label used in failure messages.
@@ -36,6 +37,7 @@ class MotionRequest:
     checker: CollisionChecker | None = None  # Stage-specific collision checker.
     shape_preserving: bool = False  # Keep smooth joint curves inside each waypoint interval.
     cartesian_resolution: float = 0.01  # Maximum spacing of Cartesian IK waypoints (m).
+    cartesian_fallback: bool = True  # Retry blocked Cartesian paths through alternate joint routes.
     failure_reason: str | None = None  # Skip planning and return this failure reason when set.
 
 
@@ -132,7 +134,7 @@ class MotionPlanner:
             gripper_ratio=request.gripper_ratio,
             shape_preserving=request.shape_preserving,
         )
-        if trajectory is None and request.mode == "cartesian":
+        if trajectory is None and request.mode == "cartesian" and request.cartesian_fallback:
             trajectory = self.branch_trajectory(
                 current,
                 request.waypoints,
