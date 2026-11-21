@@ -291,6 +291,8 @@ def complex_example(
     steps: int = 3000,
     output: Path = Path("outputs/drifting_trajectories.png"),
     show: bool = False,
+    samples_per_condition: int = 32,
+    seed: int = 42,
 ) -> None:
     """Learn two curved trajectory modes for each start/goal condition.
 
@@ -298,9 +300,10 @@ def complex_example(
     independent generated/reference trajectories occupy G/P, and [H, 2] is the
     sample shape flattened by DriftingLoss. The existing TemporalUnet backbone
     generates trajectories in one forward pass, with its diffusion timestep
-    fixed at zero. Start/goal coordinates are input features only; the network
+    fixed at 99. Start/goal coordinates are input features only; the network
     learns all waypoints, including the endpoints, without a prescribed path or
-    output envelope. This is a synthetic demo without robot dynamics or collisions.
+    output envelope. Each waypoint receives independent latent noise. This is a
+    synthetic demo without robot dynamics or collisions.
 
     Run with ``python -m mujoco_lab.learning.models.drifting --example complex``.
     """
@@ -308,15 +311,16 @@ def complex_example(
 
     from mujoco_lab.learning.models.diffusion import TemporalUnet
 
-    torch.manual_seed(42)
+    torch.manual_seed(seed)
     torch.set_num_threads(1)
-    horizon, latent_dim = 24, 8
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon, latent_dim = 24, 2
     # Four conditions share one generator; each group has its own target distribution.
-    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]])
-    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]])
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
     conditions = torch.cat((starts, goals), dim=-1)
     n_conditions = len(starts)
-    phase = torch.linspace(0, 1, horizon).view(1, 1, horizon, 1)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
     # Sine curves define the training data only, not the generator's output.
     target_envelope = torch.sin(math.pi * phase)
     target_envelope[:, :, [0, -1]] = 0
@@ -325,11 +329,13 @@ def complex_example(
     normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
     normal = normal / normal.norm(dim=-1, keepdim=True)
 
-    def sample_target(count: int) -> Tensor:
+    def sample_target(count: int, *, rng: torch.Generator | None = None) -> Tensor:
         """Draw upper/lower curved paths, with smooth within-mode variation."""
-        side = 2 * torch.randint(2, (n_conditions, count, 1, 1)) - 1
-        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1))
-        variation = 0.08 * torch.randn(n_conditions, count, 1, 2)
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device, generator=rng) - 1
+        amplitude = side * (
+            0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device, generator=rng)
+        )
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device, generator=rng)
         return target_baseline + target_envelope * (
             amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
         )
@@ -339,34 +345,34 @@ def complex_example(
 
         def __init__(self) -> None:
             super().__init__()
-            # Append condition, latent noise, and waypoint phase as input channels.
-            channels = 4 + latent_dim + 1
+            # Supply start/goal through the U-Net's global conditioning input.
             self.net = TemporalUnet(
-                transition_dim=channels, down_dims=(16, 32, 64), time_embed_dim=64
+                transition_dim=latent_dim,
+                down_dims=(16, 32, 64),
+                time_embed_dim=64,
+                condition_dim=4,
             )
-            # TemporalUnet preserves its channel count; read out 2D coordinates.
-            self.readout = nn.Linear(channels, 2)
 
         def forward(self, condition: Tensor, noise: Tensor) -> Tensor:
-            group_count, sample_count, _ = noise.shape
-            context = condition[:, None, None].expand(-1, sample_count, horizon, -1)
-            latent = noise.unsqueeze(-2).expand(-1, -1, horizon, -1)
-            waypoint_phase = phase.expand(group_count, sample_count, -1, -1)
-            inputs = torch.cat((context, latent, waypoint_phase), dim=-1)
+            group_count, sample_count, _, _ = noise.shape
+            context = condition[:, None].expand(-1, sample_count, -1).reshape(-1, 4)
             # Merge B/G only for the network; restore conditional groups before loss.
-            timestep = torch.zeros(
-                group_count * sample_count, device=noise.device, dtype=torch.long
+            timestep = torch.full(
+                (group_count * sample_count,), 99, device=noise.device, dtype=torch.long
             )
-            features = self.net(inputs.flatten(0, 1), timestep)
-            return self.readout(features).reshape(group_count, sample_count, horizon, 2)
+            trajectories = self.net(noise.flatten(0, 1), timestep, context)
+            return trajectories.reshape(group_count, sample_count, horizon, 2)
 
-    generator = TrajectoryGenerator()
+    generator = TrajectoryGenerator().to(device)
     optimizer = torch.optim.Adam(generator.parameters(), lr=1e-3)
     loss_module = DriftingLoss()
-    eval_noise = torch.randn(n_conditions, 256, latent_dim)
-    reference = sample_target(256)
+    eval_rng = torch.Generator(device=device).manual_seed(123)
+    eval_noise = torch.randn(
+        n_conditions, 256, horizon, latent_dim, device=device, generator=eval_rng
+    )
+    reference = sample_target(256, rng=eval_rng)
     # Project whole trajectories, rather than pooling independent waypoints.
-    directions = torch.randn(horizon * 2, 64)
+    directions = torch.randn(horizon * 2, 64, device=device, generator=eval_rng)
     directions = directions / directions.norm(dim=0, keepdim=True)
     reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
     snapshot_steps = {0, steps // 5, steps}
@@ -387,17 +393,29 @@ def complex_example(
             eval_steps.append(step)
             distances.append(distance.tolist())
             if step in snapshot_steps:
-                snapshots[step] = samples
+                snapshots[step] = samples.cpu()
                 print(
                     f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}, "
                     f"mean endpoint error = {endpoint_error.item():.4f}"
                 )
+                if step == steps:
+                    offsets = (
+                        (samples[:, :, horizon // 2] - target_baseline[:, :, horizon // 2])
+                        * normal[:, None]
+                    ).sum(dim=-1)
+                    above = (offsets > 0.3).float().mean(dim=1).tolist()
+                    below = (offsets < -0.3).float().mean(dim=1).tolist()
+                    fractions = list(zip(above, below, strict=True))
+                    print(f"Midpoint mode fractions (above, below) per condition: {fractions}")
         if step == steps:
             break
 
-        # B=4 conditions, G=P=32 trajectories, sample_shape=[24, 2].
-        generated = generator(conditions, torch.randn(n_conditions, 32, latent_dim))
-        positive = sample_target(32)
+        # B=4 conditions; generated and positive samples share the same group size.
+        generated = generator(
+            conditions,
+            torch.randn(n_conditions, samples_per_condition, horizon, latent_dim, device=device),
+        )
+        positive = sample_target(samples_per_condition)
         loss, _ = loss_module(generated, positive)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -410,7 +428,7 @@ def complex_example(
         max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
     )
     for group in range(n_conditions):
-        target_paths = reference[group, :24].numpy()
+        target_paths = reference[group, :24].cpu().numpy()
         for column, (step, samples) in enumerate(snapshots.items()):
             ax = fig.add_subplot(grid[group, column])
             generated_paths = samples[group, :24].numpy()
@@ -458,24 +476,873 @@ def complex_example(
     plt.close(fig)
 
 
+def diffusion_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/diffusion_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a conditional trajectory diffusion model with noise prediction loss.
+
+    DDIM sampling uses the trained model to generate complete trajectories.
+    This synthetic example does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+
+    from mujoco_lab.learning.models.diffusion import DiffusionModel
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = DiffusionModel(
+        state_dim=2,
+        horizon=horizon,
+        n_diffusion_steps=100,
+        dim=16,
+        dim_mults=(1, 2, 4),
+        condition_dim=4,
+    ).to(device)
+    scheduler = DDIMScheduler(num_train_timesteps=100, beta_schedule="linear", clip_sample=False)
+    scheduler.set_timesteps(20, device=device)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    scheduler.final_alpha_cumprod = scheduler.final_alpha_cumprod.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    def generate(noise: Tensor) -> Tensor:
+        """Run DDIM steps for each conditional group."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        for timestep in scheduler.timesteps:
+            predicted_noise = model(sample, timestep.expand(sample.shape[0]), state)
+            sample = scheduler.step(predicted_noise, timestep, sample, eta=0.0, return_dict=False)[
+                0
+            ]
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        target = sample_target(16).flatten(0, 1)
+        state = conditions[:, None].expand(-1, 16, -1).reshape(-1, 4)
+        timestep = torch.randint(100, (target.shape[0],), device=device)
+        noise = torch.randn_like(target)
+        # diffusers annotates timesteps as IntTensor, but torch.randint returns Tensor.
+        noisy_target = scheduler.add_noise(target, noise, timestep)  # ty: ignore[invalid-argument-type]
+        loss = F.mse_loss(model(noisy_target, timestep, state), noise)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Noise prediction MSE", title="Training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("Conditional diffusion: noise prediction and DDIM sampling", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def flow_matching_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/flow_matching_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a conditional flow matching model on synthetic 2D trajectories.
+
+    Euler integration generates trajectories from Gaussian noise. This example
+    does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+
+    from mujoco_lab.learning.models.diffusion import TemporalUnet
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = TemporalUnet(
+        transition_dim=2, down_dims=(16, 32, 64), time_embed_dim=64, condition_dim=4
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    integration_steps = 20
+
+    def generate(noise: Tensor) -> Tensor:
+        """Integrate the learned velocity field from noise to trajectories."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        for index in range(integration_steps):
+            time = torch.full((sample.shape[0],), index / integration_steps, device=device)
+            sample = sample + model(sample, time * 100, state) / integration_steps
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        target = sample_target(16).flatten(0, 1)
+        state = conditions[:, None].expand(-1, 16, -1).reshape(-1, 4)
+        noise = torch.randn_like(target)
+        time = torch.rand(target.shape[0], device=device)
+        interpolation = time[:, None, None]
+        sample = (1 - interpolation) * noise + interpolation * target
+        velocity = target - noise
+        # Scale continuous time to the range used by the shared time embedding.
+        loss = F.mse_loss(model(sample, time * 100, state), velocity)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Velocity prediction MSE", title="Training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("Conditional flow matching: velocity prediction and Euler sampling", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def flow_drifting_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/flow_drifting_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a flow generator with drifting loss through Euler integration.
+
+    This synthetic example does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+
+    from mujoco_lab.learning.models.diffusion import TemporalUnet
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = TemporalUnet(
+        transition_dim=2, down_dims=(16, 32, 64), time_embed_dim=64, condition_dim=4
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_module = DriftingLoss()
+    integration_steps = 4
+
+    def generate(noise: Tensor) -> Tensor:
+        """Integrate the learned velocity field from noise to trajectories."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        for index in range(integration_steps):
+            time = torch.full((sample.shape[0],), index / integration_steps, device=device)
+            sample = sample + model(sample, time * 100, state) / integration_steps
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        generated = generate(torch.randn(n_conditions, 16, horizon, 2, device=device))
+        loss, _ = loss_module(generated, sample_target(16))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("Drifting loss through Euler trajectory generation", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def one_step_drifting_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/one_step_drifting_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a one-step residual trajectory generator with drifting loss.
+
+    This synthetic example does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+
+    from mujoco_lab.learning.models.diffusion import TemporalUnet
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = TemporalUnet(
+        transition_dim=2, down_dims=(16, 32, 64), time_embed_dim=64, condition_dim=4
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_module = DriftingLoss()
+
+    def generate(noise: Tensor) -> Tensor:
+        """Subtract a learned correction from trajectory-shaped Gaussian noise."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        timestep = torch.full((sample.shape[0],), 99, device=device, dtype=torch.long)
+        sample = sample - model(sample, timestep, state)
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        generated = generate(torch.randn(n_conditions, 16, horizon, 2, device=device))
+        loss, _ = loss_module(generated, sample_target(16))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("One-step residual trajectory generation with drifting loss", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def direct_drifting_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/direct_drifting_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a direct trajectory generator with drifting loss.
+
+    This synthetic example does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+
+    from mujoco_lab.learning.models.diffusion import TemporalUnet
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = TemporalUnet(
+        transition_dim=2, down_dims=(16, 32, 64), time_embed_dim=64, condition_dim=4
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_module = DriftingLoss()
+
+    def generate(noise: Tensor) -> Tensor:
+        """Map trajectory-shaped Gaussian noise directly to trajectories."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        timestep = torch.full((sample.shape[0],), 99, device=device, dtype=torch.long)
+        sample = model(sample, timestep, state)
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        generated = generate(torch.randn(n_conditions, 16, horizon, 2, device=device))
+        loss, _ = loss_module(generated, sample_target(16))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("Direct trajectory generation with drifting loss", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def diffusion_drifting_example(
+    *,
+    steps: int = 3000,
+    output: Path = Path("outputs/diffusion_drifting_trajectories.png"),
+    show: bool = False,
+) -> None:
+    """Train a DDIM trajectory generator with drifting loss through all sampling steps.
+
+    This synthetic example does not model robot dynamics or enforce endpoints.
+    """
+    import matplotlib.pyplot as plt
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+
+    from mujoco_lab.learning.models.diffusion import DiffusionModel
+
+    torch.manual_seed(42)
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    horizon = 24
+    starts = torch.tensor([[-1.5, -0.5], [-1.5, 0.5], [-0.5, -1.5], [0.5, -1.5]], device=device)
+    goals = torch.tensor([[1.5, 0.5], [1.5, -0.5], [0.5, 1.5], [-0.5, 1.5]], device=device)
+    conditions = torch.cat((starts, goals), dim=-1)
+    n_conditions = len(starts)
+    phase = torch.linspace(0, 1, horizon, device=device).view(1, 1, horizon, 1)
+    envelope = torch.sin(math.pi * phase)
+    envelope[:, :, [0, -1]] = 0
+    baseline = starts[:, None, None] + phase * (goals - starts)[:, None, None]
+    direction = goals - starts
+    normal = torch.stack((-direction[:, 1], direction[:, 0]), dim=-1)
+    normal = normal / normal.norm(dim=-1, keepdim=True)
+
+    def sample_target(count: int) -> Tensor:
+        side = 2 * torch.randint(2, (n_conditions, count, 1, 1), device=device) - 1
+        amplitude = side * (0.8 + 0.15 * torch.randn(n_conditions, count, 1, 1, device=device))
+        variation = 0.08 * torch.randn(n_conditions, count, 1, 2, device=device)
+        return baseline + envelope * (
+            amplitude * normal[:, None, None] + variation * torch.sin(2 * math.pi * phase)
+        )
+
+    model = DiffusionModel(
+        state_dim=2,
+        horizon=horizon,
+        n_diffusion_steps=100,
+        dim=16,
+        dim_mults=(1, 2, 4),
+        condition_dim=4,
+    ).to(device)
+    scheduler = DDIMScheduler(num_train_timesteps=100, beta_schedule="linear", clip_sample=False)
+    scheduler.set_timesteps(4, device=device)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    scheduler.final_alpha_cumprod = scheduler.final_alpha_cumprod.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_module = DriftingLoss()
+
+    def generate(noise: Tensor) -> Tensor:
+        """Run DDIM steps for each conditional group."""
+        count = noise.shape[1]
+        state = conditions[:, None].expand(-1, count, -1).reshape(-1, 4)
+        sample = noise.flatten(0, 1)
+        for timestep in scheduler.timesteps:
+            predicted_noise = model(sample, timestep.expand(sample.shape[0]), state)
+            sample = scheduler.step(predicted_noise, timestep, sample, eta=0.0, return_dict=False)[
+                0
+            ]
+        return sample.reshape(n_conditions, count, horizon, 2)
+
+    eval_noise = torch.randn(n_conditions, 64, horizon, 2, device=device)
+    reference = sample_target(64)
+    directions = torch.randn(horizon * 2, 64, device=device)
+    directions = directions / directions.norm(dim=0, keepdim=True)
+    reference_projection = (reference.flatten(start_dim=2) @ directions).sort(dim=1).values
+    snapshot_steps = {0, steps // 5, steps}
+    snapshots: dict[int, Tensor] = {}
+    losses, distances, eval_steps = [], [], []
+    for step in range(steps + 1):
+        if step % 25 == 0 or step in snapshot_steps:
+            with torch.no_grad():
+                samples = generate(eval_noise)
+                projection = (samples.flatten(start_dim=2) @ directions).sort(dim=1).values
+                distance = (projection - reference_projection).square().mean(dim=(1, 2)).sqrt()
+            eval_steps.append(step)
+            distances.append(distance.tolist())
+            if step in snapshot_steps:
+                snapshots[step] = samples.cpu()
+                print(f"Step {step:4d}: mean conditional sliced W2 = {distance.mean().item():.4f}")
+        if step == steps:
+            break
+        generated = generate(torch.randn(n_conditions, 16, horizon, 2, device=device))
+        loss, _ = loss_module(generated, sample_target(16))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+
+    fig = plt.figure(figsize=(13, 14), layout="constrained")
+    grid = fig.add_gridspec(n_conditions + 1, len(snapshots))
+    limit = math.ceil(
+        max(reference.abs().max().item(), *(s.abs().max().item() for s in snapshots.values()))
+    )
+    for group in range(n_conditions):
+        target_paths = reference[group, :24].cpu().numpy()
+        for column, (step, samples) in enumerate(snapshots.items()):
+            ax = fig.add_subplot(grid[group, column])
+            paths = samples[group, :24].numpy()
+            ax.plot(target_paths[:, :, 0].T, target_paths[:, :, 1].T, color="tab:blue", alpha=0.15)
+            ax.plot(paths[:, :, 0].T, paths[:, :, 1].T, color="tab:orange", alpha=0.4)
+            ax.scatter(*starts[group].tolist(), marker="o", color="black", s=35)
+            ax.scatter(*goals[group].tolist(), marker="x", color="black", s=45)
+            ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
+            if group == 0:
+                ax.set_title(f"Step {step}")
+            if column == 0:
+                ax.set_ylabel(f"Condition {group + 1}\ny")
+            if group == n_conditions - 1:
+                ax.set_xlabel("x")
+            if group == 0 and column == 0:
+                ax.plot([], [], color="tab:blue", label="Target trajectories")
+                ax.plot([], [], color="tab:orange", label="Generated trajectories")
+                ax.legend(fontsize="small")
+    ax = fig.add_subplot(grid[-1, 0])
+    ax.plot(range(1, steps + 1), losses, linewidth=0.8, color="tab:orange")
+    ax.set(xlabel="Optimizer step", ylabel="Drifting loss", title="Normalized training objective")
+    ax = fig.add_subplot(grid[-1, 1:])
+    for group in range(n_conditions):
+        ax.plot(eval_steps, [d[group] for d in distances], label=f"Condition {group + 1}")
+    ax.set(xlabel="Optimizer step", ylabel="Sliced W2", title="Trajectory distribution distance")
+    ax.legend()
+    fig.suptitle("Drifting loss through DDIM trajectory generation", fontsize=15)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=160)
+    print(f"Saved visualization to {output.resolve()}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train and visualize drifting examples.")
-    parser.add_argument("--example", choices=("simple", "complex"), default="simple")
+    parser.add_argument(
+        "--example",
+        choices=(
+            "simple",
+            "complex",
+            "diffusion",
+            "diffusion-drifting",
+            "flow",
+            "flow-drifting",
+            "one-step-drifting",
+            "direct-drifting",
+        ),
+        default="diffusion",
+    )
     parser.add_argument("--steps", type=int, help="Optimizer steps")
+    parser.add_argument(
+        "--samples-per-condition", type=int, default=32, help="Training group size for complex."
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Training seed for complex.")
     parser.add_argument("--output", type=Path, help="Output figure path.")
     parser.add_argument("--show", action="store_true", help="Also open the plot window.")
     args = parser.parse_args()
     if args.steps is not None and args.steps < 3:
         parser.error("--steps must be at least 3")
-    if args.example == "complex":
+    if args.samples_per_condition < 1:
+        parser.error("--samples-per-condition must be positive")
+    if args.example == "direct-drifting":
+        direct_drifting_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/direct_drifting_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "one-step-drifting":
+        one_step_drifting_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/one_step_drifting_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "flow-drifting":
+        flow_drifting_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/flow_drifting_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "flow":
+        flow_matching_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/flow_matching_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "diffusion-drifting":
+        diffusion_drifting_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/diffusion_drifting_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "diffusion":
+        diffusion_example(
+            steps=10000 if args.steps is None else args.steps,
+            output=Path("outputs/diffusion_trajectories.png")
+            if args.output is None
+            else args.output,
+            show=args.show,
+        )
+    elif args.example == "complex":
         complex_example(
             steps=10000 if args.steps is None else args.steps,
             output=Path("outputs/drifting_trajectories.png")
             if args.output is None
             else args.output,
             show=args.show,
+            samples_per_condition=args.samples_per_condition,
+            seed=args.seed,
         )
     else:
         simple_example(
