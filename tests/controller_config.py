@@ -17,7 +17,7 @@ def forte_test_pd_config() -> ControllerConfig:
             elbow_pitch=PDGain(74.0, 5.9),
             lower_arm_roll=PDGain(6.8, 0.55),
             wrist_pitch=PDGain(7.2, 0.57),
-            wrist_roll=PDGain(3.2, 0.25),
+            wrist_yaw=PDGain(3.2, 0.25),
         ),
     )
 

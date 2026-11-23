@@ -21,7 +21,7 @@ def test_native_motor_torque_is_clipped_to_rated_joint_limits():
         "elbow_pitch",
         "lower_arm_roll",
         "wrist_pitch",
-        "wrist_roll",
+        "wrist_yaw",
     )
     limits = np.array([10.8, 66.0, 11.0, 11.0, 3.6, 3.6, 1.8])
     actuators = [model.actuator(f"{name}_motor").id for name in joints]
@@ -49,7 +49,7 @@ def test_yaw_velocity_limit_matches_confirmed_external_reduction():
 
 
 @pytest.mark.parametrize("pose", ["zero", "default"])
-@pytest.mark.parametrize("width", [0.0, 0.074])
+@pytest.mark.parametrize("width", [0.0, 0.048])
 def test_operating_acceleration_limits_fit_rated_torques_at_reference_poses(pose, width):
     """A zero-pose acceleration maximum must not overload the folded reference pose."""
     config = load_robot_config("forte")

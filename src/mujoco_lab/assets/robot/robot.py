@@ -38,7 +38,7 @@ class FortePDGain:
     elbow_pitch: PDGain
     lower_arm_roll: PDGain
     wrist_pitch: PDGain
-    wrist_roll: PDGain
+    wrist_yaw: PDGain
 
 
 @dataclass

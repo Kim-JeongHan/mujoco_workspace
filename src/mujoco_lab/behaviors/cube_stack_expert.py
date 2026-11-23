@@ -330,7 +330,7 @@ class CubeStackExpert(Expert):
             arm_ratio=arm_ratio,
             gripper_ratio=gripper_ratio,
             shape_preserving=True,
-            cartesian_resolution=0.005 if phase in ("pick", "place") else 0.01,
+            cartesian_resolution=0.0025 if phase in ("pick", "place") else 0.01,
             cartesian_fallback=phase != "place",
             checker=None if hold else self.collision_checker(stage.cube_index, phase),
             failure_reason=reason,

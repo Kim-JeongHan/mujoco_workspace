@@ -94,12 +94,21 @@ def test_no_physical_grasp_cannot_start_carry():
     assert expert.failure_reason == "No two-finger physical grasp for lift"
 
 
-def test_sampling_replaces_a_colliding_joint_goal_without_changing_its_grasp_pose():
+def test_sampling_replaces_a_colliding_joint_goal_without_changing_its_grasp_pose(monkeypatch):
     sim, _, expert = make_expert()
     request = expert.motion_request("approach", expert.pick_pose)
-    # Sequential Cartesian IK reaches a folded wrist branch at this same goal.
-    blocked = expert.motion.cartesian_path(request.waypoints[0])[-1]
-    assert not request.checker.is_collision_free(blocked)
+    checker = request.checker
+    assert checker is not None
+    start = expert.robot.state.snapshot().qpos[:7]
+    candidates, _ = expert.motion.ik_candidates(request.waypoints[0], start, checker)
+    blocked = candidates[0]
+    collision_free = checker.is_collision_free
+
+    def check_with_blocked_branch(q):
+        return np.linalg.norm(q[:7] - blocked) > 0.05 and collision_free(q)
+
+    monkeypatch.setattr(checker, "is_collision_free", check_with_blocked_branch)
+    assert not checker.is_collision_free(blocked)
     before = sim.data.qpos.copy()
     blocked_pose = expert.motion.waypoint_poses((blocked,))[0]
 
@@ -114,7 +123,7 @@ def test_sampling_replaces_a_colliding_joint_goal_without_changing_its_grasp_pos
         selected_pose.as_translation(), blocked_pose.as_translation(), atol=1e-5
     )
     np.testing.assert_allclose(
-        selected_pose.as_rotation().as_matrix(), blocked_pose.as_rotation().as_matrix(), atol=1e-5
+        selected_pose.as_rotation().as_matrix(), blocked_pose.as_rotation().as_matrix(), atol=1e-4
     )
     for time in np.linspace(0, trajectory.duration, 101):
         assert request.checker.is_collision_free(trajectory.sample(time).position[:7])

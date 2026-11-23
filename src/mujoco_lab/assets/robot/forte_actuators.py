@@ -22,7 +22,7 @@ ARM_ACTUATORS = {
     "elbow_pitch": ("RS06", 1.0),
     "lower_arm_roll": ("EL05", 2.0),
     "wrist_pitch": ("EL05", 2.0),
-    "wrist_roll": ("EL05", 1.0),
+    "wrist_yaw": ("EL05", 1.0),
 }
 RATED_JOINT_TORQUE = {
     joint: RATED_OUTPUT_TORQUE[motor] * reduction

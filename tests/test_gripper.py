@@ -20,10 +20,10 @@ def test_forte_gripper_controls_alongside_arm_controller_and_resets_home():
     robot = sim.robots["robot"]
     gripper = robot.gripper
     assert gripper is not None
-    assert gripper.get_target() == pytest.approx(0.074)
-    assert gripper.get_width() == pytest.approx(0.074)
+    assert gripper.get_target() == pytest.approx(0.048)
+    assert gripper.get_width() == pytest.approx(0.048)
     limits = gripper.get_control_limits()
-    np.testing.assert_allclose(limits, [0, 0.074])
+    np.testing.assert_allclose(limits, [0, 0.048])
     limits[:] = 0  # Caller edits must not change the gripper's stored bounds.
     assert not gripper.is_active()
     gripper.set_target(0.02)
@@ -31,9 +31,9 @@ def test_forte_gripper_controls_alongside_arm_controller_and_resets_home():
     assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.01)
     assert gripper.is_active()
     sim.reset()
-    assert gripper.get_target() == pytest.approx(0.074)
+    assert gripper.get_target() == pytest.approx(0.048)
     assert not gripper.is_active()
-    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.037)
+    assert sim.data.ctrl[gripper.actuator_id] == pytest.approx(0.024)
     with pytest.raises(ValueError, match="gripper width"):
         gripper.set_target(-0.038)
     with pytest.raises(ValueError, match="gripper width"):

@@ -98,6 +98,7 @@ class MotionPlanner:
         previous_target = self.robot.target
         previous = previous_target.position.copy()
         checker = request.checker
+        cartesian_error = None
         if request.mode == "hold":
             # The moving reference can overshoot its bounded position goal.
             bounds = self.robot.state.get_joint_limits(slots)
@@ -109,7 +110,13 @@ class MotionPlanner:
             destination = request.waypoints[-1]
             if not isinstance(destination, Transform):
                 raise TypeError("Cartesian motion requires a Transform waypoint")
-            path = self.cartesian_path(destination, resolution=request.cartesian_resolution)
+            try:
+                path = self.cartesian_path(destination, resolution=request.cartesian_resolution)
+            except IKError as error:
+                if not request.cartesian_fallback or checker is None:
+                    raise
+                cartesian_error = error
+                path = None
         else:
             if self.planning is None:
                 raise ValueError("A sampling planner configuration is required")
@@ -126,15 +133,24 @@ class MotionPlanner:
                 legs.append(vertices if index == 0 else vertices[1:])
                 start = vertices[-1]
             path = np.vstack(legs)
-        trajectory = self.trajectory(
-            path,
-            request.gripper_target,
-            checker,
-            arm_ratio=request.arm_ratio,
-            gripper_ratio=request.gripper_ratio,
-            shape_preserving=request.shape_preserving,
+        trajectory = (
+            None
+            if path is None
+            else self.trajectory(
+                path,
+                request.gripper_target,
+                checker,
+                arm_ratio=request.arm_ratio,
+                gripper_ratio=request.gripper_ratio,
+                shape_preserving=request.shape_preserving,
+            )
         )
-        if trajectory is None and request.mode == "cartesian" and request.cartesian_fallback:
+        if (
+            trajectory is None
+            and request.mode == "cartesian"
+            and request.cartesian_fallback
+            and checker is not None
+        ):
             trajectory = self.branch_trajectory(
                 current,
                 request.waypoints,
@@ -144,6 +160,8 @@ class MotionPlanner:
                 gripper_ratio=request.gripper_ratio,
                 shape_preserving=request.shape_preserving,
             )
+        if trajectory is None and cartesian_error is not None:
+            raise cartesian_error
         return trajectory, None if trajectory is not None else f"Collision on {request.name} path"
 
     def ik_candidates(
@@ -215,8 +233,13 @@ class MotionPlanner:
 
     def sampling_path(self, start, waypoint, checker):
         """Try the original goal, then checked IK alternatives if its route fails."""
-        goal = self.solve_ik(waypoint, start) if isinstance(waypoint, Transform) else waypoint
-        if checker.is_collision_free(goal):
+        goal_error = None
+        try:
+            goal = self.solve_ik(waypoint, start) if isinstance(waypoint, Transform) else waypoint
+        except IKError as error:
+            goal_error = error
+            goal = None
+        if goal is not None and checker.is_collision_free(goal):
             path = self.plan_arm_path(start, goal, checker)
             if path is not None:
                 return path
@@ -224,11 +247,13 @@ class MotionPlanner:
         for use_default in (False, True):
             candidates, _ = self.ik_candidates(pose, start, checker, use_default=use_default)
             for candidate in candidates:
-                if np.allclose(candidate, goal):
+                if goal is not None and np.allclose(candidate, goal):
                     continue
                 path = self.plan_arm_path(start, candidate, checker)
                 if path is not None:
                     return path
+        if goal_error is not None:
+            raise goal_error
         return None
 
     def solve_ik(

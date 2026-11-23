@@ -38,7 +38,7 @@ def book_task():
     return BookTask(simulator)
 
 
-def test_expected_ik_failure_is_handled_once_at_execution_boundary(monkeypatch):
+def test_expected_ik_failure_stops_execution_after_branch_retries(monkeypatch):
     expert = BookInsertionExpert(
         book_task(),
         recipe=load_book_recipe("forte"),
@@ -52,10 +52,11 @@ def test_expected_ik_failure_is_handled_once_at_execution_boundary(monkeypatch):
 
     monkeypatch.setattr(expert.motion, "solve_ik", unreachable)
     assert expert.act() is None
-    assert calls == [1]
+    attempts = len(calls)
+    assert attempts > 1
     assert expert.failed and expert.failure_reason == "unreachable target"
     assert expert.act() is None
-    assert calls == [1]
+    assert len(calls) == attempts
 
 
 def test_task_requires_explicit_robot_setup():

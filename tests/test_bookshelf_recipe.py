@@ -77,7 +77,7 @@ def test_changed_recipe_controls_book_destinations_and_limits():
     )
     assert request.gripper_target == 0.0
     closing = expert.motion_request("close", expert.pick_pose)
-    assert closing.gripper_target == 0.074
+    assert closing.gripper_target == 0.048
     assert closing.arm_ratio == (0.35, 0.7)
     assert closing.gripper_ratio == (0.025, 0.06)
 
