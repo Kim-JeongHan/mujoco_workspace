@@ -80,6 +80,15 @@ def test_forearm_and_wrist_axes_align_with_elbow_at_zero(roll):
     np.testing.assert_allclose(data.xaxis[joints] @ elbow, np.eye(3), rtol=0, atol=1e-5)
 
 
+def test_forearm_origin_is_directly_above_elbow_in_its_zero_frame():
+    model = mujoco.MjModel.from_xml_path(str(ASSET))
+    data = pose_state(model)
+    elbow, forearm = (model.joint(name).id for name in ("elbow_pitch", "lower_arm_roll"))
+    elbow_frame = data.xmat[model.jnt_bodyid[elbow]].reshape(3, 3)
+    offset = elbow_frame.T @ (data.xanchor[forearm] - data.xanchor[elbow])
+    np.testing.assert_allclose(offset, [0, 0, 0.0184004], rtol=0, atol=1e-9)
+
+
 @pytest.mark.parametrize(
     "geom_name", ["upper_arm_capsule", "shoulder_roll_capsule", "shoulder_hinge_capsule"]
 )
